@@ -1,4 +1,4 @@
-{{- if .Values.modules.data_access.enabled }}
+{{- if and .Values.modules.data_access.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "data_access"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,6 +17,9 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-data-access
+        {{- if not .Values.persistence.rwx }}
+        druppie.io/shared-storage: "true"
+        {{- end }}
       annotations:
         reloader.stakater.com/auto: "true"
     spec:
@@ -24,6 +27,7 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
+      {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
         - name: module-data-access
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.data_access.image) }}
@@ -78,7 +82,9 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
+{{- end }}
 ---
+{{- if .Values.modules.data_access.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -90,10 +96,10 @@ spec:
   type: ClusterIP
   ports:
     - port: {{ .Values.modules.data_access.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "data_access") }}mcp-data-access{{ else }}http{{ end }}
       protocol: TCP
       name: http
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-data-access
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "data_access") }}dev-workspace{{ else }}module-data-access{{ end }}
 {{- end }}

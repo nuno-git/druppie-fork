@@ -152,6 +152,25 @@ http://{{ .Values.global.domain }}:{{ .Values.frontend.nodePort }}
 {{- end -}}
 
 {{/*
+Shared-storage affinity block for pod spec.
+Renders nothing when persistence.rwx is true (RWX allows multi-node access).
+When RWO, co-locates all pods carrying the druppie.io/shared-storage label
+on the same node so they can share ReadWriteOnce PVCs (workspace, dataset).
+*/}}
+{{- define "druppie.sharedStorageAffinity" -}}
+{{- if not .Values.persistence.rwx }}
+affinity:
+  podAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            {{- include "druppie.selectorLabels" . | nindent 12 }}
+            druppie.io/shared-storage: "true"
+        topologyKey: kubernetes.io/hostname
+{{- end }}
+{{- end }}
+
+{{/*
 Persistence storageClass: resolves to NFS class when NFS is enabled,
 otherwise falls back to the configured persistence.storageClass.
 */}}
@@ -161,4 +180,21 @@ otherwise falls back to the configured persistence.storageClass.
 {{- else if .Values.persistence.storageClass -}}
 {{ .Values.persistence.storageClass }}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Module-embedded predicate: returns the string "true" (empty otherwise) when
+devWorkspace is enabled AND the given module key (arg `mod`) appears in
+devWorkspace.embedModules — i.e. that module should run inside the workspace
+pod under uvicorn --reload instead of as its own baked-image Deployment.
+
+Returns "true" / "" (not a raw bool) so it composes correctly under `{{ if }}`:
+Go-template `if` treats every non-empty string — including "false" — as truthy,
+so a boolean-returning helper would always read as true at the call site.
+
+Usage: {{ $emb := include "druppie.moduleEmbedded" (dict "root" . "mod" "coding") }}
+       {{- if $emb }} ... {{- end }}
+*/}}
+{{- define "druppie.moduleEmbedded" -}}
+{{- if and .root.Values.devWorkspace.enabled (has .mod .root.Values.devWorkspace.embedModules) -}}true{{- end -}}
 {{- end -}}

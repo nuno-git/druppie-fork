@@ -22,7 +22,10 @@
 #   BRANCH_ENV_TLS_SECRET  TLS secret name (default: druppie-tls)
 #   BRANCH_ENV_PULL_SECRET        image pull secret name to copy in (default: harbor-regcred; empty to skip)
 #   BRANCH_ENV_PULL_SECRET_SRC_NS namespace to copy the pull secret from (default: druppie)
-#
+#   BRANCH_ENV_EMBED_MODULES      comma-separated MCP module keys to run inside
+#                                 the workspace pod under uvicorn --reload
+#                                 (default: all 13 embeddable modules; set to ""
+#                                 to keep modules as separate baked Deployments)
 # Requires: kubectl (pointed at the target cluster), helm, bash, base64.
 
 set -euo pipefail
@@ -37,6 +40,12 @@ TLS_SRC_NS="${BRANCH_ENV_TLS_SRC_NS:-druppie}"
 TLS_SECRET="${BRANCH_ENV_TLS_SECRET:-druppie-tls}"
 PULL_SECRET="${BRANCH_ENV_PULL_SECRET:-harbor-regcred}"
 PULL_SECRET_SRC_NS="${BRANCH_ENV_PULL_SECRET_SRC_NS:-druppie}"
+
+# MCP modules to embed into the workspace pod (hot-reload on edit). Default:
+# every module with a per-module venv baked into the dev-workspace image.
+# Override with BRANCH_ENV_EMBED_MODULES=coding,web (or ="" for none).
+DEFAULT_EMBED_MODULES="coding,docker,filesearch,web,archimate,registry,llm,kubernetes,vision,searxng,browser,data_access,azuredevops"
+EMBED_MODULES_CSV="${BRANCH_ENV_EMBED_MODULES:-${DEFAULT_EMBED_MODULES}}"
 
 # Modules that mount a shared RWO PVC and must co-locate with the backend.
 PINNED_MODULES=(coding docker archimate data_access filesearch web)
@@ -151,6 +160,9 @@ HELM_ARGS=(
   --set "devWorkspace.codeServer.devHost=${DEV_HOST}"
   --set "devWorkspace.oauth.issuerUrl=https://${HOST}/realms/druppie"
   --set "devWorkspace.nodeSelector.kubernetes\.io/hostname=${NODE}"
+  # Embed MCP modules into the workspace pod so they hot-reload on edit. The
+  # matching module Deployments are skipped; their Services route to the pod.
+  --set "devWorkspace.embedModules={${EMBED_MODULES_CSV}}"
 )
 for m in "${PINNED_MODULES[@]}"; do
   HELM_ARGS+=(--set "modules.${m}.nodeSelector.kubernetes\.io/hostname=${NODE}")

@@ -72,9 +72,6 @@ from .common import (
 # Project models
 from .project import DeploymentInfo, DeploymentSummary, ProjectDetail, ProjectSummary
 
-# Dev VM models
-from .dev_vm import DevVMCreate, DevVMDetail, DevVMListResponse, DevVMSummary
-
 # Branch environment models
 from .branch_environment import (
     BranchEnvironmentCreate,
@@ -179,11 +176,6 @@ __all__ = [
     "ProjectDetail",
     "DeploymentInfo",
     "DeploymentSummary",
-    # Dev VM
-    "DevVMSummary",
-    "DevVMDetail",
-    "DevVMCreate",
-    "DevVMListResponse",
     # Branch environment
     "BranchEnvironmentSummary",
     "BranchEnvironmentDetail",

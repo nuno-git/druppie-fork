@@ -360,3 +360,41 @@ class ModelManagementService:
         set_db_overrides(override_map)
 
         logger.info("resolver_cache_refreshed", override_count=len(override_map))
+
+    async def get_local_status(self) -> dict:
+        """Fetch live status from the in-cluster model router."""
+        import httpx
+
+        url = os.getenv("LLMKUBE_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
+        status_url = url.rstrip("/v1").rstrip("/") + "/status"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(status_url)
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            logger.warning("local_status_fetch_failed", error=str(e))
+            return {
+                "current_mode": None,
+                "switching": None,
+                "inflight": 0,
+                "active_services": [],
+                "available_models": [],
+                "services": {},
+                "error": str(e),
+            }
+
+    async def get_local_logs(self, tail: int = 50) -> dict:
+        """Fetch recent pod logs from the model router."""
+        import httpx
+
+        url = os.getenv("LLMKUBE_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
+        logs_url = url.rstrip("/v1").rstrip("/") + f"/logs?tail={tail}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(logs_url)
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            logger.warning("local_logs_fetch_failed", error=str(e))
+            return {"services": {}, "error": str(e)}

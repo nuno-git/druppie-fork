@@ -3,10 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Cpu, Bot, Languages, CheckCircle, XCircle, RefreshCw, Zap,
   ChevronDown, ChevronRight, RotateCcw, Save, Loader2, AlertTriangle,
+  Server, Activity, Terminal,
 } from 'lucide-react'
 import {
   getModelManagement, setAgentModelOverride, removeAgentModelOverride,
   setTranslationModelOverride, removeTranslationModelOverride, validateProvider,
+  getLocalModelStatus, getLocalModelLogs,
 } from '../services/api'
 import PageHeader from '../components/shared/PageHeader'
 import VersionBadge from '../components/shared/VersionBadge'
@@ -309,6 +311,145 @@ const AgentRow = ({ agent, providers, onOverride, onReset, saving, error, onClea
   )
 }
 
+const MODEL_LABELS = {
+  'deepseek-v4-flash': 'DeepSeek V4 Flash',
+  'qwen3.6-27b': 'Qwen 3.6 27B',
+  'qwen3.6-35b-a3b': 'Qwen 3.6 35B A3B',
+}
+
+const LocalModelsSection = () => {
+  const [showLogs, setShowLogs] = useState({})
+  const { data: status, isLoading: statusLoading } = useQuery({
+    queryKey: ['local-model-status'],
+    queryFn: getLocalModelStatus,
+    refetchInterval: 3000,
+  })
+
+  const { data: logsData } = useQuery({
+    queryKey: ['local-model-logs'],
+    queryFn: () => getLocalModelLogs(30),
+    refetchInterval: 5000,
+  })
+
+  const services = status?.services || {}
+  const switching = status?.switching
+  const currentMode = status?.current_mode
+  const availableModels = status?.available_models || []
+
+  const modelToService = {
+    'deepseek-v4-flash': 'deepseek-v4-flash',
+    'qwen3.6-27b': 'qwen-27b',
+    'qwen3.6-35b-a3b': 'qwen-35b',
+  }
+
+  const getServiceForModel = (modelId) => modelToService[modelId] || modelId
+
+  return (
+    <SectionCard title="Local GPU Models" icon={Server}>
+      {/* Mode banner */}
+      <div className="flex items-center gap-3 mb-4">
+        {switching ? (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200">
+            <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+            <span className="text-sm text-amber-700">
+              Switching to <strong>{switching}</strong> mode…
+            </span>
+          </div>
+        ) : currentMode ? (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-50 border border-green-200">
+            <CheckCircle className="w-4 h-4 text-green-500" />
+            <span className="text-sm text-green-700">
+              Active: <strong className="capitalize">{currentMode}</strong> mode
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200">
+            <Server className="w-4 h-4 text-gray-400" />
+            <span className="text-sm text-gray-500">Idle — no model loaded</span>
+          </div>
+        )}
+        {status?.inflight > 0 && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+            <Activity className="w-3 h-3" /> {status.inflight} in-flight
+          </span>
+        )}
+      </div>
+
+      {/* Model grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {availableModels.map(modelId => {
+          const svcName = getServiceForModel(modelId)
+          const svc = services[svcName]
+          const isReady = svc?.ready
+          const isLoaded = (svc?.replicas || 0) > 0
+          const isOther = currentMode && !isLoaded && !switching
+          const label = MODEL_LABELS[modelId] || modelId
+
+          return (
+            <div
+              key={modelId}
+              className={`rounded-lg border p-3 ${
+                isReady ? 'border-green-200 bg-green-50/30' :
+                isLoaded ? 'border-amber-200 bg-amber-50/30' :
+                'border-gray-200 bg-gray-50/30'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-medium text-sm">{label}</span>
+                <div className={`w-2.5 h-2.5 rounded-full ${
+                  isReady ? 'bg-green-500' :
+                  isLoaded ? 'bg-amber-400 animate-pulse' :
+                  'bg-gray-300'
+                }`} />
+              </div>
+              <div className="text-xs text-gray-500">
+                {isReady ? (
+                  <span className="text-green-600 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" /> Ready
+                  </span>
+                ) : isLoaded ? (
+                  <span className="text-amber-600 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+                  </span>
+                ) : isOther ? (
+                  <span className="text-gray-400">Idle</span>
+                ) : (
+                  <span className="text-gray-400">Not deployed</span>
+                )}
+              </div>
+              {isLoaded && logsData?.services?.[svcName] && (
+                <button
+                  onClick={() => setShowLogs(prev => ({ ...prev, [svcName]: !prev[svcName] }))}
+                  className="mt-2 text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                >
+                  <Terminal className="w-3 h-3" />
+                  {showLogs[svcName] ? 'Hide' : 'Show'} logs
+                </button>
+              )}
+              {showLogs[svcName] && logsData?.services?.[svcName] && (
+                <div className="mt-2 max-h-48 overflow-y-auto rounded bg-gray-900 p-2">
+                  {(logsData.services[svcName].logs || []).map((line, i) => (
+                    <div key={i} className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap break-all leading-tight">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {status?.error && (
+        <div className="mt-3 px-3 py-2 rounded bg-red-50 border border-red-200 text-xs text-red-600">
+          {status.error}
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
+
 const ModelManagement = () => {
   const queryClient = useQueryClient()
   const [validating, setValidating] = useState({})
@@ -444,6 +585,9 @@ const ModelManagement = () => {
           Refresh
         </button>
       </PageHeader>
+
+      {/* Local GPU Models — live status */}
+      <LocalModelsSection />
 
       {/* Providers */}
       <SectionCard title={`Providers (${providers.length})`} icon={Cpu}>

@@ -48,7 +48,7 @@ spec:
       name: workspace
     spec:
       accessModes: ["ReadWriteOnce"]
-      storageClassName: {{ .Values.persistence.storageClass | default "longhorn-distributed" }}
+      storageClassName: {{ .Values.agentSandbox.storageClass | default "longhorn-branch-env" }}
       resources:
         requests:
           storage: {{ .Values.agentSandbox.coding.workspaceSize | default "10Gi" }}

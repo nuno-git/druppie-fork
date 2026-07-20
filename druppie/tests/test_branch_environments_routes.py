@@ -14,14 +14,13 @@ import yaml
 from fastapi.testclient import TestClient
 
 from druppie.api.deps import get_branch_environment_service, get_current_user
-from druppie.api.errors import ConflictError, ValidationError
+from druppie.api.errors import ConflictError, ExternalServiceError, ValidationError
 from druppie.api.main import create_app
 from druppie.services.branch_environment_service import (
     GITOPS_PATH,
     BranchEnvironmentService,
     _slugify,
     build_helmrelease_yaml,
-    build_workspace_yaml,
 )
 
 ADMIN_SUB = "11111111-1111-1111-1111-111111111111"
@@ -58,6 +57,10 @@ class FakeGitea:
         # env's branch exists here before committing manifests.
         self.branches: dict[str, set[str]] = {"ai/druppie": {"colab-dev", "main"}}
         self.created_branches: list[tuple[str, str, str]] = []
+        # Workflow dispatches recorded as (repo, branch, workflow).
+        self.dispatched_workflows: list[tuple[str, str, str]] = []
+        # When True, dispatch_workflow raises (for the failure-path test).
+        self.dispatch_fails: bool = False
 
     async def branch_exists(self, repo: str, branch: str) -> bool:
         return branch in self.branches.get(repo, set())
@@ -65,6 +68,16 @@ class FakeGitea:
     async def create_branch(self, repo: str, branch: str, from_branch: str) -> None:
         self.branches.setdefault(repo, set()).add(branch)
         self.created_branches.append((repo, branch, from_branch))
+
+    async def dispatch_workflow(
+        self, repo: str, branch: str, workflow: str = "build.yaml"
+    ) -> None:
+        if self.dispatch_fails:
+            raise ExternalServiceError(
+                service="gitops-repo",
+                message=f"simulated dispatch failure for {branch}",
+            )
+        self.dispatched_workflows.append((repo, branch, workflow))
 
     @staticmethod
     def _sha(content: str) -> str:
@@ -124,7 +137,7 @@ class FakeCluster:
         self.externalsecrets: dict[str, list[dict]] = {}  # keyed by namespace
         self.pods: dict[str, list[dict]] = {}  # keyed by namespace
 
-    async def get_helmrelease(self, namespace: str):
+    async def get_helmrelease(self, namespace: str, name: str = "druppie"):
         return self.helmreleases.get(namespace)
 
     async def get_namespace(self, namespace: str):
@@ -154,6 +167,10 @@ class FakeCluster:
 
     async def list_pods(self, namespace: str):
         return self.pods.get(namespace, [])
+
+    async def force_reconcile_flux(self) -> None:
+        """No-op stand-in for the Flux force-reconcile PATCH."""
+        pass
 
 
 def _hr_ready(status: str = "True", reason: str = "ReconciliationSucceeded", message: str = "ok"):
@@ -252,7 +269,10 @@ def test_slugify_empty_raises():
 
 def test_helmrelease_yaml_contains_branch_overrides():
     manifest = yaml.safe_load(
-        build_helmrelease_yaml("foo", "feature/foo", "druppie-foo.rijnland.dev", "tag-1", "now")
+        build_helmrelease_yaml(
+            "foo", "feature/foo", "druppie-foo.rijnland.dev", "tag-1", "now",
+            developer="robbe",
+        )
     )
     values = manifest["spec"]["values"]
     assert values["global"]["instance"] == "druppie-foo"
@@ -260,6 +280,15 @@ def test_helmrelease_yaml_contains_branch_overrides():
     assert values["backend"]["service"]["type"] == "ClusterIP"
     assert manifest["spec"]["chart"]["spec"]["sourceRef"]["name"] == "druppie-branch-foo"
     assert "helm/druppie/values-rijnland.yaml" in manifest["spec"]["chart"]["spec"]["valuesFiles"]
+    # The branch namespace IS the hot-reload dev workspace.
+    assert values["externalSecrets"]["managed"] is True
+    assert values["persistence"]["storageClass"] == "longhorn-branch-env"
+    dw = values["devWorkspace"]
+    assert dw["enabled"] is True
+    assert dw["stackMode"] == "real"
+    assert dw["developer"] == "robbe"
+    assert dw["gitBranch"] == "feature/foo"
+    assert dw["codeServer"]["devHost"] == "druppie-foo-dev.rijnland.dev"
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +321,7 @@ def test_create_missing_app_branch_is_created(client, as_owner, fake_gitea):
     r = _deploy(client, branch="feature/nieuw")
     assert r.status_code == 202, r.text
     assert ("ai/druppie", "feature/nieuw", "colab-dev") in fake_gitea.created_branches
+    assert ("ai/druppie", "feature/nieuw", "build.yaml") in fake_gitea.dispatched_workflows
     assert "created branch 'feature/nieuw' from colab-dev" in r.json()["status_message"]
 
 
@@ -300,6 +330,18 @@ def test_create_existing_app_branch_is_not_recreated(client, as_owner, fake_gite
     r = _deploy(client, branch="feature/bestaat")
     assert r.status_code == 202, r.text
     assert fake_gitea.created_branches == []
+    # CI build is dispatched even for pre-existing branches so images are fresh.
+    assert ("ai/druppie", "feature/bestaat", "build.yaml") in fake_gitea.dispatched_workflows
+
+
+def test_create_dispatch_failure_blocks_deploy(client, as_owner, fake_gitea):
+    """If the CI dispatch fails the deploy must abort — no stale-image env."""
+    fake_gitea.dispatch_fails = True
+    r = _deploy(client, branch="feature/stale")
+    assert r.status_code == 502, r.text
+    # No manifests committed (dispatch runs before the commit).
+    assert fake_gitea.commits == []
+    assert fake_gitea.files == {}
 
 
 def test_create_duplicate_branch_conflicts(client, as_owner):
@@ -335,32 +377,27 @@ def test_create_blocked_while_namespace_terminating(client, as_owner, fake_clust
 # ---------------------------------------------------------------------------
 
 
-def test_create_default_secrets_source_borrows_colab_dev_keys(client, as_owner, fake_gitea):
+def test_create_default_secrets_source_is_colab_dev(client, as_owner, fake_gitea):
     r = _deploy(client)
     assert r.status_code == 202, r.text
     assert r.json()["secrets_source"] == "colab-dev"
 
+    # externalsecrets.yaml should only contain druppie-tls + harbor-regcred
+    # (app secrets are synced by the chart's dev-workspace-secrets template).
     docs = list(yaml.safe_load_all(fake_gitea.files[f"{_env_dir('feature-foo')}/externalsecrets.yaml"]))
-    app_es = next(d for d in docs if d["metadata"]["name"] == "branch-env-secrets")
-    props = {d["remoteRef"]["key"] for d in app_es["spec"]["data"]}
-    assert props == {"druppie/colab-dev/app"}
-    keys = {d["secretKey"] for d in app_es["spec"]["data"]}
-    assert "ZAI_API_KEY" in keys and "OPENROUTER_API_KEY" in keys
+    names = {d["metadata"]["name"] for d in docs}
+    assert "branch-env-secrets" not in names
+    assert "druppie-tls" in names
+    assert "harbor-regcred" in names
 
     hr = yaml.safe_load(fake_gitea.files[f"{_env_dir('feature-foo')}/helmrelease.yaml"])
-    assert hr["spec"]["values"]["global"]["extraEnvFromSecret"] == "branch-env-secrets"
+    assert "extraEnvFromSecret" not in hr["spec"]["values"]["global"]
 
 
-def test_create_developer_secrets_source_uses_own_vault_map(client, as_owner, fake_gitea):
+def test_create_developer_secrets_source_annotation(client, as_owner, fake_gitea):
     r = _deploy(client, secrets_source="developer")
     assert r.status_code == 202, r.text
     assert r.json()["secrets_source"] == "developer"
-
-    docs = list(yaml.safe_load_all(fake_gitea.files[f"{_env_dir('feature-foo')}/externalsecrets.yaml"]))
-    app_es = next(d for d in docs if d["metadata"]["name"] == "branch-env-secrets")
-    # dataFrom extract on the deployer's OWN map (username from the token).
-    assert app_es["spec"]["dataFrom"] == [{"extract": {"key": "druppie/developers/robbe"}}]
-    assert "data" not in app_es["spec"]
 
     ns = yaml.safe_load(fake_gitea.files[f"{_env_dir('feature-foo')}/namespace.yaml"])
     assert ns["metadata"]["annotations"]["druppie.io/secrets-source"] == "developer"
@@ -508,7 +545,8 @@ def test_teardown_unknown_env_404(client, as_admin):
 @pytest.mark.anyio
 async def test_redeploy_conflicts_on_concurrent_change(service, fake_gitea):
     await service.create(
-        owner_id=uuid.UUID(OWNER_SUB), branch="feature/foo", image_tag=None, user_roles=["developer"]
+        owner_id=uuid.UUID(OWNER_SUB), branch="feature/foo", image_tag=None,
+        user_roles=["developer"], owner_username="robbe",
     )
     env = await service._read_env("feature-foo")
     # Simulate CI updating the file between our read and our commit.
@@ -521,101 +559,7 @@ async def test_redeploy_conflicts_on_concurrent_change(service, fake_gitea):
 
 
 # ---------------------------------------------------------------------------
-# workspace: build_workspace_yaml
-# ---------------------------------------------------------------------------
-
-
-def test_build_workspace_yaml_shape():
-    docs = list(
-        yaml.safe_load_all(
-            build_workspace_yaml(
-                "feature-foo", "feature/foo", "druppie-feature-foo.rijnland.dev", "now"
-            )
-        )
-    )
-    kinds = {d["kind"] for d in docs}
-    assert kinds == {
-        "ExternalSecret",
-        "PersistentVolumeClaim",
-        "Deployment",
-        "Service",
-        "Ingress",
-        "NetworkPolicy",
-    }
-    by_kind = {d["kind"]: d for d in docs}
-
-    # The app-net policy blocks unlabeled peers; without this extra allow the
-    # workspace backend cannot fetch JWKS from Keycloak and all API calls hang.
-    netpol = by_kind["NetworkPolicy"]
-    assert (
-        netpol["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/component"]
-        == "keycloak"
-    )
-    assert netpol["spec"]["ingress"][0]["from"] == [
-        {"podSelector": {"matchLabels": {"app": "workspace"}}}
-    ]
-
-    # Ingress host = env host with -dev inserted before the first dot.
-    ingress = by_kind["Ingress"]
-    assert ingress["spec"]["rules"][0]["host"] == "druppie-feature-foo-dev.rijnland.dev"
-    assert ingress["spec"]["tls"][0]["secretName"] == "druppie-tls"
-    assert ingress["spec"]["ingressClassName"] == "traefik"
-
-    # Deployment: workspace + oauth2-proxy containers, Recreate strategy.
-    dep = by_kind["Deployment"]
-    assert dep["spec"]["strategy"]["type"] == "Recreate"
-    pod_spec = dep["spec"]["template"]["spec"]
-    # Harbor is a private registry: without the pull secret the image pull
-    # fails with "no basic auth credentials".
-    assert pod_spec["imagePullSecrets"] == [{"name": "harbor-regcred"}]
-    # Fresh Longhorn volumes mount root-owned; uid 1000 needs fsGroup to
-    # write /workspace.
-    assert pod_spec["securityContext"] == {"fsGroup": 1000}
-    containers = {c["name"]: c for c in pod_spec["containers"]}
-    assert set(containers) == {"workspace", "oauth2-proxy"}
-
-    ws = containers["workspace"]
-    env_vars = {e["name"]: e.get("value") for e in ws["env"]}
-    assert env_vars["DRUPPIE_GIT_BRANCH"] == "feature/foo"
-    assert "druppie.git" in env_vars["DRUPPIE_REPO_URL"]
-    # Private repo + private-CA Gitea: without these the branch fetch fails
-    # and the workspace silently serves the baked colab-dev snapshot.
-    assert env_vars["GIT_SSL_NO_VERIFY"] == "1"
-    # Workspace frontend/backend log in against the ENV's Keycloak — without
-    # these they default to http://localhost:8080, which inside the pod is
-    # code-server (dead login redirect + 401 on every API call).
-    assert env_vars["VITE_KEYCLOAK_URL"] == "https://druppie-feature-foo.rijnland.dev"
-    assert env_vars["KEYCLOAK_SERVER_URL"] == "http://druppie-feature-foo-keycloak:8080"
-    assert env_vars["KEYCLOAK_ISSUER_URL"] == "https://druppie-feature-foo.rijnland.dev"
-    token = next(e for e in ws["env"] if e["name"] == "DRUPPIE_GIT_TOKEN")
-    assert token["valueFrom"]["secretKeyRef"] == {
-        "name": "workspace-oauth",
-        "key": "git-token",
-        "optional": True,
-    }
-    # Vault-sourced env vars (secrets_source map) reach the workspace too, so
-    # personal tool config (e.g. Claude Code) needs no manual copying.
-    assert ws["envFrom"] == [
-        {"secretRef": {"name": "branch-env-secrets", "optional": True}}
-    ]
-    ports = {p["containerPort"] for p in ws["ports"]}
-    assert {8080, 8000, 5173} <= ports
-
-    # oauth2-proxy: issuer points at the ENV's OWN Keycloak realm (path-routed).
-    proxy = containers["oauth2-proxy"]
-    args = " ".join(proxy["args"])
-    assert "--oidc-issuer-url=https://druppie-feature-foo.rijnland.dev/realms/druppie" in args
-    assert "--redirect-url=https://druppie-feature-foo-dev.rijnland.dev/oauth2/callback" in args
-    assert "--client-id=workspace" in args
-
-    # Service maps 80 -> 4180 (oauth2-proxy).
-    svc = by_kind["Service"]
-    assert svc["spec"]["ports"][0]["port"] == 80
-    assert svc["spec"]["ports"][0]["targetPort"] == 4180
-
-
-# ---------------------------------------------------------------------------
-# workspace: enable / disable
+# workspace: chart-native (enabled by default at creation)
 # ---------------------------------------------------------------------------
 
 
@@ -623,27 +567,37 @@ def _ready_deployment():
     return {"status": {"readyReplicas": 1}}
 
 
-def test_enable_workspace_commits_file(client, as_owner, fake_gitea):
+def _hr_values(fake_gitea, slug="feature-foo"):
+    docs = yaml.safe_load_all(fake_gitea.files[f"{_env_dir(slug)}/helmrelease.yaml"])
+    hr = next(d for d in docs if d and d.get("kind") == "HelmRelease")
+    return hr["spec"]["values"]
+
+
+def test_create_enables_workspace_by_default(client, as_owner, fake_gitea):
     _deploy(client)
-    r = client.post("/api/branch-environments/feature-foo/workspace")
-    assert r.status_code == 202, r.text
-    body = r.json()
+    values = _hr_values(fake_gitea)
+    assert values["externalSecrets"]["managed"] is True
+    assert values["persistence"]["storageClass"] == "longhorn-branch-env"
+    dw = values["devWorkspace"]
+    assert dw["enabled"] is True
+    assert dw["developer"] == "robbe"
+    assert dw["gitBranch"] == "feature/foo"
+    assert dw["codeServer"]["devHost"] == "druppie-feature-foo-dev.rijnland.dev"
+    body = client.get("/api/branch-environments/feature-foo").json()
     assert body["workspace_enabled"] is True
     assert body["workspace_url"] == "https://druppie-feature-foo-dev.rijnland.dev"
 
-    path = f"{_env_dir('feature-foo')}/workspace.yaml"
-    assert path in fake_gitea.files
-    docs = {d["kind"]: d for d in yaml.safe_load_all(fake_gitea.files[path])}
-    containers = {
-        c["name"] for c in docs["Deployment"]["spec"]["template"]["spec"]["containers"]
-    }
-    assert "oauth2-proxy" in containers
-    assert docs["Ingress"]["spec"]["rules"][0]["host"] == "druppie-feature-foo-dev.rijnland.dev"
+
+def test_create_workspace_host_too_long_422(client, as_owner):
+    # slug 52 chars -> workspace label 'druppie-<slug>-dev' (64) exceeds 63,
+    # checked at creation because the workspace is enabled by default.
+    long_branch = "a" * 52
+    assert _deploy(client, branch=long_branch).status_code == 422
 
 
-def test_enable_workspace_twice_conflicts(client, as_owner):
+def test_enable_workspace_when_already_enabled_conflicts(client, as_owner):
     _deploy(client)
-    assert client.post("/api/branch-environments/feature-foo/workspace").status_code == 202
+    # Enabled at creation -> a second enable is a conflict.
     assert client.post("/api/branch-environments/feature-foo/workspace").status_code == 409
 
 
@@ -651,34 +605,31 @@ def test_enable_workspace_non_owner_forbidden(client, as_owner, app, fake_gitea)
     _deploy(client)
     app.dependency_overrides[get_current_user] = lambda: _user(OTHER_SUB)
     assert client.post("/api/branch-environments/feature-foo/workspace").status_code == 403
-    assert f"{_env_dir('feature-foo')}/workspace.yaml" not in fake_gitea.files
+    # HelmRelease unchanged (still enabled from creation).
+    assert _hr_values(fake_gitea)["devWorkspace"]["enabled"] is True
 
 
 def test_enable_workspace_unknown_env_404(client, as_owner):
     assert client.post("/api/branch-environments/nope/workspace").status_code == 404
 
 
-def test_enable_workspace_host_too_long_422(client, as_owner):
-    # slug 52 chars -> namespace 'druppie-<slug>' (60) is a valid label, but the
-    # workspace label 'druppie-<slug>-dev' (64) exceeds 63.
-    long_branch = "a" * 52
-    assert _deploy(client, branch=long_branch).status_code == 202
-    slug = _slugify(long_branch)
-    assert client.post(f"/api/branch-environments/{slug}/workspace").status_code == 422
-
-
-def test_disable_workspace_deletes_file(client, as_owner, fake_gitea):
+def test_disable_workspace_toggles_helmrelease(client, as_owner, fake_gitea):
     _deploy(client)
-    client.post("/api/branch-environments/feature-foo/workspace")
     r = client.delete("/api/branch-environments/feature-foo/workspace")
     assert r.status_code == 202, r.text
     assert r.json()["workspace_enabled"] is False
+    assert _hr_values(fake_gitea)["devWorkspace"]["enabled"] is False
+    # No standalone workspace.yaml is committed anymore.
     assert f"{_env_dir('feature-foo')}/workspace.yaml" not in fake_gitea.files
 
 
-def test_disable_workspace_when_absent(client, as_owner):
+def test_disable_then_enable_roundtrip(client, as_owner, fake_gitea):
     _deploy(client)
-    assert client.delete("/api/branch-environments/feature-foo/workspace").status_code in (404, 409)
+    assert client.delete("/api/branch-environments/feature-foo/workspace").status_code == 202
+    assert _hr_values(fake_gitea)["devWorkspace"]["enabled"] is False
+    r = client.post("/api/branch-environments/feature-foo/workspace")
+    assert r.status_code == 202, r.text
+    assert _hr_values(fake_gitea)["devWorkspace"]["enabled"] is True
 
 
 def test_disable_workspace_unknown_env_404(client, as_owner):
@@ -687,8 +638,8 @@ def test_disable_workspace_unknown_env_404(client, as_owner):
 
 def test_detail_reports_workspace_running(client, as_owner, fake_cluster):
     _deploy(client)
-    client.post("/api/branch-environments/feature-foo/workspace")
-    fake_cluster.deployments[("druppie-feature-foo", "workspace")] = _ready_deployment()
+    # Chart-native Deployment: <instance>-workspace (not the old "workspace").
+    fake_cluster.deployments[("druppie-feature-foo", "druppie-feature-foo-workspace")] = _ready_deployment()
     body = client.get("/api/branch-environments/feature-foo").json()
     assert body["workspace_enabled"] is True
     assert body["workspace_url"] == "https://druppie-feature-foo-dev.rijnland.dev"
@@ -697,17 +648,8 @@ def test_detail_reports_workspace_running(client, as_owner, fake_cluster):
 
 def test_detail_workspace_deploying_before_ready(client, as_owner):
     _deploy(client)
-    client.post("/api/branch-environments/feature-foo/workspace")
     body = client.get("/api/branch-environments/feature-foo").json()
     assert body["workspace_status"] == "deploying"
-
-
-def test_detail_workspace_disabled_by_default(client, as_owner):
-    _deploy(client)
-    body = client.get("/api/branch-environments/feature-foo").json()
-    assert body["workspace_enabled"] is False
-    assert body["workspace_url"] is None
-    assert body["workspace_status"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -740,8 +682,9 @@ def _make_cluster_all_ready(fake_cluster):
     fake_cluster.namespaces[_NS] = _branch_env_ns()
     fake_cluster.gitrepositories["feature-foo"] = _hr_ready()
     fake_cluster.externalsecrets[_NS] = [
-        {"metadata": {"name": "branch-env-secrets"}, **_hr_ready()},
+        {"metadata": {"name": "druppie-feature-foo-secrets"}, **_hr_ready()},
         {"metadata": {"name": "druppie-tls"}, **_hr_ready()},
+        {"metadata": {"name": "harbor-regcred"}, **_hr_ready()},
     ]
     fake_cluster.helmreleases[_NS] = _hr_ready()
     fake_cluster.deployments[(_NS, "druppie-backend")] = {
@@ -802,11 +745,11 @@ def test_pipeline_secrets_sync_failure(client, as_owner, fake_cluster):
     fake_cluster.namespaces[_NS] = _branch_env_ns()
     fake_cluster.externalsecrets[_NS] = [
         {
-            "metadata": {"name": "branch-env-secrets"},
+            "metadata": {"name": "druppie-tls"},
             **_hr_ready(
                 status="False",
                 reason="SecretSyncedError",
-                message="key not found: druppie/developers/robbe",
+                message="key not found: druppie-tls/tls.crt",
             ),
         }
     ]
@@ -814,7 +757,7 @@ def test_pipeline_secrets_sync_failure(client, as_owner, fake_cluster):
     s = _stages(body)
     assert body["status"] == "failed"
     assert s["secrets"]["status"] == "failed"
-    assert "branch-env-secrets" in s["secrets"]["message"]
+    assert "druppie-tls" in s["secrets"]["message"]
     assert "key not found" in s["secrets"]["message"]
     assert s["secrets"]["detail"] == "0/1 secrets synced"
 

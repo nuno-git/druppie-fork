@@ -40,6 +40,16 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
+@router.get("/branches")
+async def list_branches(
+    service: BranchEnvironmentService = Depends(get_branch_environment_service),
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
+) -> list[str]:
+    """List all branches from the application repo (ai/druppie)."""
+    return await service.list_branches()
+
+
 @router.get("/branch-environments", response_model=BranchEnvironmentListResponse)
 async def list_branch_environments(
     page: int = 1,
@@ -76,6 +86,7 @@ async def create_branch_environment(
         # The deployer's own identity — "developer" secrets always resolve to
         # THEIR Vault map; there is deliberately no way to pick someone else's.
         owner_username=user.get("preferred_username"),
+        recovery_mode=body.recovery_mode,
     )
 
 

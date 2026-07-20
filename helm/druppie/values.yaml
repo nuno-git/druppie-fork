@@ -1,3 +1,6 @@
+# Recovery mode: deploy workspace + Keycloak only (skip gitea, druppie-db, all modules)
+recoveryMode: false
+
 global:
   instance: druppie
   imagePullPolicy: IfNotPresent
@@ -161,8 +164,6 @@ backend:
     #      matches Vault branch-env/workspace-oauth#client-secret.
     # Overridable via env on the backend: BRANCH_ENV_WORKSPACE_IMAGE,
     # BRANCH_ENV_OAUTH2_PROXY_IMAGE, BRANCH_ENV_WORKSPACE_STORAGE_CLASS.
-  guacamoleUrl: http://guacamole.remote-access.svc.cluster.local:8080
-  guacamolePublicUrl: http://localhost:30020
   llm:
     provider: zai
     forceProvider: ''
@@ -221,13 +222,39 @@ frontend:
 devWorkspace:
   enabled: false
   stackMode: degraded
-  # developer: whose Vault secret set (druppie/developers/<developer>/*) backs
-  # this env. When set, the chart renders ExternalSecrets that sync
-  # database/keycloak/gitea/app/workspace into the namespace, so the developer
-  # env owns its own secrets (mirroring main/colab-dev). Leave empty to use the
-  # legacy shared branch-env paths.
+  # embedModules: list of MCP module keys to run INSIDE the workspace pod under
+  # `uvicorn --reload` (hot-reload on edit) instead of as separate baked-image
+  # Deployments. When a module is listed here AND devWorkspace.enabled=true:
+  #   - its Deployment is skipped (no separate pod)
+  #   - its Service selector flips to component: dev-workspace, targeting the
+  #     named port mcp-<key> on the workspace container
+  #   - the workspace entrypoint launches `uvicorn --reload` for it from
+  #     /workspace/druppie/mcp-servers/module-<dir>
+  # Valid keys: coding docker filesearch web archimate registry llm kubernetes
+  #   vision searxng browser data_access azuredevops
+  # Caveats for privileged modules (embedded best-effort, see Dockerfile.dev-workspace):
+  #   coding/docker  — need docker.sock (auto-mounted when present in the list)
+  #   kubernetes     — workspace SA gets the k8s-readonly ClusterRoleBinding
+  #   vision         — needs GPU; only useful if the workspace pod is pinned to
+  #                    a GPU node (set devWorkspace.nodeSelector + resources)
+  #   browser        — chromium already in the image; needs --no-sandbox (set)
+  embedModules: []
+  # secretsSource: Vault path prefix for env secrets. Accepted values:
+  #   "colab-dev" → druppie/colab-dev/*  (shared LLM keys, etc.)
+  #   "robbe"     → druppie/developers/robbe/*
+  #   "nuno"      → druppie/developers/nuno/*
+  #   <custom>    → druppie/developers/<custom>/*
+  # When set, the chart renders ExternalSecrets that sync
+  # database/keycloak/gitea/app/workspace into the namespace. Leave empty to
+  # skip ExternalSecrets (no secrets — the env won't start without them).
+  secretsSource: ""
   developer: ""
-  image: harbor.rijnland.dev/druppie/dev-workspace:latest
+  image:
+    repository: dev-workspace
+    # When empty, falls back to global.imageTag then "latest". CI sets this
+    # to the deploy tag only when Dockerfile.dev-workspace changes — so
+    # code-only pushes don't trigger a workspace restart.
+    tag: ""
   imagePullPolicy: Always
   gitBranch: ""                       # DRUPPIE_GIT_BRANCH (set per branch)
   repoUrl: https://aigit.waterschap.org/ai/druppie.git
@@ -238,8 +265,16 @@ devWorkspace:
     enabled: true
   workspace:
     size: 20Gi
-    storageClassName: longhorn-distributed
+    # Empty → resolved by the template via the persistence.storageClass helper
+    # (same as all other PVCs). Set explicitly only to override.
+    storageClassName: ""
   nodeSelector: {}
+  # Traefik ingress controller's in-cluster ClusterIP (e.g. the rke2-traefik-lb
+  # service ClusterIP). When set, a hostAlias maps global.domain to it so the pod
+  # reaches Keycloak (OIDC discovery/token redeem) via the public hostname but on
+  # the internal IP — pods can't hairpin to the LoadBalancer external IP, and
+  # KC_HOSTNAME_STRICT rejects any other Host header.
+  ingressVIP: ""
   resources:
     requests:
       cpu: 500m
@@ -321,6 +356,36 @@ modules:
         cpu: 100m
       limits:
         memory: 512Mi
+        cpu: 1000m
+  searxng:
+    enabled: true
+    replicaCount: 1
+    nodeSelector: {}
+    image:
+      repository: druppie-module-searxng
+      tag: latest
+    port: 9014
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 1000m
+  browser:
+    enabled: true
+    replicaCount: 1
+    nodeSelector: {}
+    image:
+      repository: druppie-module-browser
+      tag: latest
+    port: 9015
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 200m
+      limits:
+        memory: 1Gi
         cpu: 1000m
   archimate:
     enabled: true

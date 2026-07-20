@@ -1,4 +1,4 @@
-{{- if .Values.modules.filesearch.enabled }}
+{{- if and .Values.modules.filesearch.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "filesearch"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,11 +17,15 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-filesearch
+        {{- if not .Values.persistence.rwx }}
+        druppie.io/shared-storage: "true"
+        {{- end }}
     spec:
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
+      {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
         - name: module-filesearch
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.filesearch.image) }}

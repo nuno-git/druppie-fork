@@ -48,8 +48,6 @@ data:
   BACKEND_URL: "http://{{ include "druppie.fullname" . }}-backend:8000"
   WORKSPACE_PATH: "/app/workspace"
   USE_MCP_MICROSERVICES: "true"
-  GUACAMOLE_URL: {{ .Values.backend.guacamoleUrl | default (printf "http://guacamole.%s.svc.cluster.local:8080" "remote-access") | quote }}
-  GUACAMOLE_PUBLIC_URL: {{ .Values.backend.guacamolePublicUrl | default "http://localhost:30020" | quote }}
   {{- if not .Values.global.ingress.enabled }}
   # URL for compose_up apps to reach the backend (Docker-reachable, not K8s DNS)
   COMPOSE_DRUPPIE_URL: {{ (.Values.backend.composeDruppieUrl | default (printf "http://172.25.0.1:%d" (int .Values.backend.nodePort))) | quote }}
@@ -67,6 +65,8 @@ data:
   MCP_KUBERNETES_URL: "http://{{ include "druppie.fullname" . }}-module-kubernetes:{{ .Values.modules.kubernetes.port }}"
   MCP_DATA_ACCESS_URL: "http://{{ include "druppie.fullname" . }}-module-data-access:9010"
   MCP_AZUREDEVOPS_URL: "http://{{ include "druppie.fullname" . }}-module-azuredevops:{{ .Values.modules.azuredevops.port }}"
+  MCP_SEARXNG_URL: "http://{{ include "druppie.fullname" . }}-module-searxng:{{ .Values.modules.searxng.port }}"
+  MCP_BROWSER_URL: "http://{{ include "druppie.fullname" . }}-module-browser:{{ .Values.modules.browser.port }}"
   LAYOUT_SERVICE_URL: "http://{{ include "druppie.fullname" . }}-layout-service:8090"
   {{- if .Values.prReview.repos }}
 

@@ -1,4 +1,4 @@
-{{- if not .Values.cnpg.enabled }}
+{{- if and (not .Values.cnpg.enabled) (not .Values.recoveryMode) }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

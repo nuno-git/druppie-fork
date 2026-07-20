@@ -24,7 +24,6 @@ from .revert_service import RevertService
 from .evaluation_service import EvaluationService
 from .documentation_service import DocumentationService
 from .job_service import JobService
-from .dev_env_service import DevEnvService
 from .deploy_service import DeployService
 from .branch_environment_service import BranchEnvironmentService
 from .model_management_service import ModelManagementService
@@ -41,7 +40,6 @@ __all__ = [
     "EvaluationService",
     "DocumentationService",
     "JobService",
-    "DevEnvService",
     "DeployService",
     "BranchEnvironmentService",
     "ModelManagementService",

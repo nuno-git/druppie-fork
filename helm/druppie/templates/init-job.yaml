@@ -44,6 +44,7 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
+        {{- if not .Values.recoveryMode }}
         - name: wait-for-gitea
           image: curlimages/curl:latest
           command:
@@ -62,6 +63,7 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
+        {{- end }}
       containers:
         - name: init
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.init.image) }}
@@ -120,6 +122,8 @@ spec:
                   key: GITEA_ADMIN_PASSWORD
             - name: GITEA_ADMIN_EMAIL
               value: {{ .Values.gitea.adminEmail | quote }}
+            - name: SETUP_GITEA_ENABLED
+              value: {{ if .Values.recoveryMode }}"false"{{ else }}"true"{{ end }}
             - name: KEYCLOAK_INTERNAL_URL
               value: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
             - name: KEYCLOAK_REALM
@@ -139,20 +143,21 @@ spec:
               value: "{{ include "druppie.frontendExternalUrl" . }}"
             - name: KEYCLOAK_EXTERNAL_URL
               value: "{{ include "druppie.keycloakExternalUrl" . }}"
+            - name: KEYCLOAK_PUBLIC_URL
+              value: "{{ include "druppie.keycloakExternalUrl" . }}"
             - name: GITEA_EXTERNAL_URL
               value: "{{ include "druppie.giteaExternalUrl" . }}"
             {{- end }}
             {{- if .Values.devWorkspace.enabled }}
             # Dev workspace: create the 'workspace' Keycloak client (oauth2-proxy).
-            # optional:true so the init Job never blocks if ESO hasn't synced the
-            # workspace-oauth Secret yet — a later helm upgrade re-runs the hook
-            # (create_client is idempotent) and registers the client.
+            # optional:false blocks the main container until ESO has synced
+            # client-secret into <instance>-secrets — guarantees the init job
+            # creates the workspace client on first boot, not just on re-install.
             - name: WORKSPACE_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.devWorkspace.oauth.externalSecret.secretName }}
+                  name: {{ include "druppie.fullname" . }}-secrets
                   key: client-secret
-                  optional: true
             {{- if .Values.devWorkspace.codeServer.devHost }}
             - name: WORKSPACE_REDIRECT_URL
               value: {{ printf "https://%s/oauth2/callback" .Values.devWorkspace.codeServer.devHost | quote }}

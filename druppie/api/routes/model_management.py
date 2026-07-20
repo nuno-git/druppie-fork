@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from druppie.api.deps import require_admin
 from druppie.db.database import SessionLocal
-from druppie.domain.model_override import ModelManagementView, ModelOverrideSummary, ProviderStatus
+from druppie.domain.model_override import LocalModelLogs, LocalModelStatus, ModelManagementView, ModelOverrideSummary, ProviderStatus
 from druppie.repositories.model_override_repository import ModelOverrideRepository
 from druppie.services.model_management_service import ModelManagementService
 
@@ -148,3 +148,20 @@ async def validate_provider(
     user: dict = Depends(require_admin),
 ):
     return await service.validate_api_key(provider, model)
+
+
+@router.get("/admin/models/local-status", response_model=LocalModelStatus)
+async def get_local_model_status(
+    service: ModelManagementService = Depends(get_model_management_service),
+    user: dict = Depends(require_admin),
+):
+    return await service.get_local_status()
+
+
+@router.get("/admin/models/local-logs", response_model=LocalModelLogs)
+async def get_local_model_logs(
+    tail: int = Query(50, ge=1, le=500),
+    service: ModelManagementService = Depends(get_model_management_service),
+    user: dict = Depends(require_admin),
+):
+    return await service.get_local_logs(tail=tail)

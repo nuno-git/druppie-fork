@@ -1,4 +1,4 @@
-{{- if .Values.modules.kubernetes.enabled }}
+{{- if and .Values.modules.kubernetes.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "kubernetes"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -50,11 +50,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && python --version && pip --version
 
+# Union of system deps required by MCP modules that may be embedded into this
+# pod (see devWorkspace.embedModules). Only adds what the base Layer 1 doesn't
+# already provide:
+#   docker-ce-cli  — module-coding & module-docker talk to a mounted docker.sock
+#   poppler-utils  — module-vision PDF→image conversion
+# Chromium (module-coding's puppeteer + module-browser) is already installed in
+# Layer 1b below; playwright's own chromium is fetched per-venv in Layer 6.
+# Write the key as armored .asc — modern apt (≥1.4, Debian bookworm is 2.5+)
+# reads it directly, so we avoid the `gpg --dearmor` pipe (gnupg isn't in Layer
+# 1, and a broken pipe surfaces as "curl failed writing body").
+RUN apt-get update \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 # Node 20 via NodeSource (mirrors mcp-servers/module-coding/Dockerfile.dev-vm)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && node --version && npm --version
+
+# Mermaid CLI — used by module-coding for structural diagram validation
+# (mirrors mcp-servers/module-coding/Dockerfile). MUST set PUPPETEER_SKIP_*
+# before the install: @mermaid-js/mermaid-cli pulls puppeteer, whose postinstall
+# downloads ~150MB Chromium unless skipped. System Chromium (installed in Layer
+# 1b below) is used at runtime via PUPPETEER_EXECUTABLE_PATH.
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+RUN npm install -g @mermaid-js/mermaid-cli
 
 # ===========================================================================
 # Layer 1b — Browser desktop: XFCE + TigerVNC + noVNC (HTTP-only GUI)
@@ -68,11 +97,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tigervnc-standalone-server \
         novnc \
         websockify \
-        xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-terminal thunar \
+        xfce4-session xfwm4 xfce4-panel xfdesktop4 thunar \
+        terminator \
+        mousepad \
         dbus-x11 x11-xserver-utils \
         fonts-dejavu \
         chromium \
+        nano \
+        gnupg2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --set x-terminal-emulator /usr/bin/terminator
+
+# VS Code desktop (for the noVNC XFCE session)
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /usr/share/keyrings/packages.microsoft.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list \
+    && apt-get update && apt-get install -y --no-install-recommends code \
     && rm -rf /var/lib/apt/lists/*
+
+# OpenCode CLI — installer puts the binary in /root/.opencode/bin/ which is
+# inaccessible to the non-root developer user at runtime (drwx------). Copy
+# the binary to /usr/local/bin so it is world-executable and on PATH.
+RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path \
+    && cp /root/.opencode/bin/opencode /usr/local/bin/opencode \
+    && chmod +x /usr/local/bin/opencode \
+    && rm -rf /root/.opencode \
+    && opencode --version
 
 # Chromium's own sandbox needs user namespaces / SUID, which the pod's
 # restricted runtime does not grant; k8s also mounts a tiny /dev/shm.
@@ -116,14 +165,12 @@ RUN groupadd -g 1000 developer \
     && mkdir -p /workspace \
     && chown developer:developer /workspace
 
-# Bust cache for the source snapshot only (dependency layers below are keyed on
-# the lock/requirements files, so they stay cached across code-only commits).
-# Mirrors the CACHEBUST ARG pattern in the backend Dockerfile.
-ARG CACHEBUST
-# The whole build context (repo root) is baked in as an offline seed. .git is
-# excluded by .dockerignore, so the entrypoint re-inits git and fetches at
-# runtime. node_modules / the venv are (re)built fresh in L4/L5 below.
-COPY --chown=developer:developer . /opt/druppie-src
+# Early dependency file copies — content-hash keyed, so the heavy install
+# layers below (npm install, pip install, per-module venvs) stay cached
+# across commits that only change code or config, not dependency files.
+COPY frontend/package.json /opt/druppie-src/frontend/
+COPY druppie/requirements.txt /opt/druppie-src/druppie/
+COPY druppie/mcp-servers /opt/druppie-src/druppie/mcp-servers
 
 # ===========================================================================
 # Layer 4 — Frontend node_modules
@@ -148,6 +195,54 @@ RUN python -m venv /opt/venv \
     && chown -R developer:developer /opt/venv
 
 # ===========================================================================
+# Layer 6 — Per-module virtualenvs (for devWorkspace.embedModules)
+# ===========================================================================
+# One venv per MCP module so any module can be embedded into the workspace pod
+# and run under `uvicorn --reload` against the live checkout on the PVC. Each
+# venv is relocated to /workspace/.venvs/<key> on first seed (same pattern as
+# the backend venv) so pip reinstalls on requirements change survive pod restart.
+#
+# The venv KEY matches the Helm values key (modules.<key>); the SOURCE DIR is
+# module-<key with _ -> -> (module-data-access for data_access). A module whose
+# deps fail to install under Python 3.12 is skipped (venv dir left absent) — the
+# entrypoint treats a missing venv as "not embeddable" and falls back to the
+# baked-image Deployment for that module.
+RUN set -e; \
+    for key in coding docker filesearch web archimate registry llm \
+               kubernetes vision searxng browser data_access azuredevops; do \
+        dir="module-$(printf '%s' "$key" | tr '_' '-')"; \
+        req="/opt/druppie-src/druppie/mcp-servers/${dir}/requirements.txt"; \
+        if [ ! -f "$req" ]; then \
+            echo "[dev-workspace] no requirements.txt for $key ($dir) — skipping"; \
+            continue; \
+        fi; \
+        echo "[dev-workspace] building venv for $key ($dir)"; \
+        if python -m venv "/opt/venvs/$key" \
+            && "/opt/venvs/$key/bin/python" -m pip install --no-cache-dir --upgrade pip \
+            && "/opt/venvs/$key/bin/python" -m pip install --no-cache-dir -r "$req"; then \
+            echo "[dev-workspace] ok: $key"; \
+        else \
+            echo "[dev-workspace] WARN: $key venv setup failed — removing; module not embeddable"; \
+            rm -rf "/opt/venvs/$key"; \
+        fi; \
+    done; \
+    if [ -d /opt/venvs/browser ]; then \
+        echo "[dev-workspace] pre-fetching playwright chromium for module-browser"; \
+        /opt/venvs/browser/bin/python -m playwright install chromium || \
+            echo "[dev-workspace] WARN: playwright chromium fetch failed — browser module may error at runtime"; \
+    fi; \
+    chown -R developer:developer /opt/venvs
+
+# ===========================================================================
+# Late: CACHEBUST + full repo copy (invalidated on every commit)
+# ===========================================================================
+# The whole build context is baked as an offline seed. .git is excluded by
+# .dockerignore, so the entrypoint re-inits git and fetches at runtime.
+# node_modules / the venvs are baked above and survive the cache bust.
+ARG CACHEBUST
+COPY --chown=developer:developer . /opt/druppie-src
+
+# ===========================================================================
 # Entrypoint
 # ===========================================================================
 COPY --chown=developer:developer scripts/dev-workspace-entrypoint.sh /usr/local/bin/dev-workspace-entrypoint.sh
@@ -161,6 +256,15 @@ RUN install -d -m 755 -o developer -g developer /home/developer/.config/code-ser
         > /home/developer/.config/code-server/config.yaml \
     && chown -R developer:developer /home/developer/.config
 
+# VS Code desktop entry for XFCE noVNC session
+RUN install -d -m 755 /usr/share/applications \
+    && printf '[Desktop Entry]\nName=VS Code\nComment=Code Editing. Redefined.\nGenericName=Text Editor\nExec=/usr/share/code/code --no-sandbox --unity-launch %%F\nIcon=code\nType=Application\nStartupNotify=false\nStartupWMClass=Code\nCategories=TextEditor;Development;IDE;\nMimeType=text/plain;inode/directory;\nActions=new-empty-window;\nKeywords=vscode;\n\n[Desktop Action new-empty-window]\nName=New Empty Window\nExec=/usr/share/code/code --no-sandbox --new-window %%F\nIcon=code\n' > /usr/share/applications/code.desktop
+
+# XFCE desktop autostart: open terminator in /workspace/druppie on session start
+RUN install -d -m 755 -o developer -g developer /home/developer/.config/autostart \
+    && printf '[Desktop Entry]\nType=Application\nName=Workspace Terminal\nExec=terminator --working-directory=/workspace/druppie\nX-GNOME-Autostart-enabled=true\n' > /home/developer/.config/autostart/workspace-terminal.desktop \
+    && chown -R developer:developer /home/developer/.config/autostart
+
 USER developer
 WORKDIR /workspace
 
@@ -170,7 +274,11 @@ RUN code-server --install-extension Anthropic.claude-code \
     && code-server --list-extensions | grep -i claude
 
 # code-server:8080  backend:8000  frontend/vite:5173
-EXPOSE 8000 5173 8080
+# MCP module ports (only bound when the module is in devWorkspace.embedModules):
+#   coding:9001 docker:9002 filesearch:9004 web:9005 archimate:9006
+#   registry:9007 llm:9008 data_access:9010 vision:9011 azuredevops:9012
+#   kubernetes:9013 searxng:9014 browser:9015
+EXPOSE 8000 5173 8080 9001 9002 9004 9005 9006 9007 9008 9010 9011 9012 9013 9014 9015
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -fsS http://localhost:8080/healthz || exit 1

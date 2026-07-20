@@ -1,4 +1,4 @@
-{{- if .Values.modules.azuredevops.enabled }}
+{{- if and .Values.modules.azuredevops.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "azuredevops"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -60,7 +60,9 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}
 ---
+{{- if .Values.modules.azuredevops.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -72,10 +74,10 @@ spec:
   type: ClusterIP
   ports:
     - port: {{ .Values.modules.azuredevops.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "azuredevops") }}mcp-azuredevops{{ else }}http{{ end }}
       protocol: TCP
       name: http
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-azuredevops
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "azuredevops") }}dev-workspace{{ else }}module-azuredevops{{ end }}
 {{- end }}

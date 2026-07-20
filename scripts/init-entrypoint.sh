@@ -24,9 +24,13 @@ echo "--- Step 1/2: Configuring Keycloak ---"
 python /app/scripts/setup_keycloak.py
 echo ""
 
-# Step 2: Configure Gitea
+# Step 2: Configure Gitea (skip when SETUP_GITEA_ENABLED=false, e.g. recovery mode)
 echo "--- Step 2/3: Configuring Gitea ---"
-python /app/scripts/setup_gitea.py
+if [ "${SETUP_GITEA_ENABLED:-true}" = "true" ]; then
+    python /app/scripts/setup_gitea.py
+else
+    echo "Skipping Gitea setup (SETUP_GITEA_ENABLED=false)"
+fi
 echo ""
 
 # Step 3: Configure Security Gate (druppie-gate realm for oauth2-proxy)

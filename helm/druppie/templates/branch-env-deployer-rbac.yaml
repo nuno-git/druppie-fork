@@ -32,12 +32,14 @@ rules:
     verbs: ["get", "list"]
   # Deploy-pipeline stages (all read-only): the branch-envs Kustomization and
   # the env's GitRepository (Flux sync + chart-source nodes) ...
+  # PATCH is used to force-reconcile (fluxcd.io/request annotation) right after
+  # the backend commits, cutting the 5-min GitRepository poll wait to seconds.
   - apiGroups: ["kustomize.toolkit.fluxcd.io"]
     resources: ["kustomizations"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "patch"]
   - apiGroups: ["source.toolkit.fluxcd.io"]
     resources: ["gitrepositories"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "patch"]
   # ... ESO sync state (secrets node: missing Vault keys stall the env) ...
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets"]

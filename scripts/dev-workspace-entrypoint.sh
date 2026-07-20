@@ -34,6 +34,7 @@
 set -u
 
 WORKSPACE="/workspace"
+REPO_DIR="${WORKSPACE}/druppie"
 SRC="/opt/druppie-src"
 BAKED_VENV="/opt/venv"
 VENV="${WORKSPACE}/.venv"
@@ -70,6 +71,34 @@ fi
 REQUIREMENTS_REL="druppie/requirements.txt"
 FRONTEND_LOCK_REL="frontend/package-lock.json"
 
+# EMBED_MODULES: space-separated MCP module keys to run inside this pod under
+# `uvicorn --reload` (hot-reload on edit). Set by the chart from
+# devWorkspace.embedModules. Empty in prod/colab-dev and any workspace that
+# keeps modules as baked-image Deployments.
+EMBED_MODULES="${EMBED_MODULES:-}"
+
+# Canonical MCP module catalog: values-key -> "source-dir port".
+#   - source-dir is relative to druppie/mcp-servers/ (module-<key-with-_→->)
+#   - port matches the chart's modules.<key>.port and the Service targetPort
+# Keys here are the universe of embeddable modules; EMBED_MODULES selects which
+# actually run. A missing /opt/venvs/<key> (build skipped in the image) makes
+# start_mcp_module fall back to a runtime venv build, or skip with a warning.
+declare -A MCP_MODULES=(
+    [coding]="module-coding 9001"
+    [docker]="module-docker 9002"
+    [filesearch]="module-filesearch 9004"
+    [web]="module-web 9005"
+    [archimate]="module-archimate 9006"
+    [registry]="module-registry 9007"
+    [llm]="module-llm 9008"
+    [kubernetes]="module-kubernetes 9013"
+    [vision]="module-vision 9011"
+    [searxng]="module-searxng 9014"
+    [browser]="module-browser 9015"
+    [data_access]="module-data-access 9010"
+    [azuredevops]="module-azuredevops 9012"
+)
+
 log()  { printf '[dev-workspace] %s\n' "$*"; }
 warn() { printf '[dev-workspace] WARN: %s\n' "$*" >&2; }
 
@@ -79,24 +108,25 @@ warn() { printf '[dev-workspace] WARN: %s\n' "$*" >&2; }
 seed_workspace() {
     # Consider the workspace unseeded if it has no baked marker. Ignore the
     # dot-dirs we create ourselves (.logs etc.) when deciding emptiness.
-    if [ -f "${WORKSPACE}/.seeded" ]; then
+    if [ -f "${REPO_DIR}/.seeded" ]; then
         log "workspace already seeded — reusing existing checkout"
         return 0
     fi
 
     log "seeding workspace from ${SRC} (first boot)"
+    mkdir -p "${REPO_DIR}"
     # -a preserves the developer-owned tree baked in the image. The trailing
-    # /. copies contents (including dotfiles) into the existing /workspace.
-    cp -a "${SRC}/." "${WORKSPACE}/"
+    # /. copies contents (including dotfiles) into ${REPO_DIR}.
+    cp -a "${SRC}/." "${REPO_DIR}/"
 
     # The baked snapshot has no .git (excluded by .dockerignore). Re-init so
     # code-server's git integration and the runtime checkout below work.
-    if [ ! -d "${WORKSPACE}/.git" ]; then
-        git -C "${WORKSPACE}" init -q
-        git -C "${WORKSPACE}" config user.name "druppie-dev" 2>/dev/null || true
-        git -C "${WORKSPACE}" config user.email "dev@druppie.local" 2>/dev/null || true
-        git -C "${WORKSPACE}" remote add origin "${DRUPPIE_REPO_URL}" 2>/dev/null || \
-            git -C "${WORKSPACE}" remote set-url origin "${DRUPPIE_REPO_URL}"
+    if [ ! -d "${REPO_DIR}/.git" ]; then
+        git -C "${REPO_DIR}" init -q
+        git -C "${REPO_DIR}" config user.name "druppie-dev" 2>/dev/null || true
+        git -C "${REPO_DIR}" config user.email "dev@druppie.local" 2>/dev/null || true
+        git -C "${REPO_DIR}" remote add origin "${DRUPPIE_REPO_URL}" 2>/dev/null || \
+            git -C "${REPO_DIR}" remote set-url origin "${DRUPPIE_REPO_URL}"
     fi
 
     # Seed the backend venv (relocated copy — see Dockerfile L5 note).
@@ -111,10 +141,10 @@ seed_workspace() {
     store_hash "${FRONTEND_LOCK_REL}" "${DEP_DIR}/frontend.sha"
     store_hash "${REQUIREMENTS_REL}"  "${DEP_DIR}/backend.sha"
 
-    touch "${WORKSPACE}/.seeded"
+    touch "${REPO_DIR}/.seeded"
 }
 
-hash_of()    { [ -f "${WORKSPACE}/$1" ] && sha256sum "${WORKSPACE}/$1" | awk '{print $1}' || printf ''; }
+hash_of()    { [ -f "${REPO_DIR}/$1" ] && sha256sum "${REPO_DIR}/$1" | awk '{print $1}' || printf ''; }
 store_hash() { hash_of "$1" > "$2"; }
 
 # ---------------------------------------------------------------------------
@@ -127,28 +157,77 @@ checkout_branch() {
 
     # Build an authenticated fetch URL without persisting the token in the
     # stored remote (origin keeps the clean URL for the code-server UI).
+    local git_token="${DRUPPIE_GIT_TOKEN:-${EXTERNAL_GITEA_TOKEN:-}}"
     local fetch_url="${DRUPPIE_REPO_URL}"
-    if [ -n "${DRUPPIE_GIT_TOKEN}" ]; then
-        fetch_url=$(printf '%s' "${DRUPPIE_REPO_URL}" | sed "s#https://#https://oauth2:${DRUPPIE_GIT_TOKEN}@#")
+    if [ -n "${git_token}" ]; then
+        fetch_url=$(printf '%s' "${DRUPPIE_REPO_URL}" | sed "s#https://#https://oauth2:${git_token}@#")
     fi
 
     log "fetching branch '${branch}' from origin"
     # shellcheck disable=SC2086
-    if git -C "${WORKSPACE}" ${git_opts} fetch --depth=1 "${fetch_url}" "${branch}" 2>>"${LOGS}/git.log"; then
+    if git -C "${REPO_DIR}" ${git_opts} fetch --depth=1 "${fetch_url}" "${branch}" 2>>"${LOGS}/git.log"; then
         # reset --hard overwrites the seeded working tree to the branch content
         # without the "untracked file would be overwritten" errors that plague
         # `git checkout` when the dir was pre-populated by the seed step.
-        git -C "${WORKSPACE}" reset --hard FETCH_HEAD >>"${LOGS}/git.log" 2>&1
-        git -C "${WORKSPACE}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
-        log "checked out '${branch}' at $(git -C "${WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '?')"
+        git -C "${REPO_DIR}" reset --hard FETCH_HEAD >>"${LOGS}/git.log" 2>&1
+        git -C "${REPO_DIR}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
+        log "checked out '${branch}' at $(git -C "${REPO_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?')"
     else
         warn "git fetch failed (offline or auth/TLS issue) — continuing with the baked snapshot; see ${LOGS}/git.log"
     fi
 }
 
 # ---------------------------------------------------------------------------
-# 3. Conditional dependency install (only when a lockfile changed).
+# 2b. Configure git for push from code-server terminal.
 # ---------------------------------------------------------------------------
+configure_git() {
+    git config --global user.name "Developer"
+    git config --global user.email "dev@druppie.local"
+    git config --global push.default current
+    local git_token="${DRUPPIE_GIT_TOKEN:-${EXTERNAL_GITEA_TOKEN:-}}"
+    if [ -n "${git_token}" ]; then
+        printf 'https://oauth2:%s@aigit.waterschap.org\n' "${git_token}" > "${HOME}/.git-credentials"
+        chmod 600 "${HOME}/.git-credentials"
+        git config --global credential.helper store
+        log "git configured with token-based auth for aigit.waterschap.org"
+    else
+        warn "no git token found (DRUPPIE_GIT_TOKEN or EXTERNAL_GITEA_TOKEN) — git push will fail without credentials"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 2c. Clone supplementary repos (ai/k8s, systeembeheer/rancher-gitops).
+# ---------------------------------------------------------------------------
+clone_side_repos() {
+    local git_token="${DRUPPIE_GIT_TOKEN:-${EXTERNAL_GITEA_TOKEN:-}}"
+    if [ -z "${git_token}" ]; then
+        warn "no git token — skipping side repo clones"
+        return 0
+    fi
+
+    local side_repos=(
+        "ai/k8s"
+        "systeembeheer/rancher-gitops"
+    )
+
+    local git_opts=""
+    [ "${GIT_SSL_NO_VERIFY:-}" = "1" ] && git_opts="-c http.sslVerify=false"
+
+    for repo in "${side_repos[@]}"; do
+        local dir="${WORKSPACE}/${repo//\//-}"
+        if [ -d "${dir}/.git" ]; then
+            log "side repo ${repo} already cloned — pulling latest"
+            git -C "${dir}" ${git_opts} pull --ff-only origin main >>"${LOGS}/git.log" 2>&1 || \
+                warn "could not update ${repo} — stale checkout"
+        else
+            log "cloning side repo ${repo} → ${dir}"
+            git -C "${WORKSPACE}" ${git_opts} clone --depth=1 \
+                "https://oauth2:${git_token}@aigit.waterschap.org/${repo}.git" \
+                "${dir}" >>"${LOGS}/git.log" 2>&1 || \
+                warn "could not clone ${repo}"
+        fi
+    done
+}
 ensure_frontend_deps() {
     local cur stored
     cur=$(hash_of "${FRONTEND_LOCK_REL}")
@@ -157,9 +236,9 @@ ensure_frontend_deps() {
         warn "no ${FRONTEND_LOCK_REL} — skipping frontend install"
         return 0
     fi
-    if [ ! -d "${WORKSPACE}/frontend/node_modules" ] || [ "${cur}" != "${stored}" ]; then
+    if [ ! -d "${REPO_DIR}/frontend/node_modules" ] || [ "${cur}" != "${stored}" ]; then
         log "frontend deps changed (or missing) — running npm ci"
-        ( cd "${WORKSPACE}/frontend" && npm ci ) && printf '%s' "${cur}" > "${DEP_DIR}/frontend.sha"
+        ( cd "${REPO_DIR}/frontend" && npm ci ) && printf '%s' "${cur}" > "${DEP_DIR}/frontend.sha"
     else
         log "frontend deps unchanged — reusing node_modules"
     fi
@@ -175,11 +254,114 @@ ensure_backend_deps() {
     fi
     if [ ! -d "${VENV}" ] || [ "${cur}" != "${stored}" ]; then
         log "backend deps changed (or missing) — running pip install"
-        "${VENV}/bin/python" -m pip install --no-cache-dir -r "${WORKSPACE}/${REQUIREMENTS_REL}" \
+        "${VENV}/bin/python" -m pip install --no-cache-dir -r "${REPO_DIR}/${REQUIREMENTS_REL}" \
             && printf '%s' "${cur}" > "${DEP_DIR}/backend.sha"
     else
         log "backend deps unchanged — reusing venv"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# 3b. Embedded MCP modules — per-module venv + uvicorn --reload launcher.
+# ---------------------------------------------------------------------------
+# Each embedded module (EMBED_MODULES) runs as a backgrounded uvicorn --reload
+# process against its live source under /workspace/druppie/mcp-servers/<dir>,
+# so edits in code-server hot-reload the module exactly like the backend.
+#
+# Module source layout: server.py imports `module_router` (shared, lives one
+# level up in mcp-servers/) and `v1.tools` (subdir of the module). We set
+# PYTHONPATH=mcp-servers/ and cwd=module dir so both resolve — matching the
+# flat /app layout the baked image produces via two COPYs.
+ensure_mcp_module_deps() {
+    # $1 = module key, $2 = module dir (under mcp-servers/). Reinstalls the
+    # module's relocated venv when its requirements.txt changed since last boot
+    # (or when the baked venv was absent — e.g. a module added after the image
+    # was built, or one whose image-side install failed non-fatally).
+    local key="$1" dir="$2"
+    local req_rel="druppie/mcp-servers/${dir}/requirements.txt"
+    local venv="${WORKSPACE}/.venvs/${key}"
+    local sha_file="${DEP_DIR}/mcp-${key}.sha"
+    local cur stored
+    cur=$(hash_of "${req_rel}")
+    if [ -z "${cur}" ]; then
+        warn "mcp ${key}: no ${req_rel} — skipping deps check"
+        return 0
+    fi
+    stored=$(cat "${sha_file}" 2>/dev/null || printf '')
+    if [ ! -d "${venv}" ] || [ "${cur}" != "${stored}" ]; then
+        log "mcp ${key}: deps changed (or venv missing) — pip install"
+        if [ ! -d "${venv}" ]; then
+            if ! "${VENV}/bin/python" -m venv "${venv}" \
+                || ! "${venv}/bin/python" -m pip install --no-cache-dir --upgrade pip; then
+                warn "mcp ${key}: venv create failed — module will not start"
+                rm -rf "${venv}"
+                return 1
+            fi
+        fi
+        if "${venv}/bin/python" -m pip install --no-cache-dir -r "${REPO_DIR}/${req_rel}"; then
+            printf '%s' "${cur}" > "${sha_file}"
+        else
+            warn "mcp ${key}: pip install failed — module may be broken until requirements fixed"
+            return 1
+        fi
+    else
+        log "mcp ${key}: deps unchanged — reusing venv"
+    fi
+}
+
+start_mcp_module() {
+    # $1 = module key. Resolves dir/port from the catalog, seeds the venv from
+    # the baked snapshot if available, ensures deps, then launches uvicorn
+    # --reload on the module's port. Watches the module's own dir only; a
+    # shared module_router.py edit needs a manual workspace restart.
+    local key="$1"
+    local entry="${MCP_MODULES[${key}]:-}"
+    if [ -z "${entry}" ]; then
+        warn "unknown MCP module '${key}' — skipped (not in catalog)"
+        return 0
+    fi
+    local dir port
+    dir="${entry%% *}"
+    port="${entry##* }"
+    local mod_dir="${REPO_DIR}/druppie/mcp-servers/${dir}"
+    local baked="/opt/venvs/${key}"
+    local venv="${WORKSPACE}/.venvs/${key}"
+
+    if [ ! -d "${mod_dir}" ]; then
+        warn "mcp ${key}: source dir ${mod_dir} not found — skipped"
+        return 0
+    fi
+
+    # Relocate the baked venv on first boot (mirrors the backend venv pattern).
+    if [ ! -d "${venv}" ] && [ -d "${baked}" ]; then
+        log "mcp ${key}: seeding venv from baked snapshot"
+        cp -a "${baked}" "${venv}"
+    fi
+
+    ensure_mcp_module_deps "${key}" "${dir}" || return 0
+
+    log "starting mcp ${key} (uvicorn --reload) on 0.0.0.0:${port} from ${dir}"
+    (
+        cd "${mod_dir}" || exit 1
+        PYTHONPATH="${REPO_DIR}/druppie/mcp-servers:${mod_dir}" \
+        MCP_PORT="${port}" \
+        "${venv}/bin/python" -m uvicorn server:app \
+            --host 0.0.0.0 --port "${port}" \
+            --reload --reload-dir "${mod_dir}"
+    ) >"${LOGS}/mcp-${key}.log" 2>&1 &
+    PIDS="${PIDS} $!"
+}
+
+start_embedded_mcp_modules() {
+    if [ -z "${EMBED_MODULES}" ]; then
+        log "no embedded MCP modules (EMBED_MODULES empty)"
+        return 0
+    fi
+    log "embedded MCP modules: ${EMBED_MODULES}"
+    local key
+    for key in ${EMBED_MODULES}; do
+        start_mcp_module "${key}"
+    done
 }
 
 # ---------------------------------------------------------------------------
@@ -198,20 +380,20 @@ start_backend() {
             ;;
     esac
     (
-        cd "${WORKSPACE}" || exit 1
+        cd "${REPO_DIR}" || exit 1
         # DEV_STACK=real: DATABASE_URL/KEYCLOAK_*/MCP_*/GITEA_* are provided by
         #   the chart (envFrom). The backend runs against the real deployed
         #   stack, still under --reload.
         # DEV_STACK=degraded: SQLite (tables auto-created on import via
-        #   api/deps.py init_db()), mock auth, no Keycloak/Gitea/MCP wiring.
+        # api/deps.py init_db()), mock auth, no Keycloak/Gitea/MCP wiring.
         #   GITHUB_APP_* is deliberately left UNSET so Settings.validate_startup()
         #   does not abort.
-        PYTHONPATH="${WORKSPACE}" \
+        PYTHONPATH="${REPO_DIR}" \
         DATABASE_URL="${DATABASE_URL}" \
         ENVIRONMENT="development" \
         "${VENV}/bin/python" -m uvicorn druppie.api.main:app \
             --host 0.0.0.0 --port 8000 \
-            --reload --reload-dir "${WORKSPACE}/druppie"
+            --reload --reload-dir "${REPO_DIR}/druppie"
     ) >"${LOGS}/backend.log" 2>&1 &
     PIDS="${PIDS} $!"
 }
@@ -219,7 +401,7 @@ start_backend() {
 start_frontend() {
     log "starting frontend (vite dev, HMR) on 0.0.0.0:5173"
     (
-        cd "${WORKSPACE}/frontend" || exit 1
+        cd "${REPO_DIR}/frontend" || exit 1
         # The frontend reads the backend URL from VITE_API_URL (src/services/
         # api.js). No Vite proxy is needed or added — env-based config matches
         # how docker-compose's druppie-frontend-dev service is wired.
@@ -293,11 +475,44 @@ log "workspace boot: branch=${DRUPPIE_GIT_BRANCH} repo=${DRUPPIE_REPO_URL}"
 
 # The PVC mount root stays root-owned (fsGroup only changes the group), so git
 # refuses the repo with "dubious ownership" unless it is marked safe.
-git config --global --add safe.directory "${WORKSPACE}"
+git config --global --add safe.directory "${REPO_DIR}"
 
 # Claude Code: keep login/config on the PVC so it survives pod restarts.
 export CLAUDE_CONFIG_DIR="${WORKSPACE}/.claude"
 mkdir -p "${CLAUDE_CONFIG_DIR}"
+
+# Claude Code: route through Azure AI Foundry using FOUNDRY_API_KEY (from
+# envFrom). The Azure resource only deploys claude-opus-4-8, so all model
+# aliases fall back to it. Override via env vars if the deployment changes.
+if [ -n "${FOUNDRY_API_KEY:-}" ]; then
+    export CLAUDE_CODE_USE_FOUNDRY=1
+    export ANTHROPIC_FOUNDRY_API_KEY="${FOUNDRY_API_KEY}"
+    export ANTHROPIC_FOUNDRY_RESOURCE="${ANTHROPIC_FOUNDRY_RESOURCE:-druppie-resource}"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-claude-opus-4-8}"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-claude-opus-4-8}"
+    log "Claude Code configured for Azure AI Foundry (resource: ${ANTHROPIC_FOUNDRY_RESOURCE})"
+fi
+
+# opencode: auto-detects providers by env-var name (the names it looks for come
+# from models.dev). The vault/envFrom keys use the druppie names, so export the
+# opencode-recognized aliases as copies. The druppie names stay exported — the
+# backend still reads ZAI_API_KEY / FOUNDRY_API_KEY (LLM_PROVIDER=zai/foundry).
+#   ZAI_API_KEY    -> ZHIPU_API_KEY            (Z.AI + Z.AI Coding Plan share it)
+#   FOUNDRY_API_KEY -> AZURE_API_KEY + AZURE_RESOURCE_NAME   (Azure / Foundry)
+if [ -n "${ZAI_API_KEY:-}" ]; then
+    export ZHIPU_API_KEY="${ZAI_API_KEY}"
+fi
+if [ -n "${FOUNDRY_API_KEY:-}" ]; then
+    export AZURE_API_KEY="${FOUNDRY_API_KEY}"
+    export AZURE_RESOURCE_NAME="${AZURE_RESOURCE_NAME:-${ANTHROPIC_FOUNDRY_RESOURCE:-druppie-resource}}"
+    # opencode serves Claude via its `anthropic` provider, which reads
+    # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL. Point both at the Foundry Azure
+    # AI Services Anthropic endpoint so the same FOUNDRY_API_KEY authenticates
+    # Claude too (matches the backend's litellm azure_ai URL).
+    export ANTHROPIC_API_KEY="${FOUNDRY_API_KEY}"
+    export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1}"
+    log "opencode: Z.AI/Z.AI Coding Plan + Azure + Anthropic(via Foundry) providers available via env aliases"
+fi
 
 seed_workspace
 
@@ -305,16 +520,27 @@ seed_workspace
 # they are per-pod state, not repo changes. Repo-local ignore (info/exclude)
 # so the repo's .gitignore stays untouched. After seed_workspace: that step
 # creates .git on first boot.
-printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.data/\n.claude/\n' \
-    > "${WORKSPACE}/.git/info/exclude"
+printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.venvs/\n.data/\n.claude/\n' \
+    > "${REPO_DIR}/.git/info/exclude"
 
 checkout_branch
-ensure_frontend_deps
-ensure_backend_deps
+configure_git
+clone_side_repos
+if [ "${RECOVERY_MODE:-}" != "true" ]; then
+    ensure_frontend_deps
+    ensure_backend_deps
+else
+    log "RECOVERY_MODE=true — skipping frontend/backend dep install"
+fi
 
 start_code_server
-start_backend
-start_frontend
+if [ "${RECOVERY_MODE:-}" != "true" ]; then
+    start_backend
+    start_frontend
+    start_embedded_mcp_modules
+else
+    log "RECOVERY_MODE=true — skipping backend, frontend, and MCP modules"
+fi
 start_desktop
 
 log "all services started (pids:${PIDS}) — tailing until a child exits or SIGTERM"

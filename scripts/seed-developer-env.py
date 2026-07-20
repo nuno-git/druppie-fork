@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Seed a developer environment's Vault secrets (mirror of main/colab-dev shape).
+"""Seed a developer environment's Vault secrets (mirror of colab-dev shape).
 
 Creates druppie/developers/<user>/{database,keycloak,gitea,app,workspace} under
 the ai-team-k8s KV v2 mount, mirroring how main/colab-dev are organized — so a
 developer dev-workspace owns its own credentials.
 
-- Reuses druppie/colab-dev/app for shared LLM-key defaults (override per user
+- Copies shared LLM-key defaults from druppie/colab-dev/app (override per user
   in the Vault UI afterwards).
 - Generates per-env random passwords for database/keycloak/gitea.
-- Copies the shared oauth2-proxy client/cookie secret from branch-env/workspace-oauth.
+- Uses the shared workspace client-secret (must match realm-export.json) and
+  generates a random cookie-secret per developer.
 
 Requires: a Vault token with write access to ai-team-k8s/*. Vault is reached
 through the WSL->corporate relay (http://127.0.0.1:8888) by default.
@@ -76,9 +77,6 @@ def main():
     instance = args.instance or f"druppie-dev-{user}"
 
     defaults = read(op, token, "druppie/colab-dev/app")
-    ws = read(op, token, "branch-env/workspace-oauth")
-    client_secret = ws.get("client-secret") or rand(48)
-    cookie_secret = ws.get("cookie-secret") or rand(32)
 
     llm = ["zai-api-key", "deepseek-api-key", "deepinfra-api-key",
            "foundry-api-key", "openrouter-api-key"]
@@ -94,7 +92,9 @@ def main():
         "gitea":     {"admin-password": rand(16), "db-password": rand(16),
                       "password": rand(16), "token": rand(20)},
         "app":       app,
-        "workspace": {"client-secret": client_secret, "cookie-secret": cookie_secret},
+        # client-secret MUST match the 'workspace' client in realm-export.json.
+        "workspace": {"client-secret": "9d0645276fcfde8006408981644d68b82fc92083d640e55a",
+                      "cookie-secret": rand(32)},
     }
     for sub, data in paths.items():
         p = f"druppie/developers/{user}/{sub}"
