@@ -68,14 +68,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tigervnc-standalone-server \
         novnc \
         websockify \
-        xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-terminal thunar \
+        xfce4-session xfwm4 xfce4-panel xfdesktop4 thunar \
+        terminator \
         mousepad \
         dbus-x11 x11-xserver-utils \
         fonts-dejavu \
         chromium \
         nano \
         gnupg2 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --set x-terminal-emulator /usr/bin/terminator
 
 # VS Code desktop (for the noVNC XFCE session)
 RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /usr/share/keyrings/packages.microsoft.gpg \
@@ -183,10 +185,13 @@ RUN install -d -m 755 -o developer -g developer /home/developer/.config/code-ser
 RUN install -d -m 755 /usr/share/applications \
     && printf '[Desktop Entry]\nName=VS Code\nComment=Code Editing. Redefined.\nGenericName=Text Editor\nExec=/usr/share/code/code --no-sandbox --unity-launch %%F\nIcon=code\nType=Application\nStartupNotify=false\nStartupWMClass=Code\nCategories=TextEditor;Development;IDE;\nMimeType=text/plain;inode/directory;\nActions=new-empty-window;\nKeywords=vscode;\n\n[Desktop Action new-empty-window]\nName=New Empty Window\nExec=/usr/share/code/code --no-sandbox --new-window %%F\nIcon=code\n' > /usr/share/applications/code.desktop
 
-# XFCE desktop autostart: open xfce4-terminal in /workspace/druppie on session start
+# XFCE desktop autostart: open terminator in /workspace/druppie on session start
 RUN install -d -m 755 -o developer -g developer /home/developer/.config/autostart \
-    && printf '[Desktop Entry]\nType=Application\nName=Workspace Terminal\nExec=xfce4-terminal --default-working-directory=/workspace/druppie\nX-GNOME-Autostart-enabled=true\n' > /home/developer/.config/autostart/workspace-terminal.desktop \
+    && printf '[Desktop Entry]\nType=Application\nName=Workspace Terminal\nExec=terminator --working-directory=/workspace/druppie\nX-GNOME-Autostart-enabled=true\n' > /home/developer/.config/autostart/workspace-terminal.desktop \
     && chown -R developer:developer /home/developer/.config/autostart
+
+# XFCE panel: pin VS Code + Terminator launchers next to the Applications menu.
+COPY scripts/xfce4-panel.xml /home/developer/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
 
 USER developer
 WORKDIR /workspace
