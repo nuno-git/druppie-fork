@@ -182,7 +182,7 @@ frontend/
 
 ### API Client Patterns
 
-- API calls are split by domain into smaller service modules under `src/services/`, e.g. `sessionApi.js`, `approvalApi.js`.
+- **Target**: split `api.js` by domain into smaller service modules under `src/services/` (e.g. `sessionApi.js`, `approvalApi.js`). This refactor has not started yet — new features should create a new domain module rather than growing `api.js`.
 - All API calls must handle errors and propagate meaningful messages to the UI (via Toast or ErrorBoundary).
 
 ### Linting
