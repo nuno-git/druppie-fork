@@ -57,11 +57,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #   poppler-utils  — module-vision PDF→image conversion
 # Chromium (module-coding's puppeteer + module-browser) is already installed in
 # Layer 1b below; playwright's own chromium is fetched per-venv in Layer 6.
+# Write the key as armored .asc — modern apt (≥1.4, Debian bookworm is 2.5+)
+# reads it directly, so we avoid the `gpg --dearmor` pipe (gnupg isn't in Layer
+# 1, and a broken pipe surfaces as "curl failed writing body").
 RUN apt-get update \
     && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
-    && chmod a+r /etc/apt/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
        > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli poppler-utils \
@@ -74,8 +77,12 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && node --version && npm --version
 
 # Mermaid CLI — used by module-coding for structural diagram validation
-# (mirrors mcp-servers/module-coding/Dockerfile). Pinned to system Chromium via
-# the PUPPETEER_* envs set in Layer 1b so it doesn't fetch a duplicate browser.
+# (mirrors mcp-servers/module-coding/Dockerfile). MUST set PUPPETEER_SKIP_*
+# before the install: @mermaid-js/mermaid-cli pulls puppeteer, whose postinstall
+# downloads ~150MB Chromium unless skipped. System Chromium (installed in Layer
+# 1b below) is used at runtime via PUPPETEER_EXECUTABLE_PATH.
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 RUN npm install -g @mermaid-js/mermaid-cli
 
 # ===========================================================================
@@ -205,7 +212,7 @@ RUN python -m venv /opt/venv \
 RUN set -e; \
     for key in coding docker filesearch web archimate registry llm \
                kubernetes vision searxng browser data_access azuredevops; do \
-        dir="module-${key//_/-}"; \
+        dir="module-$(printf '%s' "$key" | tr '_' '-')"; \
         req="/opt/druppie-src/druppie/mcp-servers/${dir}/requirements.txt"; \
         if [ ! -f "$req" ]; then \
             echo "[dev-workspace] no requirements.txt for $key ($dir) — skipping"; \
