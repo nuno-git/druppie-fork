@@ -14,7 +14,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from druppie.api.deps import get_branch_environment_service, get_current_user
-from druppie.api.errors import ConflictError, ValidationError
+from druppie.api.errors import ConflictError, ExternalServiceError, ValidationError
 from druppie.api.main import create_app
 from druppie.services.branch_environment_service import (
     GITOPS_PATH,
@@ -57,6 +57,10 @@ class FakeGitea:
         # env's branch exists here before committing manifests.
         self.branches: dict[str, set[str]] = {"ai/druppie": {"colab-dev", "main"}}
         self.created_branches: list[tuple[str, str, str]] = []
+        # Workflow dispatches recorded as (repo, branch, workflow).
+        self.dispatched_workflows: list[tuple[str, str, str]] = []
+        # When True, dispatch_workflow raises (for the failure-path test).
+        self.dispatch_fails: bool = False
 
     async def branch_exists(self, repo: str, branch: str) -> bool:
         return branch in self.branches.get(repo, set())
@@ -64,6 +68,16 @@ class FakeGitea:
     async def create_branch(self, repo: str, branch: str, from_branch: str) -> None:
         self.branches.setdefault(repo, set()).add(branch)
         self.created_branches.append((repo, branch, from_branch))
+
+    async def dispatch_workflow(
+        self, repo: str, branch: str, workflow: str = "build.yaml"
+    ) -> None:
+        if self.dispatch_fails:
+            raise ExternalServiceError(
+                service="gitops-repo",
+                message=f"simulated dispatch failure for {branch}",
+            )
+        self.dispatched_workflows.append((repo, branch, workflow))
 
     @staticmethod
     def _sha(content: str) -> str:
@@ -153,6 +167,10 @@ class FakeCluster:
 
     async def list_pods(self, namespace: str):
         return self.pods.get(namespace, [])
+
+    async def force_reconcile_flux(self) -> None:
+        """No-op stand-in for the Flux force-reconcile PATCH."""
+        pass
 
 
 def _hr_ready(status: str = "True", reason: str = "ReconciliationSucceeded", message: str = "ok"):
@@ -303,6 +321,7 @@ def test_create_missing_app_branch_is_created(client, as_owner, fake_gitea):
     r = _deploy(client, branch="feature/nieuw")
     assert r.status_code == 202, r.text
     assert ("ai/druppie", "feature/nieuw", "colab-dev") in fake_gitea.created_branches
+    assert ("ai/druppie", "feature/nieuw", "build.yaml") in fake_gitea.dispatched_workflows
     assert "created branch 'feature/nieuw' from colab-dev" in r.json()["status_message"]
 
 
@@ -311,6 +330,18 @@ def test_create_existing_app_branch_is_not_recreated(client, as_owner, fake_gite
     r = _deploy(client, branch="feature/bestaat")
     assert r.status_code == 202, r.text
     assert fake_gitea.created_branches == []
+    # CI build is dispatched even for pre-existing branches so images are fresh.
+    assert ("ai/druppie", "feature/bestaat", "build.yaml") in fake_gitea.dispatched_workflows
+
+
+def test_create_dispatch_failure_blocks_deploy(client, as_owner, fake_gitea):
+    """If the CI dispatch fails the deploy must abort — no stale-image env."""
+    fake_gitea.dispatch_fails = True
+    r = _deploy(client, branch="feature/stale")
+    assert r.status_code == 502, r.text
+    # No manifests committed (dispatch runs before the commit).
+    assert fake_gitea.commits == []
+    assert fake_gitea.files == {}
 
 
 def test_create_duplicate_branch_conflicts(client, as_owner):

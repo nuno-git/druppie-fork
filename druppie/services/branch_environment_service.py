@@ -78,9 +78,6 @@ CHART_REPO_URL = os.getenv(
 CHART_REPO = urlparse(CHART_REPO_URL).path.strip("/").removesuffix(".git")
 # Base for app branches the deployer creates when they don't exist yet.
 APP_BASE_BRANCH = os.getenv("BRANCH_ENV_APP_BASE_BRANCH", "colab-dev")
-# The instance that creates branch-envs — its imageTag is the default for new
-# envs (callers can still override with an explicit image_tag).
-PARENT_NAMESPACE = os.getenv("BRANCH_ENV_PARENT_NAMESPACE", f"druppie-{APP_BASE_BRANCH}")
 
 BRANCH_ENV_REGISTRY = os.getenv("BRANCH_ENV_REGISTRY", "harbor.rijnland.dev/druppie")
 BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
@@ -1004,14 +1001,6 @@ class BranchEnvironmentService:
         _assert_safe_namespace(namespace, slug)
         if image_tag is not None:
             image_tag = _validate_image_tag(image_tag)
-        elif self.cluster.available:
-            parent = await self.cluster.get_helmrelease(PARENT_NAMESPACE, name=PARENT_NAMESPACE)
-            image_tag = (
-                (parent or {}).get("spec", {}).get("values", {})
-                .get("global", {}).get("imageTag")
-            ) or None
-            if image_tag:
-                logger.info("branch_env_image_tag_resolved", tag=image_tag, source=PARENT_NAMESPACE)
 
         if await self.gitea.get_file(self._env_path(slug, "namespace.yaml")) is not None:
             raise ConflictError(f"branch environment already exists for branch '{branch}'")
@@ -1037,8 +1026,10 @@ class BranchEnvironmentService:
 
         # Always dispatch the CI build so images are guaranteed fresh, even
         # when the branch already existed (no push event fires in that case to
-        # trigger build.yaml). The env stands up on the parent image tag first;
-        # CI's deploy step then patches imageTag once the build finishes.
+        # trigger build.yaml). No fallback tag is committed: the HelmRelease is
+        # committed without an imageTag, so the env cannot pull anything (it
+        # stays "deploying") until CI's deploy step yq-patches the branch's own
+        # tag into this helmrelease.yaml once the build finishes.
         await self.gitea.dispatch_workflow(CHART_REPO, branch)
 
         created_at = _utcnow_iso()
