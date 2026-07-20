@@ -493,6 +493,21 @@ if [ -n "${FOUNDRY_API_KEY:-}" ]; then
     log "Claude Code configured for Azure AI Foundry (resource: ${ANTHROPIC_FOUNDRY_RESOURCE})"
 fi
 
+# opencode: auto-detects providers by env-var name (the names it looks for come
+# from models.dev). The vault/envFrom keys use the druppie names, so export the
+# opencode-recognized aliases as copies. The druppie names stay exported — the
+# backend still reads ZAI_API_KEY / FOUNDRY_API_KEY (LLM_PROVIDER=zai/foundry).
+#   ZAI_API_KEY    -> ZHIPU_API_KEY            (Z.AI + Z.AI Coding Plan share it)
+#   FOUNDRY_API_KEY -> AZURE_API_KEY + AZURE_RESOURCE_NAME   (Azure / Foundry)
+if [ -n "${ZAI_API_KEY:-}" ]; then
+    export ZHIPU_API_KEY="${ZAI_API_KEY}"
+fi
+if [ -n "${FOUNDRY_API_KEY:-}" ]; then
+    export AZURE_API_KEY="${FOUNDRY_API_KEY}"
+    export AZURE_RESOURCE_NAME="${AZURE_RESOURCE_NAME:-${ANTHROPIC_FOUNDRY_RESOURCE:-druppie-resource}}"
+    log "opencode: Z.AI/Z.AI Coding Plan + Azure providers available via env aliases"
+fi
+
 seed_workspace
 
 # Keep the workspace's own runtime artifacts out of the Source Control pane:
