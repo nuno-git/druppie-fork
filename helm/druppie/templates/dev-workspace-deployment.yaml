@@ -39,6 +39,12 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+      {{- if has "kubernetes" .Values.devWorkspace.embedModules }}
+      # module-kubernetes needs the k8s-readonly ClusterRoleBinding. Reuse its
+      # ServiceAccount (the rbac template still renders the SA + binding when
+      # the module is embedded, just not the Deployment).
+      serviceAccountName: {{ include "druppie.fullname" . }}-module-kubernetes
+      {{- end }}
       {{- with .Values.devWorkspace.ingressVIP }}
       # Resolve the public app domain to the in-cluster Traefik ClusterIP so
       # oauth2-proxy can reach Keycloak without hairpinning to the LB external IP.
@@ -93,6 +99,11 @@ spec:
               value: {{ .Values.devWorkspace.gitSslNoVerify | quote }}
             - name: DEV_STACK
               value: {{ .Values.devWorkspace.stackMode | quote }}
+            # Space-separated MCP module keys to run inside this pod under
+            # uvicorn --reload (see scripts/dev-workspace-entrypoint.sh).
+            # Empty in prod/colab-dev; set from devWorkspace.embedModules.
+            - name: EMBED_MODULES
+              value: {{ join " " .Values.devWorkspace.embedModules | quote }}
             - name: DRUPPIE_DESKTOP
               value: "1"
             # The frontend preview is reached through code-server's port proxy
@@ -127,9 +138,25 @@ spec:
             - { name: backend,     containerPort: 8000 }
             - { name: frontend,    containerPort: 5173 }
             - { name: code-server, containerPort: 8080 }
+            {{- range $key := .Values.devWorkspace.embedModules }}
+            {{- $mod := index $.Values.modules $key }}
+            {{- if $mod }}
+            # Named port for the embedded {{ $key }} MCP module — the matching
+            # <instance>-module-{{ $key }} Service targets this port when the
+            # module is embedded. Underscore in the key is replaced so the port
+            # name matches RFC 1123 (data_access -> mcp-data-access).
+            - { name: mcp-{{ $key | replace "_" "-" }}, containerPort: {{ $mod.port }} }
+            {{- end }}
+            {{- end }}
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            {{- $needDocker := or (has "coding" $.Values.devWorkspace.embedModules) (has "docker" $.Values.devWorkspace.embedModules) }}
+            {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
+            # module-coding / module-docker talk to the host Docker daemon.
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            {{- end }}
           resources:
             {{- toYaml .Values.devWorkspace.resources | nindent 12 }}
           readinessProbe:
@@ -183,6 +210,14 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        {{- $needDocker := or (has "coding" .Values.devWorkspace.embedModules) (has "docker" .Values.devWorkspace.embedModules) }}
+        {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
+        # Host Docker socket for embedded module-coding / module-docker.
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        {{- end }}
       {{- with .Values.devWorkspace.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

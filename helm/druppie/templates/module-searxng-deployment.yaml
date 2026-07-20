@@ -1,4 +1,4 @@
-{{- if .Values.modules.searxng.enabled }}
+{{- if and .Values.modules.searxng.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "searxng"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

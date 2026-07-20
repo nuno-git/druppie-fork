@@ -1,4 +1,4 @@
-{{- if .Values.modules.filesearch.enabled }}
+{{- if and .Values.modules.filesearch.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "filesearch"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

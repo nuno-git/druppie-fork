@@ -1,4 +1,4 @@
-{{- if .Values.modules.registry.enabled }}
+{{- if and .Values.modules.registry.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "registry"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

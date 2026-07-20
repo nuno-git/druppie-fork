@@ -71,6 +71,34 @@ fi
 REQUIREMENTS_REL="druppie/requirements.txt"
 FRONTEND_LOCK_REL="frontend/package-lock.json"
 
+# EMBED_MODULES: space-separated MCP module keys to run inside this pod under
+# `uvicorn --reload` (hot-reload on edit). Set by the chart from
+# devWorkspace.embedModules. Empty in prod/colab-dev and any workspace that
+# keeps modules as baked-image Deployments.
+EMBED_MODULES="${EMBED_MODULES:-}"
+
+# Canonical MCP module catalog: values-key -> "source-dir port".
+#   - source-dir is relative to druppie/mcp-servers/ (module-<key-with-_→->)
+#   - port matches the chart's modules.<key>.port and the Service targetPort
+# Keys here are the universe of embeddable modules; EMBED_MODULES selects which
+# actually run. A missing /opt/venvs/<key> (build skipped in the image) makes
+# start_mcp_module fall back to a runtime venv build, or skip with a warning.
+declare -A MCP_MODULES=(
+    [coding]="module-coding 9001"
+    [docker]="module-docker 9002"
+    [filesearch]="module-filesearch 9004"
+    [web]="module-web 9005"
+    [archimate]="module-archimate 9006"
+    [registry]="module-registry 9007"
+    [llm]="module-llm 9008"
+    [kubernetes]="module-kubernetes 9013"
+    [vision]="module-vision 9011"
+    [searxng]="module-searxng 9014"
+    [browser]="module-browser 9015"
+    [data_access]="module-data-access 9010"
+    [azuredevops]="module-azuredevops 9012"
+)
+
 log()  { printf '[dev-workspace] %s\n' "$*"; }
 warn() { printf '[dev-workspace] WARN: %s\n' "$*" >&2; }
 
@@ -234,6 +262,109 @@ ensure_backend_deps() {
 }
 
 # ---------------------------------------------------------------------------
+# 3b. Embedded MCP modules — per-module venv + uvicorn --reload launcher.
+# ---------------------------------------------------------------------------
+# Each embedded module (EMBED_MODULES) runs as a backgrounded uvicorn --reload
+# process against its live source under /workspace/druppie/mcp-servers/<dir>,
+# so edits in code-server hot-reload the module exactly like the backend.
+#
+# Module source layout: server.py imports `module_router` (shared, lives one
+# level up in mcp-servers/) and `v1.tools` (subdir of the module). We set
+# PYTHONPATH=mcp-servers/ and cwd=module dir so both resolve — matching the
+# flat /app layout the baked image produces via two COPYs.
+ensure_mcp_module_deps() {
+    # $1 = module key, $2 = module dir (under mcp-servers/). Reinstalls the
+    # module's relocated venv when its requirements.txt changed since last boot
+    # (or when the baked venv was absent — e.g. a module added after the image
+    # was built, or one whose image-side install failed non-fatally).
+    local key="$1" dir="$2"
+    local req_rel="druppie/mcp-servers/${dir}/requirements.txt"
+    local venv="${WORKSPACE}/.venvs/${key}"
+    local sha_file="${DEP_DIR}/mcp-${key}.sha"
+    local cur stored
+    cur=$(hash_of "${req_rel}")
+    if [ -z "${cur}" ]; then
+        warn "mcp ${key}: no ${req_rel} — skipping deps check"
+        return 0
+    fi
+    stored=$(cat "${sha_file}" 2>/dev/null || printf '')
+    if [ ! -d "${venv}" ] || [ "${cur}" != "${stored}" ]; then
+        log "mcp ${key}: deps changed (or venv missing) — pip install"
+        if [ ! -d "${venv}" ]; then
+            if ! "${VENV}/bin/python" -m venv "${venv}" \
+                || ! "${venv}/bin/python" -m pip install --no-cache-dir --upgrade pip; then
+                warn "mcp ${key}: venv create failed — module will not start"
+                rm -rf "${venv}"
+                return 1
+            fi
+        fi
+        if "${venv}/bin/python" -m pip install --no-cache-dir -r "${REPO_DIR}/${req_rel}"; then
+            printf '%s' "${cur}" > "${sha_file}"
+        else
+            warn "mcp ${key}: pip install failed — module may be broken until requirements fixed"
+            return 1
+        fi
+    else
+        log "mcp ${key}: deps unchanged — reusing venv"
+    fi
+}
+
+start_mcp_module() {
+    # $1 = module key. Resolves dir/port from the catalog, seeds the venv from
+    # the baked snapshot if available, ensures deps, then launches uvicorn
+    # --reload on the module's port. Watches the module's own dir only; a
+    # shared module_router.py edit needs a manual workspace restart.
+    local key="$1"
+    local entry="${MCP_MODULES[${key}]:-}"
+    if [ -z "${entry}" ]; then
+        warn "unknown MCP module '${key}' — skipped (not in catalog)"
+        return 0
+    fi
+    local dir port
+    dir="${entry%% *}"
+    port="${entry##* }"
+    local mod_dir="${REPO_DIR}/druppie/mcp-servers/${dir}"
+    local baked="/opt/venvs/${key}"
+    local venv="${WORKSPACE}/.venvs/${key}"
+
+    if [ ! -d "${mod_dir}" ]; then
+        warn "mcp ${key}: source dir ${mod_dir} not found — skipped"
+        return 0
+    fi
+
+    # Relocate the baked venv on first boot (mirrors the backend venv pattern).
+    if [ ! -d "${venv}" ] && [ -d "${baked}" ]; then
+        log "mcp ${key}: seeding venv from baked snapshot"
+        cp -a "${baked}" "${venv}"
+    fi
+
+    ensure_mcp_module_deps "${key}" "${dir}" || return 0
+
+    log "starting mcp ${key} (uvicorn --reload) on 0.0.0.0:${port} from ${dir}"
+    (
+        cd "${mod_dir}" || exit 1
+        PYTHONPATH="${REPO_DIR}/druppie/mcp-servers:${mod_dir}" \
+        MCP_PORT="${port}" \
+        "${venv}/bin/python" -m uvicorn server:app \
+            --host 0.0.0.0 --port "${port}" \
+            --reload --reload-dir "${mod_dir}"
+    ) >"${LOGS}/mcp-${key}.log" 2>&1 &
+    PIDS="${PIDS} $!"
+}
+
+start_embedded_mcp_modules() {
+    if [ -z "${EMBED_MODULES}" ]; then
+        log "no embedded MCP modules (EMBED_MODULES empty)"
+        return 0
+    fi
+    log "embedded MCP modules: ${EMBED_MODULES}"
+    local key
+    for key in ${EMBED_MODULES}; do
+        start_mcp_module "${key}"
+    done
+}
+
+# ---------------------------------------------------------------------------
 # 4. Launch services (backgrounded; logs under /workspace/.logs).
 # ---------------------------------------------------------------------------
 PIDS=""
@@ -368,7 +499,7 @@ seed_workspace
 # they are per-pod state, not repo changes. Repo-local ignore (info/exclude)
 # so the repo's .gitignore stays untouched. After seed_workspace: that step
 # creates .git on first boot.
-printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.data/\n.claude/\n' \
+printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.venvs/\n.data/\n.claude/\n' \
     > "${REPO_DIR}/.git/info/exclude"
 
 checkout_branch
@@ -380,6 +511,7 @@ ensure_backend_deps
 start_code_server
 start_backend
 start_frontend
+start_embedded_mcp_modules
 start_desktop
 
 log "all services started (pids:${PIDS}) — tailing until a child exits or SIGTERM"

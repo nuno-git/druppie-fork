@@ -1,4 +1,4 @@
-{{- if .Values.modules.coding.enabled }}
+{{- if and .Values.modules.coding.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "coding"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

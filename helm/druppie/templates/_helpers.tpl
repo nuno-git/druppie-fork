@@ -183,16 +183,18 @@ otherwise falls back to the configured persistence.storageClass.
 {{- end -}}
 
 {{/*
-Module-embedded predicate: returns truthy when devWorkspace is enabled AND
-the given module key (arg `mod`) appears in devWorkspace.embedModules — i.e.
-that module should run inside the workspace pod under uvicorn --reload instead
-of as its own baked-image Deployment.
+Module-embedded predicate: returns the string "true" (empty otherwise) when
+devWorkspace is enabled AND the given module key (arg `mod`) appears in
+devWorkspace.embedModules — i.e. that module should run inside the workspace
+pod under uvicorn --reload instead of as its own baked-image Deployment.
 
-Usage: {{ include "druppie.moduleEmbedded" (dict "root" . "mod" "coding") }}
+Returns "true" / "" (not a raw bool) so it composes correctly under `{{ if }}`:
+Go-template `if` treats every non-empty string — including "false" — as truthy,
+so a boolean-returning helper would always read as true at the call site.
 
-The caller is responsible for any surrounding `if`/`if not` — this helper only
-emits the boolean expression so it composes with other conditions.
+Usage: {{ $emb := include "druppie.moduleEmbedded" (dict "root" . "mod" "coding") }}
+       {{- if $emb }} ... {{- end }}
 */}}
 {{- define "druppie.moduleEmbedded" -}}
-{{- and .root.Values.devWorkspace.enabled (has .mod .root.Values.devWorkspace.embedModules) -}}
+{{- if and .root.Values.devWorkspace.enabled (has .mod .root.Values.devWorkspace.embedModules) -}}true{{- end -}}
 {{- end -}}

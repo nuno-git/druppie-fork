@@ -1,4 +1,4 @@
-{{- if .Values.modules.web.enabled }}
+{{- if and .Values.modules.web.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "web"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

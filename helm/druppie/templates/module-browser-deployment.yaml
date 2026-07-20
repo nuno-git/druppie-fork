@@ -1,4 +1,4 @@
-{{- if .Values.modules.browser.enabled }}
+{{- if and .Values.modules.browser.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "browser"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

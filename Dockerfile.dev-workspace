@@ -50,11 +50,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && python --version && pip --version
 
+# Union of system deps required by MCP modules that may be embedded into this
+# pod (see devWorkspace.embedModules). Only adds what the base Layer 1 doesn't
+# already provide:
+#   docker-ce-cli  — module-coding & module-docker talk to a mounted docker.sock
+#   poppler-utils  — module-vision PDF→image conversion
+# Chromium (module-coding's puppeteer + module-browser) is already installed in
+# Layer 1b below; playwright's own chromium is fetched per-venv in Layer 6.
+RUN apt-get update \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 # Node 20 via NodeSource (mirrors mcp-servers/module-coding/Dockerfile.dev-vm)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && node --version && npm --version
+
+# Mermaid CLI — used by module-coding for structural diagram validation
+# (mirrors mcp-servers/module-coding/Dockerfile). Pinned to system Chromium via
+# the PUPPETEER_* envs set in Layer 1b so it doesn't fetch a duplicate browser.
+RUN npm install -g @mermaid-js/mermaid-cli
 
 # ===========================================================================
 # Layer 1b — Browser desktop: XFCE + TigerVNC + noVNC (HTTP-only GUI)
@@ -168,6 +190,45 @@ RUN python -m venv /opt/venv \
     && chown -R developer:developer /opt/venv
 
 # ===========================================================================
+# Layer 6 — Per-module virtualenvs (for devWorkspace.embedModules)
+# ===========================================================================
+# One venv per MCP module so any module can be embedded into the workspace pod
+# and run under `uvicorn --reload` against the live checkout on the PVC. Each
+# venv is relocated to /workspace/.venvs/<key> on first seed (same pattern as
+# the backend venv) so pip reinstalls on requirements change survive pod restart.
+#
+# The venv KEY matches the Helm values key (modules.<key>); the SOURCE DIR is
+# module-<key with _ -> -> (module-data-access for data_access). A module whose
+# deps fail to install under Python 3.12 is skipped (venv dir left absent) — the
+# entrypoint treats a missing venv as "not embeddable" and falls back to the
+# baked-image Deployment for that module.
+RUN set -e; \
+    for key in coding docker filesearch web archimate registry llm \
+               kubernetes vision searxng browser data_access azuredevops; do \
+        dir="module-${key//_/-}"; \
+        req="/opt/druppie-src/druppie/mcp-servers/${dir}/requirements.txt"; \
+        if [ ! -f "$req" ]; then \
+            echo "[dev-workspace] no requirements.txt for $key ($dir) — skipping"; \
+            continue; \
+        fi; \
+        echo "[dev-workspace] building venv for $key ($dir)"; \
+        if python -m venv "/opt/venvs/$key" \
+            && "/opt/venvs/$key/bin/python" -m pip install --no-cache-dir --upgrade pip \
+            && "/opt/venvs/$key/bin/python" -m pip install --no-cache-dir -r "$req"; then \
+            echo "[dev-workspace] ok: $key"; \
+        else \
+            echo "[dev-workspace] WARN: $key venv setup failed — removing; module not embeddable"; \
+            rm -rf "/opt/venvs/$key"; \
+        fi; \
+    done; \
+    if [ -d /opt/venvs/browser ]; then \
+        echo "[dev-workspace] pre-fetching playwright chromium for module-browser"; \
+        /opt/venvs/browser/bin/python -m playwright install chromium || \
+            echo "[dev-workspace] WARN: playwright chromium fetch failed — browser module may error at runtime"; \
+    fi; \
+    chown -R developer:developer /opt/venvs
+
+# ===========================================================================
 # Entrypoint
 # ===========================================================================
 COPY --chown=developer:developer scripts/dev-workspace-entrypoint.sh /usr/local/bin/dev-workspace-entrypoint.sh
@@ -202,7 +263,11 @@ RUN code-server --install-extension Anthropic.claude-code \
     && code-server --list-extensions | grep -i claude
 
 # code-server:8080  backend:8000  frontend/vite:5173
-EXPOSE 8000 5173 8080
+# MCP module ports (only bound when the module is in devWorkspace.embedModules):
+#   coding:9001 docker:9002 filesearch:9004 web:9005 archimate:9006
+#   registry:9007 llm:9008 data_access:9010 vision:9011 azuredevops:9012
+#   kubernetes:9013 searxng:9014 browser:9015
+EXPOSE 8000 5173 8080 9001 9002 9004 9005 9006 9007 9008 9010 9011 9012 9013 9014 9015
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -fsS http://localhost:8080/healthz || exit 1

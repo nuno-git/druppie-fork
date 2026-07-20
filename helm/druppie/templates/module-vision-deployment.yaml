@@ -1,4 +1,4 @@
-{{- if .Values.modules.vision.enabled }}
+{{- if and .Values.modules.vision.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "vision"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

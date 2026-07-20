@@ -199,11 +199,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-coding
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "coding") }}dev-workspace{{ else }}module-coding{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.coding.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "coding") }}mcp-coding{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.docker.enabled }}
 ---
@@ -219,11 +219,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-docker
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "docker") }}dev-workspace{{ else }}module-docker{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.docker.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "docker") }}mcp-docker{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.filesearch.enabled }}
 ---
@@ -239,11 +239,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-filesearch
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "filesearch") }}dev-workspace{{ else }}module-filesearch{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.filesearch.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "filesearch") }}mcp-filesearch{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.web.enabled }}
 ---
@@ -259,11 +259,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-web
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "web") }}dev-workspace{{ else }}module-web{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.web.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "web") }}mcp-web{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.searxng.enabled }}
 ---
@@ -279,11 +279,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-searxng
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "searxng") }}dev-workspace{{ else }}module-searxng{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.searxng.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "searxng") }}mcp-searxng{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.browser.enabled }}
 ---
@@ -299,11 +299,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-browser
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "browser") }}dev-workspace{{ else }}module-browser{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.browser.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "browser") }}mcp-browser{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.archimate.enabled }}
 ---
@@ -319,11 +319,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-archimate
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "archimate") }}dev-workspace{{ else }}module-archimate{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.archimate.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "archimate") }}mcp-archimate{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.registry.enabled }}
 ---
@@ -339,11 +339,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-registry
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "registry") }}dev-workspace{{ else }}module-registry{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.registry.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "registry") }}mcp-registry{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.llm.enabled }}
 ---
@@ -359,11 +359,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-llm
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "llm") }}dev-workspace{{ else }}module-llm{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.llm.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "llm") }}mcp-llm{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.kubernetes.enabled }}
 ---
@@ -379,11 +379,11 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-kubernetes
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "kubernetes") }}dev-workspace{{ else }}module-kubernetes{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.kubernetes.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "kubernetes") }}mcp-kubernetes{{ else }}http{{ end }}
 {{- end }}
 {{- if .Values.modules.vision.enabled }}
 ---
@@ -399,9 +399,9 @@ spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-vision
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "vision") }}dev-workspace{{ else }}module-vision{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.vision.port }}
-      targetPort: http
+      targetPort: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "vision") }}mcp-vision{{ else }}http{{ end }}
 {{- end }}
