@@ -505,7 +505,13 @@ fi
 if [ -n "${FOUNDRY_API_KEY:-}" ]; then
     export AZURE_API_KEY="${FOUNDRY_API_KEY}"
     export AZURE_RESOURCE_NAME="${AZURE_RESOURCE_NAME:-${ANTHROPIC_FOUNDRY_RESOURCE:-druppie-resource}}"
-    log "opencode: Z.AI/Z.AI Coding Plan + Azure providers available via env aliases"
+    # opencode serves Claude via its `anthropic` provider, which reads
+    # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL. Point both at the Foundry Azure
+    # AI Services Anthropic endpoint so the same FOUNDRY_API_KEY authenticates
+    # Claude too (matches the backend's litellm azure_ai URL).
+    export ANTHROPIC_API_KEY="${FOUNDRY_API_KEY}"
+    export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic}"
+    log "opencode: Z.AI/Z.AI Coding Plan + Azure + Anthropic(via Foundry) providers available via env aliases"
 fi
 
 seed_workspace
