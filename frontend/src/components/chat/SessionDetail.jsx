@@ -1008,8 +1008,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const isAdmin = !!user?.roles?.includes('admin')
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['session', sessionId],
-    queryFn: () => getSession(sessionId),
+    queryKey: ['session', sessionId, viewMode === 'inspect' ? 'with-superseded' : 'default'],
+    queryFn: () => getSession(sessionId, { includeSuperseded: viewMode === 'inspect' }),
     retry: (failureCount, error) => {
       if (error?.status === 403 || error?.status === 404) return false
       return failureCount < 3
