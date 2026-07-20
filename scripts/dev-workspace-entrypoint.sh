@@ -488,9 +488,13 @@ if [ -n "${FOUNDRY_API_KEY:-}" ]; then
     export CLAUDE_CODE_USE_FOUNDRY=1
     export ANTHROPIC_FOUNDRY_API_KEY="${FOUNDRY_API_KEY}"
     export ANTHROPIC_FOUNDRY_RESOURCE="${ANTHROPIC_FOUNDRY_RESOURCE:-druppie-resource}"
+    # Full Foundry base URL (overrides resource-name construction). Set to your
+    # exact Azure AI Services endpoint if the resource name differs or needs a
+    # region. Claude Code appends the /anthropic path itself (no /anthropic here).
+    export ANTHROPIC_FOUNDRY_BASE_URL="${ANTHROPIC_FOUNDRY_BASE_URL:-https://${ANTHROPIC_FOUNDRY_RESOURCE}.services.ai.azure.com}"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-claude-opus-4-8}"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-claude-opus-4-8}"
-    log "Claude Code configured for Azure AI Foundry (resource: ${ANTHROPIC_FOUNDRY_RESOURCE})"
+    log "Claude Code configured for Azure AI Foundry (base: ${ANTHROPIC_FOUNDRY_BASE_URL})"
 fi
 
 # opencode: auto-detects providers by env-var name (the names it looks for come
@@ -510,7 +514,7 @@ if [ -n "${FOUNDRY_API_KEY:-}" ]; then
     # AI Services Anthropic endpoint so the same FOUNDRY_API_KEY authenticates
     # Claude too (matches the backend's litellm azure_ai URL).
     export ANTHROPIC_API_KEY="${FOUNDRY_API_KEY}"
-    export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic}"
+    export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1}"
     log "opencode: Z.AI/Z.AI Coding Plan + Azure + Anthropic(via Foundry) providers available via env aliases"
 fi
 
