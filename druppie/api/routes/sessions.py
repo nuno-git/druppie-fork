@@ -15,6 +15,7 @@ Services handle:
 This file went from 776 lines to ~80 lines by moving logic to services/repositories.
 """
 
+from enum import Enum
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from uuid import UUID
@@ -25,10 +26,13 @@ from druppie.api.deps import (
     get_current_user,
     get_user_roles,
     get_session_service,
+    get_session_repository,
     get_execution_repository,
+    require_compliance_officer,
 )
 from druppie.services import SessionService
-from druppie.domain import SessionDetail, SessionStatus
+from druppie.repositories import SessionRepository
+from druppie.domain import AccessLevel, SessionDetail, SessionStatus, Waardering
 from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
@@ -88,6 +92,7 @@ async def list_sessions(
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: UUID,
+    include_superseded: bool = Query(False, description="Include superseded runs/messages (for inspect view)"),
     service: SessionService = Depends(get_session_service),
     user: dict = Depends(get_current_user),
 ) -> SessionDetail:
@@ -120,10 +125,58 @@ async def get_session(
         session_id=session_id,
         user_id=user_id,
         user_roles=user_roles,
+        include_superseded=include_superseded,
     )
 
     logger.info("session_retrieved", session_id=str(session_id), user_id=str(user_id))
     return detail
+
+
+class UpdateArchivingMetadataRequest(BaseModel):
+    """Request body for updating MDTO archiving fields on a session."""
+    classificatie_code: str | None = None
+    informatiecategorie: str | None = None
+    waardering: Waardering | None = None
+    bewaartermijn_looptijd: str | None = None
+    bewaartermijn_trigger: str | None = None
+    access_level: AccessLevel | None = None
+
+
+@router.patch("/sessions/{session_id}/archiving")
+async def update_archiving_metadata(
+    session_id: UUID,
+    body: UpdateArchivingMetadataRequest,
+    session_repo: SessionRepository = Depends(get_session_repository),
+    user: dict = Depends(require_compliance_officer),
+):
+    """Update MDTO archiving metadata on a session.
+
+    Only compliance-officers (and admins) may update classification and
+    retention fields. Fields not included in the request body are left
+    unchanged; explicit ``null`` clears a field.
+    """
+    session = session_repo.get_by_id(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=422, detail="No fields to update")
+
+    for field, value in update_data.items():
+        if isinstance(value, Enum):
+            value = value.value
+        setattr(session, field, value)
+
+    session_repo.commit()
+
+    logger.info(
+        "archiving_metadata_updated",
+        session_id=str(session_id),
+        user_id=user.get("sub"),
+        fields=list(update_data.keys()),
+    )
+    return {"success": True, "updated_fields": list(update_data.keys())}
 
 
 class DeleteSessionsRequest(BaseModel):
@@ -209,6 +262,7 @@ async def _run_retry_background(
             logger.info("retry_nested_reset_complete", session_id=str(session_id), result=result)
 
             parent_run_id = UUID(result["parent_run_id"])
+            new_run_id = UUID(result["agent_run_id"])
 
             from druppie.db.models.agent_run import AgentRun as AgentRunModel
             from druppie.agents.runtime_v2 import AgentV2 as Agent
@@ -221,14 +275,15 @@ async def _run_retry_background(
                 .filter(
                     AgentRunModel.session_id == session_id,
                     AgentRunModel.parent_run_id == parent_run_id,
-                    AgentRunModel.id != agent_run_id,
+                    AgentRunModel.id != new_run_id,
                     AgentRunModel.status == AgentRunStatus.PAUSED_USER.value,
+                    AgentRunModel.superseded_at.is_(None),
                 )
                 .order_by(AgentRunModel.created_at)
                 .all()
             )
 
-            agent_run = ctx.execution_repo.get_by_id_for_session(agent_run_id, session_id)
+            agent_run = ctx.execution_repo.get_by_id_for_session(new_run_id, session_id)
             target_prompt = planned_prompt if planned_prompt is not None else (agent_run.planned_prompt or "")
 
             async def _run_in_own_db(run_id, agent_id, prompt, is_continue):

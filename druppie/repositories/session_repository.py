@@ -127,13 +127,13 @@ class SessionRepository(BaseRepository):
         )
         return [self._to_summary(s) for s in sessions]
 
-    def get_detail(self, session_id: UUID) -> SessionDetail | None:
+    def get_detail(self, session_id: UUID, include_superseded: bool = False) -> SessionDetail | None:
         """Get session with full timeline."""
         session = self.get_by_id(session_id)
         if not session:
             return None
 
-        timeline = self._build_timeline(session_id)
+        timeline = self._build_timeline(session_id, include_superseded=include_superseded)
         project = self._get_project_summary(session.project_id) if session.project_id else None
 
         return SessionDetail(
@@ -150,6 +150,12 @@ class SessionRepository(BaseRepository):
             ),
             created_at=session.created_at,
             updated_at=session.updated_at,
+            classificatie_code=session.classificatie_code,
+            informatiecategorie=session.informatiecategorie,
+            waardering=session.waardering,
+            bewaartermijn_looptijd=session.bewaartermijn_looptijd,
+            bewaartermijn_trigger=session.bewaartermijn_trigger,
+            access_level=session.access_level,
             # SessionDetail specific
             user_id=session.user_id,
             project=project,
@@ -222,6 +228,7 @@ class SessionRepository(BaseRepository):
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.status != AgentRunStatus.PENDING.value,
+                AgentRun.superseded_at.is_(None),
             )
             .first()
         )
@@ -282,9 +289,15 @@ class SessionRepository(BaseRepository):
             ),
             created_at=session.created_at,
             updated_at=session.updated_at,
+            classificatie_code=session.classificatie_code,
+            informatiecategorie=session.informatiecategorie,
+            waardering=session.waardering,
+            bewaartermijn_looptijd=session.bewaartermijn_looptijd,
+            bewaartermijn_trigger=session.bewaartermijn_trigger,
+            access_level=session.access_level,
         )
 
-    def _build_timeline(self, session_id: UUID) -> list[TimelineEntry]:
+    def _build_timeline(self, session_id: UUID, include_superseded: bool = False) -> list[TimelineEntry]:
         """Build chronological timeline from messages and agent runs.
 
         Returns a unified list of TimelineEntry objects, each containing either:
@@ -295,14 +308,14 @@ class SessionRepository(BaseRepository):
         """
         entries = []
 
-        # Get messages (user, system, assistant)
-        messages = (
+        msg_query = (
             self.db.query(MessageModel)
             .filter_by(session_id=session_id)
             .filter(MessageModel.role.in_(["user", "system", "assistant", "tool"]))
-            .order_by(MessageModel.created_at)
-            .all()
         )
+        if not include_superseded:
+            msg_query = msg_query.filter(MessageModel.superseded_at.is_(None))
+        messages = msg_query.order_by(MessageModel.created_at).all()
 
         # Batch-load attachments for all messages
         message_ids = [msg.id for msg in messages]
@@ -339,13 +352,13 @@ class SessionRepository(BaseRepository):
                 ),
             ))
 
-        # Get agent runs (top-level only - parent_run_id is NULL)
-        agent_runs = (
+        run_query = (
             self.db.query(AgentRun)
             .filter_by(session_id=session_id, parent_run_id=None)
-            .order_by(AgentRun.sequence_number)
-            .all()
         )
+        if not include_superseded:
+            run_query = run_query.filter(AgentRun.superseded_at.is_(None))
+        agent_runs = run_query.order_by(AgentRun.sequence_number).all()
 
         for run in agent_runs:
             entries.append(TimelineEntry(
@@ -389,6 +402,8 @@ class SessionRepository(BaseRepository):
             ),
             started_at=run.started_at,
             completed_at=run.completed_at,
+            superseded_at=run.superseded_at,
+            superseded_by_run_id=run.superseded_by_run_id,
         )
 
     def _build_agent_run_detail(self, run: AgentRun, _depth: int = 0) -> AgentRunDetail:
@@ -402,6 +417,7 @@ class SessionRepository(BaseRepository):
             child_runs = (
                 self.db.query(AgentRun)
                 .filter_by(parent_run_id=run.id)
+                .filter(AgentRun.superseded_at.is_(None))
                 .order_by(AgentRun.sequence_number, AgentRun.created_at)
                 .all()
             )
@@ -426,6 +442,8 @@ class SessionRepository(BaseRepository):
             ),
             started_at=run.started_at,
             completed_at=run.completed_at,
+            superseded_at=run.superseded_at,
+            superseded_by_run_id=run.superseded_by_run_id,
             llm_calls=llm_calls,
             subagent_runs=subagent_runs,
             compaction_events=compaction_events,
@@ -672,6 +690,7 @@ class SessionRepository(BaseRepository):
             child_run_db = (
                 self.db.query(AgentRun)
                 .filter_by(parent_run_id=tc.agent_run_id)
+                .filter(AgentRun.superseded_at.is_(None))
                 .order_by(AgentRun.started_at)
                 .first()
             )
