@@ -390,7 +390,7 @@ The agent loop lives in `druppie/execution/` and `druppie/agent_runtime/` with t
 ### GitHub Actions
 
 - `.github/workflows/build-and-deploy.yml` — Self-hosted ARC runner inside K3s:
-  - Builds 12 Docker images with BuildKit.
+  - Builds Docker images with BuildKit.
   - Pushes to internal registry then syncs to pull registry.
   - Deploys via Helm to K3s cluster.
   - PR builds tag `pr-<number>` (no deploy).
