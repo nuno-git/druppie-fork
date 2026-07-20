@@ -2,7 +2,7 @@ name: Build and Push Images
 
 on:
   push:
-    branches: [colab-dev, main, 'feature/**']
+    branches: ['**']
   workflow_dispatch:
 
 env:
@@ -242,12 +242,12 @@ jobs:
 
       - name: Update HelmRelease image tag in ai/k8s
         # SECURITY NOTE (review point 2): on push events Gitea runs the workflow
-        # file from the pushed branch, so anyone with push rights to a feature/**
-        # branch can submit a workflow that reads HARBOR_PASSWORD / CI_GIT_TOKEN
-        # (the latter can push ai/k8s main). The durable fix is operational, not
-        # in-repo: (1) restrict CI_GIT_TOKEN to ai/k8s only (no admin), and
+        # file from the pushed branch, so anyone with push rights to a branch can
+        # submit a workflow that reads HARBOR_PASSWORD / CI_GIT_TOKEN (the latter
+        # can push ai/k8s main). The durable fix is operational, not in-repo:
+        # (1) restrict CI_GIT_TOKEN to ai/k8s only (no admin), and
         # (2) use Gitea "environments" tied to main/colab-dev for these secrets
-        # so feature branches can't reference them, plus branch protection on
+        # so other branches can't reference them, plus branch protection on
         # .gitea/workflows/ for the long-lived branches. The token is injected
         # ONLY into this step's env (never a global job/env secret).
         env:
@@ -256,9 +256,8 @@ jobs:
           GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
         run: |
           # main/colab-dev: their HelmRelease lives under clusters/ka-k8s-ai/apps/.
-          # Feature branches: a branch environment (deployed from the Druppie UI)
-          # has a machine-managed HelmRelease under clusters/branch-envs/ — update
-          # its imageTag so the env auto-upgrades. No env dir -> nothing to do.
+          # Other branches: if a branch environment (deployed from the Druppie UI)
+          # exists, update its imageTag so the env auto-upgrades. No env dir -> nothing to do.
           if [ "$BRANCH" = "main" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie/helmrelease.yaml"
           elif [ "$BRANCH" = "colab-dev" ]; then
