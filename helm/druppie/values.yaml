@@ -219,6 +219,23 @@ frontend:
 devWorkspace:
   enabled: false
   stackMode: degraded
+  # embedModules: list of MCP module keys to run INSIDE the workspace pod under
+  # `uvicorn --reload` (hot-reload on edit) instead of as separate baked-image
+  # Deployments. When a module is listed here AND devWorkspace.enabled=true:
+  #   - its Deployment is skipped (no separate pod)
+  #   - its Service selector flips to component: dev-workspace, targeting the
+  #     named port mcp-<key> on the workspace container
+  #   - the workspace entrypoint launches `uvicorn --reload` for it from
+  #     /workspace/druppie/mcp-servers/module-<dir>
+  # Valid keys: coding docker filesearch web archimate registry llm kubernetes
+  #   vision searxng browser data_access azuredevops
+  # Caveats for privileged modules (embedded best-effort, see Dockerfile.dev-workspace):
+  #   coding/docker  — need docker.sock (auto-mounted when present in the list)
+  #   kubernetes     — workspace SA gets the k8s-readonly ClusterRoleBinding
+  #   vision         — needs GPU; only useful if the workspace pod is pinned to
+  #                    a GPU node (set devWorkspace.nodeSelector + resources)
+  #   browser        — chromium already in the image; needs --no-sandbox (set)
+  embedModules: []
   # secretsSource: Vault path prefix for env secrets. Accepted values:
   #   "colab-dev" → druppie/colab-dev/*  (shared LLM keys, etc.)
   #   "robbe"     → druppie/developers/robbe/*

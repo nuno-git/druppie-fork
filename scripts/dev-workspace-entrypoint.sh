@@ -350,6 +350,18 @@ git config --global --add safe.directory "${REPO_DIR}"
 export CLAUDE_CONFIG_DIR="${WORKSPACE}/.claude"
 mkdir -p "${CLAUDE_CONFIG_DIR}"
 
+# Claude Code: route through Azure AI Foundry using FOUNDRY_API_KEY (from
+# envFrom). The Azure resource only deploys claude-opus-4-8, so all model
+# aliases fall back to it. Override via env vars if the deployment changes.
+if [ -n "${FOUNDRY_API_KEY:-}" ]; then
+    export CLAUDE_CODE_USE_FOUNDRY=1
+    export ANTHROPIC_FOUNDRY_API_KEY="${FOUNDRY_API_KEY}"
+    export ANTHROPIC_FOUNDRY_RESOURCE="${ANTHROPIC_FOUNDRY_RESOURCE:-druppie-resource}"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-claude-opus-4-8}"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-claude-opus-4-8}"
+    log "Claude Code configured for Azure AI Foundry (resource: ${ANTHROPIC_FOUNDRY_RESOURCE})"
+fi
+
 seed_workspace
 
 # Keep the workspace's own runtime artifacts out of the Source Control pane:

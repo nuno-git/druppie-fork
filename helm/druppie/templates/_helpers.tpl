@@ -181,3 +181,18 @@ otherwise falls back to the configured persistence.storageClass.
 {{ .Values.persistence.storageClass }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Module-embedded predicate: returns truthy when devWorkspace is enabled AND
+the given module key (arg `mod`) appears in devWorkspace.embedModules — i.e.
+that module should run inside the workspace pod under uvicorn --reload instead
+of as its own baked-image Deployment.
+
+Usage: {{ include "druppie.moduleEmbedded" (dict "root" . "mod" "coding") }}
+
+The caller is responsible for any surrounding `if`/`if not` — this helper only
+emits the boolean expression so it composes with other conditions.
+*/}}
+{{- define "druppie.moduleEmbedded" -}}
+{{- and .root.Values.devWorkspace.enabled (has .mod .root.Values.devWorkspace.embedModules) -}}
+{{- end -}}
