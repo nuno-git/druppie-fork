@@ -587,6 +587,41 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
             </p>
           </div>
 
+          {/* Mode selector */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-2">Mode</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setRecoveryMode(false)}
+                className={`flex flex-col items-start gap-1 p-3 rounded-lg border text-left transition-all ${
+                  !recoveryMode
+                    ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-400'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
+              >
+                <span className="text-sm font-medium text-gray-900">Full environment</span>
+                <span className="text-[11px] text-gray-500 leading-tight">
+                  Backend, frontend, modules, gitea, database — the full Druppie stack.
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecoveryMode(true)}
+                className={`flex flex-col items-start gap-1 p-3 rounded-lg border text-left transition-all ${
+                  recoveryMode
+                    ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-400'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
+              >
+                <span className="text-sm font-medium text-gray-900">Dev workspace only</span>
+                <span className="text-[11px] text-gray-500 leading-tight">
+                  VS Code + desktop + CLI tools only. No backend/frontend/modules. Minimal RAM.
+                </span>
+              </button>
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Secrets source</label>
             <div className="space-y-1.5">
@@ -678,20 +713,6 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
                 <p className="text-xs text-gray-400 mt-1">
                   Leave empty to use the branch&apos;s default image tag.
                 </p>
-                <label className="flex items-start gap-2 mt-3 text-sm text-gray-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={recoveryMode}
-                    onChange={(e) => setRecoveryMode(e.target.checked)}
-                    className="mt-0.5"
-                  />
-                  <span>
-                    Recovery mode
-                    <span className="block text-xs text-gray-400">
-                      Workspace + login only — no gitea, database, or modules. Uses SQLite internally. Minimal RAM usage.
-                    </span>
-                  </span>
-                </label>
               </div>
             )}
           </div>
