@@ -1,8 +1,10 @@
-# Druppie Coding Standards (Current State)
+# Druppie Coding Standards
 
-This document describes how the Druppie codebase **actually works today**. It is the single source of truth for current conventions, patterns, and layer responsibilities.
+This document defines the standards the Druppie codebase works toward.
 
-For the aspirational target state, see [`CODING_STANDARDS_IDEAL.md`](CODING_STANDARDS_IDEAL.md).
+> **How to use this.** Write new code to match these standards. When touching
+> existing code, you are always welcome to refactor it toward the ideal here.
+> Where the current codebase deviates, a `Current reality` note appears.
 
 ## Table of Contents
 
@@ -12,13 +14,17 @@ For the aspirational target state, see [`CODING_STANDARDS_IDEAL.md`](CODING_STAN
 4. [Database Standards (PostgreSQL / SQLAlchemy)](#database-standards-postgresql--sqlalchemy)
 5. [Data Handling & Type Safety](#data-handling--type-safety)
 6. [Security Standards](#security-standards)
-7. [Agent Execution & Async Patterns](#agent-execution--async-patterns)
-8. [Testing Standards](#testing-standards)
-9. [Docker & Infrastructure Standards](#docker--infrastructure-standards)
-10. [CI/CD & Git Standards](#cicd--git-standards)
-11. [Documentation Standards](#documentation-standards)
-12. [AI Review Agent — Quick Checklist](#ai-review-agent--quick-checklist)
-13. [Anti-Patterns & Common Mistakes](#anti-patterns--common-mistakes)
+7. [Concurrency & TOCTOU Standards](#concurrency--toctou-standards)
+8. [Agent Execution & Async Patterns](#agent-execution--async-patterns)
+9. [MCP Module Standards](#mcp-module-standards)
+10. [Testing Standards](#testing-standards)
+11. [Logging & Observability](#logging--observability)
+12. [Infrastructure Standards](#infrastructure-standards)
+13. [CI/CD & Git Standards](#cicd--git-standards)
+14. [Documentation Standards](#documentation-standards)
+15. [AI Review Agent — Quick Checklist](#ai-review-agent--quick-checklist)
+16. [Anti-Patterns & Common Mistakes](#anti-patterns--common-mistakes)
+17. [General Software Engineering Principles](#general-software-engineering-principles)
 
 ---
 
@@ -41,16 +47,16 @@ For the aspirational target state, see [`CODING_STANDARDS_IDEAL.md`](CODING_STAN
 
 ```
 druppie/
-├── api/              # FastAPI routes — some contain event extraction/formatting
+├── api/              # FastAPI routes — THIN layer, minimal logic
 │   ├── main.py       # App factory, lifespan, router registration
 │   ├── deps.py       # Dependency injection (repos, services, auth)
 │   ├── errors.py     # Standardized error handling
 │   └── routes/       # Route modules
-├── services/         # Business logic layer — also does direct DB queries where needed
-├── repositories/     # Data access layer — core domain returns Pydantic models; evaluation/analytics returns raw dicts
+├── services/         # Business logic layer
+├── repositories/     # Data access layer — returns typed domain models
 ├── domain/           # Pydantic models
 ├── db/
-│   ├── models/       # SQLAlchemy ORM models — some use Column(JSON) for dynamic data
+│   ├── models/       # SQLAlchemy ORM models
 │   └── database.py   # Session factory, engine
 ├── execution/        # Agent orchestrator, ToolExecutor, MCPHttp, HumanInput
 ├── agents/           # Agent runtime, YAML definitions, system prompts
@@ -61,36 +67,41 @@ druppie/
 ├── skills/           # Skill definitions (markdown)
 ├── jobs/             # Job definitions
 ├── testing/          # Evaluation framework
-├── tests/            # pytest unit tests (agent_runtime is well covered; services not)
+├── tests/            # pytest unit tests
 └── mcp-servers/      # MCP microservice implementations
 ```
 
+> **Current reality:** `agents/runtime_v2.py` and `agents/loop.py` contain agent loop logic that belongs in `execution/` or `agent_runtime/`.
+
 ### Layer Responsibilities
 
-These reflect actual patterns in the codebase. New code should follow the "Preferred" column but it is okay to match existing patterns when working in a subsystem that already deviates.
+| Layer | Responsibility | Out of scope |
+|-------|----------------|------------|
+| `api/routes/` | HTTP routing, request/response serialization, dependency injection, auth checks | Business logic, event processing, complex formatting |
+| `services/` | Business logic, orchestration, validation | Direct DB queries — use repositories |
+| `repositories/` | Data access, SQLAlchemy queries, returns typed domain models | Business logic, HTTP concerns |
+| `domain/` | Pydantic models for API contracts | DB-specific types |
+| `db/models/` | SQLAlchemy ORM definitions | API serialization logic |
+| `execution/` | Agent loop orchestration, tool execution, HITL | Route definitions |
+| `agents/` | YAML definitions, prompt building | Runtime logic (belongs in `execution/` or `agent_runtime/`) |
 
-| Layer | What It Actually Does | Preferred Direction |
-|-------|----------------------|---------------------|
-| `api/routes/` | HTTP routing, request/response serialization, auth checks. Some routes contain significant event extraction, formatting, and direct `db.query()` calls for simple lookups. | Keep routes thin: orchestration only, move event processing and complex formatting to `services/`. |
-| `services/` | Business logic, orchestration, validation. Also performs direct DB queries via `repo.db.query(...)` where repository methods do not exist or where coordinated cross-table access is needed. | Prefer using repository methods for data access; add new repository methods instead of `repo.db.query()` in services. |
-| `repositories/` | Data access, SQLAlchemy queries. Core domain (sessions, projects, approvals) returns typed Pydantic models. Evaluation/analytics returns raw `dict` / `list[dict]`. | New repositories should return Pydantic domain models. Evaluation/analytics is an acknowledged exception. |
-| `domain/` | Pydantic models for API contracts. `LLMMessage.tool_calls` uses `list[dict[str, Any]]` because tool call schemas are open-ended. | Use Pydantic models wherever the schema is fixed. `dict[str, Any]` is acceptable when the schema is dynamic. |
-| `db/models/` | SQLAlchemy ORM definitions. Several models use `Column(JSON)` for data with variable schema (LLM messages, tool arguments, question choices). | Normalize into relational tables when the schema is stable and queryable. |
-| `execution/` | Agent loop orchestration, tool execution, HITL. Also manages DB sessions per tool call. | Keep execution logic out of `routes/` and `agents/`. |
-| `agents/` | YAML definitions, prompt building, runtime wrappers. Some files contain agent loop logic; this is historical. | New runtime logic belongs in `execution/` or `agent_runtime/`. |
+> **Current reality:** Several routes (notably `api/routes/sandbox.py`) contain significant event extraction, formatting, and direct `db.query()` calls for simple lookups. Some services perform direct DB queries via `repo.db.query(...)` where repository methods do not yet exist. Refactoring is welcome.
 
 ### Data Flow
 
-One direction only (the intended architecture):
+One direction only:
 
 ```
 Repository → Domain Model → Service → API Route
 ```
 
-In practice:
-- **Core domain** follows this (sessions, projects, approvals, agent runs).
-- **Evaluation/analytics** does not — repositories return raw `dict`, services pass them through, and routes return them without `response_model`.
-- **Auth/Gitea** return `dict[str, Any]` because they wrap dynamic external API responses.
+Routes call services. Services call repositories. Repositories return domain models.
+
+**Exceptions:**
+- External API wrappers (Gitea, Keycloak) may return `dict` or `TypedDict` because the upstream schema is versioned externally. Prefer `TypedDict` over plain `dict`.
+- Pure aggregation/group-by queries (analytics dashboards) may return dynamic shapes that are hard to model as flat Pydantic classes. In these cases, define a `TypedDict` or Pydantic model with clearly named fields; avoid raw `dict`.
+
+> **Current reality:** Evaluation/analytics repositories return raw `dict` / `list[dict]`, services pass them through, and routes return them without `response_model`. New evaluation code should move toward `TypedDict` or Pydantic.
 
 ### Domain Model Naming
 
@@ -101,7 +112,7 @@ Use the **Summary / Detail** pattern:
 
 All domain models are exported through `druppie/domain/__init__.py`. Route modules import from `druppie.domain`, never from internal module files directly.
 
-**Backward compatibility aliases** exist in the domain module. These are preserved to avoid breaking downstream consumers. New code should use the current names.
+> **Current reality:** Some backward-compatibility aliases exist in `domain/__init__.py` and `domain/session.py`. No new aliases should be introduced; existing ones may be removed after a deprecation cycle.
 
 ### Code Style
 
@@ -109,7 +120,7 @@ All domain models are exported through `druppie/domain/__init__.py`. Route modul
 - **Line length**: 100 (both `black` and `ruff`)
 - **Formatter**: `black .` (run inside `druppie/`)
 - **Linter**: `ruff check .` — rules `E`, `F`, `W`, `I`; ignores `E501`
-- **Type hints**: Mandatory. Functions, method parameters, and return values must be annotated.
+- **Type hints**: Required on all public functions, method parameters, and return values. Note: no type checker (mypy/pyright) is configured yet — adoption is tracked in BACKLOG. Once added, type hints become enforceable in CI.
 
 ### Error Handling
 
@@ -119,9 +130,9 @@ All API errors are standardized in `druppie/api/errors.py`:
 - Raise `APIError` with structured messages.
 - Register exception handlers in `main.py` lifespan.
 
-### Hard Constraints (Blocking Rules for New Code)
+### Hard Constraints (Blocking Rules)
 
-These are rules that are actually enforced. A PR introducing any of these must be blocked.
+These are enforced. A PR introducing any of these must be blocked.
 
 1. **NO database migrations** — Update SQLAlchemy models directly. Reset the DB with:
    ```bash
@@ -156,7 +167,7 @@ frontend/
 │   │   ├── ErrorBoundary.jsx
 │   │   └── ...
 │   ├── services/
-│   │   ├── api.js            # API calls (monolithic)
+│   │   ├── api.js            # API calls (monolithic — target: split by domain)
 │   │   ├── keycloak.js       # Auth service
 │   │   ├── pendingChat.js    # Module-level pending message store
 │   │   └── uploadManager.js  # Module-level upload manager
@@ -185,7 +196,7 @@ frontend/
 
 ### API Client Patterns
 
-- `api.js` currently holds all API calls. **New features should split by domain** into smaller service modules under `src/services/`, e.g. `sessionApi.js`, `approvalApi.js`.
+- **Target**: split `api.js` by domain into smaller service modules under `src/services/` (e.g. `sessionApi.js`, `approvalApi.js`). This refactor has not started yet — new features should create a new domain module rather than growing `api.js`.
 - All API calls must handle errors and propagate meaningful messages to the UI (via Toast or ErrorBoundary).
 
 ### Linting
@@ -200,14 +211,11 @@ frontend/
 - **Engine**: PostgreSQL 15 (Alpine in Docker).
 - **ORM**: SQLAlchemy models in `druppie/db/models/`.
 - **Primary keys**: UUID. Use the PostgreSQL native `UUID` type. For test compatibility, the project uses a SQLite UUID shim when running on SQLite.
-- **Normalization**: Relational tables are preferred. However, `Column(JSON)` is used for data with variable or open-ended schema:
-  - `llm_call.request_messages` / `response_tool_calls` / `raw_request` / `raw_response` / `tools_provided`
-  - `tool_call.arguments`
-  - `approval.arguments`
-  - `question.choices` / `choices_english` / `selected_indices` / `agent_state`
-  When adding a JSON column, document the expected shape in a code comment. Note: `question.agent_state` is a candidate for normalization (stable, queryable schema).
+- **Normalization**: Prefer relational tables. **Use `Column(JSON)` only for data with genuinely variable or open-ended schema** (e.g. raw LLM payloads, tool call arguments with provider-specific extensions). When you use JSON, document the expected shape in a code comment. Do not use JSON for data with a stable, queryable schema. Note: `agent_state` is a candidate for normalization (stable, queryable schema).
 - **Migrations**: Forbidden. Update models directly and reset the DB.
 - **Naming**: Table names are snake_case. Model classes are PascalCase.
+
+> **Current reality:** Several DB models use `Column(JSON)` for data with stable schemas that should be normalized (e.g. `question.choices`, `approval.arguments`). Refactoring is tracked in BACKLOG.
 
 ---
 
@@ -215,30 +223,34 @@ frontend/
 
 ### Raw Dicts Between Layers
 
-**Core domain** (sessions, projects, approvals, agent runs): repositories return Pydantic models, services consume and return them, routes use `response_model`. This is the pattern to follow for new code.
+Data should travel between repository, service, and route layers as typed Pydantic domain models. Define Pydantic models or `TypedDict` structures.
 
-**Evaluation/analytics** (test runs, benchmarks): repositories return raw `dict` / `list[dict]`. Services pass them through. Routes return them directly. This is acknowledged existing practice; new evaluation code should prefer Pydantic models where the schema is stable.
+**Core domain** (sessions, projects, approvals, agent runs): repositories must return Pydantic models. Services must consume and return them. Routes must declare `response_model`.
 
-**External integrations** (Gitea, Keycloak JWKS): returning `dict[str, Any]` is acceptable because the upstream API schema is dynamic and versioned externally.
+**Evaluation/analytics**: prefer Pydantic models where schemas are stable. For pure aggregations that return cross-tabulated data with many nullable fields, a `TypedDict` return type is acceptable as long as the fields are documented.
+
+**External integrations** (Gitea, Keycloak): wrap external API responses in `TypedDict` with expected fields rather than plain `dict`.
 
 ### Specific Types for MCP / Agent Memory
 
-When working with agent memory, tool arguments, or MCP payloads:
+When working with agent memory, tool arguments, or MCP payloads, use **concrete typed structures** (`TypedDict`, Pydantic models, or `@dataclass`), not generic `dict[str, Any]`.
 
-- Use **concrete typed structures** (`TypedDict`, Pydantic models, or `@dataclass`) where the schema is fixed.
-- `dict[str, Any]` is acceptable for open-ended structures (e.g. dynamic tool call arguments, raw LLM payloads).
+- **Agent memory** — Define a `Memory` Pydantic model or `TypedDict` with explicit fields.
+- **Tool arguments** — Validate tool inputs with Pydantic models before execution.
+- **MCP messages** — Use the project's MCP message types rather than raw dicts.
 
 ### Validation at Boundaries
 
 - **Repository boundary** — Convert SQLAlchemy models to Pydantic models using `model_validate()` or explicit factory methods.
-- **API boundary** — Use FastAPI `response_model` on routes returning core domain data. Evaluation/analytics routes currently do not use `response_model`.
+- **API boundary** — Use FastAPI `response_model` on routes returning domain data. Exception: pure aggregation routes where the shape varies by query parameters (these should still use `TypedDict`).
 - **External data boundary** — Validate all incoming JSON/YAML from external systems (LLM responses, MCP tools, WebSocket payloads) with Pydantic before processing.
 
 ### Type Safety Rules
 
-1. **No `typing.cast` to silence the type checker** — Fix the underlying type issue.
-2. **`**kwargs`** — Prefer explicit named parameters. One existing exception: `evaluation_repository.update_batch_run(self, batch_id: str, **kwargs)`.
-3. **`# type: ignore` / `# noqa`** — Acceptable for known idioms (e.g. SQLAlchemy boolean comparison matching) and template unused imports. Do not add them for new code without justification.
+1. **No plain `dict` as a public interface** — Public methods must return Pydantic models or `TypedDict`. Internal helpers may use plain `dict` temporarily.
+2. **No `**kwargs` abuse** — Prefer explicit named parameters. `**kwargs` is only acceptable for passthrough to external libraries.
+3. **No `typing.cast` to silence the type checker** — Fix the underlying type issue or redesign the interface.
+4. **`# type: ignore` / `# noqa`** — Acceptable for known SQLAlchemy idiom false positives and template unused imports. Do not add them for new code without justification.
 
 ---
 
@@ -246,10 +258,13 @@ When working with agent memory, tool arguments, or MCP payloads:
 
 ### Authentication
 
-- **Sensitive routes** (sessions, chat, approvals, deployments) validate JWT tokens via FastAPI dependency injection (`deps.py`, `get_current_user`).
-- **Read-only / internal analytics routes** (evaluations, analytics, workspace files) do not require auth. This is current practice but should be revisited if those endpoints expose project-scoped data.
+- **All routes that read or mutate project-scoped data** must validate JWT tokens via FastAPI dependency injection (`deps.py`).
+- **Truly public endpoints** (health checks, Swagger docs, public status pages) may skip auth.
+- **Internal read-only aggregations** (cross-project analytics that do not expose individual data) may skip auth if the data is not sensitive. Revisit this if the endpoint begins returning project-scoped details.
 - **Token extraction** happens in `deps.py`, never duplicated in individual route modules.
-- **Roles** are enforced in routes using `RequireRole(...)` dependencies. Some services also perform role filtering internally (e.g. checking for the `"admin"` role or session-owner role). New code should prefer route-level `RequireRole` where possible.
+- **Roles** are enforced in routes using `RequireRole(...)` dependencies. Service methods should receive roles from the route via parameters, not fetch them from `deps.py` directly.
+
+> **Current reality:** Some service methods perform role filtering internally (e.g. checking `"admin"` or session-owner role). New code should prefer route-level `RequireRole` where possible.
 
 ### Authorization & MCP Permissions
 
@@ -261,7 +276,7 @@ When working with agent memory, tool arguments, or MCP payloads:
 
 - **Route level** — Use FastAPI path/query/body parameter models (Pydantic) for all user input. Do not manually parse `request.json()`.
 - **Service level** — Re-validate business-critical inputs that skip the API (e.g., internal calls, agent-generated payloads).
-- **SQL Injection** — Never use string formatting or f-strings for SQL. Use SQLAlchemy ORM queries exclusively. Raw SQL is acceptable only in controlled postgres-native operations and MCP server microservices.
+- **SQL Injection** — Never use string formatting or f-strings for SQL. Use SQLAlchemy ORM queries exclusively. Raw SQL is forbidden unless in a controlled migration or analytics script outside the main app.
 
 ### Secrets & Credentials
 
@@ -277,12 +292,40 @@ When working with agent memory, tool arguments, or MCP payloads:
 
 ---
 
+## Concurrency & TOCTOU Standards
+
+TOCTOU (Time-Of-Check-Time-Of-Use) is the #1 concurrency bug class in CRUD apps. Any code shaped "read row → branch on its value → write" is a TOCTOU race window.
+
+**TOCTOU-1 — Treat check-then-act on DB rows as a code smell.** Any `if row.X: <mutate>` where `row` came from a prior `SELECT` must use one of:
+- DB locking (`with_for_update()`)
+- A unique constraint + caught `IntegrityError`
+- An atomic `UPDATE ... WHERE` guard
+
+**TOCTOU-2 — Use `with_for_update()` when you must read then mutate the same row.**
+
+```python
+x = session.scalars(
+    select(X).where(X.id == id_).with_for_update()
+).one()
+x.field -= amount  # safe: row locked until COMMIT
+```
+
+**TOCTOU-3 — For job-queue patterns, use `FOR UPDATE SKIP LOCKED`.** Each worker locks the next available row and skips rows locked by peers. De-facto standard for safe concurrent dequeue.
+
+**TOCTOU-4 — Prefer unique constraint + caught `IntegrityError` over manual "exists?" check.** The DB enforces atomicity; the race window is eliminated.
+
+**TOCTOU-5 — Make mutating POST/PATCH idempotent via `Idempotency-Key` header.** Retries must not double-execute side effects.
+
+**TOCTOU-6 — Never guard file writes with `os.path.exists()`.** Use atomic create or temp-file + `os.replace()`.
+
+---
+
 ## Agent Execution & Async Patterns
 
 ### Async / Await Conventions
 
-- **FastAPI routes are async** — use `await` for DB, HTTP, and file operations.
-- **No blocking calls in async paths** — `requests.get`, `time.sleep`, `open(...)` inside `async def` without offloading blocks the event loop. Use `httpx.AsyncClient`, `aiofiles`, or `asyncio.to_thread`.
+- **The entire backend is async** — FastAPI with async SQLAlchemy (or sync DB in threadpool depending on config). Services and repositories should be `async def` where I/O occurs.
+- **No blocking calls in async paths** — Use `await` for DB, HTTP, and file operations. Offload CPU-heavy work to a threadpool if needed.
 - **Context propagation** — Preserve request context (user, session, trace ID) across async boundaries using `contextvars` or FastAPI `Request` state.
 
 ### Agent Runtime Patterns
@@ -294,12 +337,40 @@ The agent loop lives in `druppie/execution/` and `druppie/agent_runtime/` with t
 - **Resume / Retry** — Agent runs support resuming from a checkpoint. Never mutate historical run state in-place; create new runs for retries.
 - **State machine** — Agent runs follow a status lifecycle (`pending` → `running` → `done` / `error` / `cancelled`). Status transitions must be explicit, not implicit side effects.
 
-### MCP Server Integration
+---
 
-- **MCP servers** are microservices in `druppie/mcp-servers/`. Each exposes tools via HTTP.
-- **Connection lifecycle** — MCP connections are established per-session and closed cleanly. Do not leak connections.
-- **Tool schemas** — Every MCP tool exposes a JSON schema. The agent runtime validates tool calls against schemas before execution.
-- **Registration** — New MCP modules must include a `MODULE.yaml` manifest and be wired into `docker-compose.yml` with a profile.
+## MCP Module Standards
+
+MCP servers are microservices that give agents their tools. We use microservices (not builtin tools) so capabilities can be reused and swapped independently.
+
+### Canonical Layout (mandatory)
+
+```
+module-<id>/
+├── Dockerfile
+├── MODULE.yaml
+├── requirements.txt
+├── server.py
+└── v1/
+    ├── __init__.py
+    ├── module.py
+    └── tools.py
+```
+
+- `tools.py` defines `mcp = FastMCP(...)` + all `@mcp.tool()` decorators.
+- `server.py` calls `create_module_app("<id>", <port>)` from the shared `module_router.py`.
+- Every `@mcp.tool` MUST carry `meta={"module_id", "version"}`.
+- JSON schema is auto-derived from Python type hints — never hand-write schemas.
+- `GET /health` is mandatory (returns status, module_id, latest_version).
+- One fixed port per module (reserved: 9001-9013, 8090).
+
+### Registration
+
+Wire into BOTH `docker-compose.yml` (profiles: infra, dev, prod) AND Helm (values.yaml modules block + Deployment template). Also register tools in `core/mcp_config.yaml`.
+
+### Security: Hidden Param Injection
+
+Sensitive params (session_id, project_id, repo_name) are stripped from the LLM schema and injected server-side via `mcp_config.yaml` inject rules. Agents cannot forge them.
 
 ---
 
@@ -317,8 +388,6 @@ The agent loop lives in `druppie/execution/` and `druppie/agent_runtime/` with t
 | DB tests | In-memory SQLite with UUID shim |
 | Command | `cd druppie && pytest` |
 
-**Coverage reality**: `agent_runtime/` has good test coverage. Most `services/` modules (approval, session, job, revert, etc.) lack dedicated `test_*.py` files. New services should include tests.
-
 ### Frontend E2E Tests (Playwright)
 
 | Item | Standard |
@@ -327,7 +396,7 @@ The agent loop lives in `druppie/execution/` and `druppie/agent_runtime/` with t
 | Naming | `*.spec.js` |
 | Config | `frontend/playwright.config.js` |
 | Run | `npm run test:e2e` |
-| Fixed-delay waits | **NEVER use `page.waitForTimeout(N)`** — it pauses execution for a fixed duration regardless of page state, making tests slow and flaky. Use `waitForSelector`, `waitForResponse`, or `waitForURL` (waits until condition is met, then proceeds immediately). `waitForTimeout` exists in some existing tests but should not be added to new ones. **Test-level timeouts** (e.g. Playwright config `timeout`, `test.setTimeout()`) are safety rails and are required — they are not the same thing. |
+| Fixed-delay waits | **NEVER use `page.waitForTimeout(N)`** — it pauses execution for a fixed duration regardless of page state, making tests slow and flaky. Use `waitForSelector`, `waitForResponse`, or `waitForURL` (waits until condition is met, then proceeds immediately). **Test-level timeouts** (e.g. Playwright config `timeout`, `test.setTimeout()`) are safety rails and are required — they are not the same thing. |
 | Workers | `workers: 1`, `fullyParallel: false` |
 
 ### Evaluation Tests
@@ -339,9 +408,65 @@ The agent loop lives in `druppie/execution/` and `druppie/agent_runtime/` with t
   - `testing/profiles/` — HITL simulator and judge LLM profiles.
 - Run via API: `POST /api/evaluations/run-tests`.
 
+### Coverage Expectation
+
+There is no formal coverage target. PR reviewers should flag:
+
+- New backend logic without corresponding `test_*.py` additions.
+- New frontend user flows without e2e coverage.
+- PRs that delete failing tests instead of fixing them.
+
+> **Current reality:** `agent_runtime/` has good test coverage. Most `services/` modules lack dedicated `test_*.py` files. New services should include tests.
+
 ---
 
-## Docker & Infrastructure Standards
+## Logging & Observability
+
+The backend uses **structlog** for structured logging. Logs go to stdout/stderr.
+
+- **Event-name-first.** First arg is a stable event name, not a free-form message:
+  `logger.info("session_started", session_id=..., user_id=...)`
+- **Structured key-value pairs** for context — never f-string interpolation.
+- **Never log secrets.** Sanitize tokens, passwords, API keys.
+- **Use `exc_info=True`** (not `traceback.print_exc()`).
+
+---
+
+## Infrastructure Standards
+
+### Deployment Model
+
+Docker Compose = local dev only. Kubernetes Helm chart = all shared/prod environments.
+
+### Statelessness Mandate (12-Factor VI)
+
+Backend services MUST be stateless and horizontally scalable:
+
+1. **No request depends on in-memory state from a previous request.**
+2. **No sticky sessions.**
+3. **No persistent state on the local filesystem.** Uploads/exports go to a mounted PVC (RWX if >1 replica) or object storage.
+4. **All config from environment variables.**
+5. **Fast startup + graceful SIGTERM shutdown.**
+6. **Logs to stdout/stderr, never files.**
+7. **All background work is safe to interrupt and re-run (idempotent).**
+
+> **Current reality:** Attachment uploads write to a shared PVC; future goal is object storage. `leader_election.py` uses PG advisory locks for multi-replica singletons.
+
+### Stateful Components (only these may hold state)
+
+PostgreSQL (x3), Gitea (/data), Keycloak (via DB), workspace/sandbox-bundles PVCs, sandbox control-plane.
+
+### Scaling
+
+Backend uses **KEDA** with dual triggers: CPU + `SELECT COUNT(*) FROM agent_runs WHERE status='running'`. LLM I/O is idle-CPU, so we scale by work-in-progress.
+
+### Sandboxes
+
+Agent sandboxes run as Docker containers (sysbox-runc), NOT yet native K8s pods. Phase 2 will migrate them.
+
+---
+
+## Docker & Dev Infrastructure
 
 ### docker-compose.yml
 
@@ -360,7 +485,7 @@ The agent loop lives in `druppie/execution/` and `druppie/agent_runtime/` with t
 
 **Rule**: Pin external image tags explicitly. Do NOT use `latest`.
 
-**Exception**: Custom build images (e.g. sandbox) use `:latest` via environment variable fallback in `docker-compose.yml` because the image is rebuilt locally during development.
+**Exception**: Custom build images (e.g. sandbox) may use `:latest` via environment variable fallback in `docker-compose.yml` because the image is rebuilt locally during development.
 
 ### Dockerfile Patterns
 
@@ -429,13 +554,17 @@ Additional reference docs exist under `docs/` — update them when relevant.
 Use this checklist when reviewing a Pull Request. Flag any item that fails.
 
 ### Architecture & Structure
-- [ ] New backend changes follow layer separation: routes thin, logic in services, data access in repositories.
+- [ ] Backend changes follow layer separation: routes thin, logic in services, data access in repositories.
 - [ ] Domain models use Summary/Detail naming where applicable.
 - [ ] New domain models exported via `druppie/domain/__init__.py`.
 - [ ] Agent definitions added as YAML in `agents/definitions/`, not DB migrations or code-in-DB.
+- [ ] No new JSON columns in DB models **unless** the data has a genuinely variable schema. If JSON is used, the expected shape is documented.
 - [ ] No Alembic/database migration files introduced.
-- [ ] New code in core domain (sessions/projects/approvals): repositories return Pydantic models, not raw dicts.
-- [ ] Agent memory / MCP payloads use typed structures (Pydantic, TypedDict) where schema is fixed.
+- [ ] No new backward-compat aliases introduced. Existing aliases may be kept during deprecation.
+- [ ] **New code in core domain** (sessions/projects/approvals): repositories return Pydantic models, not plain dicts.
+- [ ] **New code in evaluation/analytics**: aggregates should use Pydantic models or TypedDict, not raw `dict`.
+- [ ] Agent memory / MCP payloads use typed structures (Pydantic, TypedDict).
+- [ ] New MCP modules follow the canonical layout (MODULE.yaml, server.py, v1/tools.py).
 
 ### Code Quality
 - [ ] Python type hints present on new functions and methods.
@@ -453,13 +582,14 @@ Use this checklist when reviewing a Pull Request. Flag any item that fails.
 - [ ] API calls are in `src/services/` (prefer splitting by domain rather than adding to monolithic `api.js`).
 - [ ] No `page.waitForTimeout()` in new Playwright tests.
 
-### Security
-- [ ] New routes that handle sensitive data enforce auth via FastAPI dependencies.
+### Security & Concurrency
+- [ ] New routes that handle sensitive/project-scoped data enforce auth via FastAPI dependencies.
 - [ ] Role checks use dependency injection where possible; service-level role filtering is acceptable for existing subsystems.
 - [ ] No hardcoded secrets in committed code.
 - [ ] User input is validated with Pydantic models at route boundaries.
 - [ ] No f-string SQL or raw SQL concatenation in application code.
 - [ ] MCP tool permissions are respected; no short-circuiting of approval workflows.
+- [ ] DB read-then-write operations use `with_for_update()`, unique constraints, or atomic `UPDATE WHERE` guards.
 
 ### Agent Execution & Async
 - [ ] Async services/repositories use `await` for I/O, no blocking calls in async paths.
@@ -473,12 +603,14 @@ Use this checklist when reviewing a Pull Request. Flag any item that fails.
 - [ ] No failing tests deleted to make CI green.
 - [ ] Mocking uses `MagicMock` / `AsyncMock`, not real external calls in unit tests.
 
-### Infrastructure
+### Infrastructure & Logging
 - [ ] Docker image tags are pinned (not `latest`). Custom build images are exempt.
 - [ ] New env vars follow `UPPER_SNAKE_CASE` with domain prefix.
 - [ ] `.env.example` updated if new env vars are introduced.
 - [ ] No hardcoded secrets in committed files.
 - [ ] `.gitignore` covers new generated artifacts if applicable.
+- [ ] `structlog` event-name-first logging with key-value context (not f-strings).
+- [ ] No secrets in logs.
 
 ### Documentation
 - [ ] `docs/FEATURES.md` updated if a new feature is added.
@@ -495,6 +627,7 @@ Use this checklist when reviewing a Pull Request. Flag any item that fails.
 | Monolithic `api.js` | Hard to maintain, prone to merge conflicts. | Split by domain into `sessionApi.js`, `approvalApi.js`, etc. |
 | Adding business logic to `api/routes/` | Violates separation of concerns. | Move logic to `services/`. |
 | Direct SQLAlchemy queries outside `repositories/` | Leaks data access into business/API layers. | Create or use a repository method. |
+| JSON column for data with stable schema | Relational tables are more queryable, type-safe, and support foreign keys. | Normalize into separate tables with foreign keys. |
 | Database migration file | Project policy is model-then-reset. | Update SQLAlchemy model, then reset the DB. |
 | Agent config stored in DB | Violates YAML-only config policy. | Add/modify `agents/definitions/*.yaml`. |
 | Hardcoded secrets in committed YAML/JS/Python | Security risk, easy to leak. | Use environment variables injected at runtime. |
@@ -503,10 +636,47 @@ Use this checklist when reviewing a Pull Request. Flag any item that fails.
 | Large `if/elif` chains in Python | Hard to extend and test. | Use strategy pattern, registry dict, or polymorphism. |
 | Suppressing type errors to avoid fixing them | Erodes type safety over time. | Fix the types or redesign the interface. |
 | **Returning raw `dict` from a repository (core domain)** | Destroys autocomplete, bypasses static analysis, allows silent key errors. | Return Pydantic domain models via `model_validate()`. |
-| **Using `dict[str, Any]` for agent memory / MCP data** | Untyped data allows field drift and runtime crashes. | Define `TypedDict` or Pydantic model with explicit fields. |
+| **Returning raw `dict` in evaluation/analytics** | Untyped data allows field drift and runtime crashes. | Define `TypedDict` or Pydantic model with explicit fields. |
 | **Passing `**kwargs` through service boundaries** | Hides required parameters from the type checker. | Use explicit named parameters. |
+| **Inline `if user.role == "admin":` in service methods** | Auth logic belongs in the route layer via dependencies. | Use `RequireRole(...)` FastAPI dependencies in `api/`. |
 | **f-string SQL or raw string concatenation** | SQL injection vulnerability. | Use SQLAlchemy ORM expressions exclusively. |
 | **Blocking calls (`requests.get`, `open(...)`) inside `async def`** | Blocks the event loop, degrades throughput. | Use async equivalents (`httpx.AsyncClient`, `aiofiles`). |
 | **Leaking MCP connections** | Resource exhaustion and stale state. | Open per session, close in `finally` / context manager. |
 | **Dead code in a PR** — unused imports, functions, variables, commented-out blocks | Creates noise, hides intent, increases review cost. | Remove before PR. Use `ruff check .` (rules F401, F811, F841) and review diff. |
 | **Auto-approving deployment/codeChange tools** | Bypasses governance and HITL policy. | Require explicit human approval via approval workflow. |
+| **N+1 queries** (loop issuing per-row SQLA queries) | The #1 perf footgun in ORM apps. | Eager-load with `selectinload` / `joinedload`; batch reads. |
+| **Broad `except Exception: pass` / returning generic 500** | Swallows bugs; defeats `APIError`+`ErrorCode`. | Catch specific exceptions; raise `APIError` with a code. |
+| **Naive `datetime.now()`** | Clock skew / cron bugs. | `datetime.now(timezone.utc)` — always timezone-aware. |
+| **Leaking secrets into the Vite bundle** (`VITE_`-prefixed env shipped to client) | Frontend is Vite; real leakage risk. | Only prefix public-safe values with `VITE_`. |
+| **Pydantic V1 validators in V2** (`@validator`, `root_validator`, `.dict()`) | `pydantic>=2.5` — deprecation landmines. | Use `@model_validator`, `model_dump()`. |
+| **Importing domain models from internal modules** instead of `druppie.domain` | Breaks the export contract. | Import from `druppie.domain`. |
+| **Hardcoded role strings** (`if role == "admin"`) | Typos, no autocomplete. | Use a `Role` enum/constant; route-level `RequireRole(...)`. |
+| **TOCTOU: check-then-act on DB rows without locking** | Double-spend / double-create races. | `with_for_update()`, unique constraint + `IntegrityError`, or atomic `UPDATE WHERE`. |
+| **Writing persistent state to the container filesystem** | Breaks K8s horizontal scaling; lost on pod restart. | Write to a mounted PVC (RWX if >1 replica) or object storage. |
+| **Sticky sessions / in-memory session state** | Violates 12-Factor VI; blocks autoscaling. | Externalize session state to DB/Redis. |
+| **Logging via `print()` or f-string messages** | Unqueryable; loses structure. | `structlog` event-name-first with key-value context. |
+
+---
+
+## General Software Engineering Principles
+
+One-liners, each a single reviewable pass/fail.
+
+| # | Rule | Review check |
+|---|------|--------------|
+| SWE-1 | **Single Responsibility Principle (SRP)** — a module/function/class has one reason to change. | If you can describe it with "and," split it. |
+| SWE-2 | **Fail Fast** — validate inputs and preconditions at the boundary; raise, don't silently default. | No buried `if x is None: return None` swallowing bad state. Surface errors at the API edge. |
+| SWE-3 | **YAGNI ("You Aren't Gonna Need It")** — don't build for a speculative future. | Flag unused params, unused generics, "we might need this later" abstractions. Delete dead code. |
+| SWE-4 | **KISS ("Keep It Simple, Stupid")** — the simplest correct solution wins. | Reject cleverness: no needless indirection, no one-liners that need a comment to decode. |
+| SWE-5 | **DRY ("Don't Repeat Yourself"), but only for true duplication** — extract when logic + reason-to-change are identical, not when code merely looks similar. | Two similar-looking but independently-evolving blocks should stay separate. Over-abstraction is as harmful as duplication. |
+| SWE-6 | **Law of Demeter (principle of least knowledge)** — don't reach through objects (`a.b.c().d`). | Long accessor chains signal leaky abstractions. |
+| SWE-7 | **Composition over inheritance** — prefer injected collaborators over deep class hierarchies. | Flag inheritance depth > 2 and base classes that exist only to share helpers. |
+| SWE-8 | **Favor immutability** — default to read-only/frozen data; mutate explicitly and locally. | `@dataclass(frozen=True)`, returning new objects instead of mutating inputs. |
+| SWE-9 | **Dependency Inversion (the D in SOLID)** — depend on abstractions (`Protocol`), not concrete classes, at module boundaries. | Services should receive a `Protocol`, not a concrete repo. |
+
+### SOLID quick reference
+- **S**RP — Single Responsibility (SWE-1)
+- **O**CP — Open/Closed: extend via new code, not by editing existing code
+- **L**SP — Liskov Substitution: subclasses must be substitutable for their base
+- **I**SP — Interface Segregation: don't force clients to depend on unused methods
+- **D**IP — Dependency Inversion (SWE-9)
