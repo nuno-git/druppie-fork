@@ -211,20 +211,40 @@ jobs:
           fi
 
       - name: Build and push dev-workspace image
-        # Only built when workspace files changed (or on long-lived branches).
-        # The workspace gets code from git fetch at runtime, so code-only pushes
-        # don't need an image rebuild. Non-blocking: a flaky build here must not
-        # block the core app deploy.
-        if: steps.ws_changes.outputs.changed == 'true'
+        # Always publish dev-workspace:$TAG so the global.imageTag bumped below
+        # resolves to a real image (otherwise the workspace pod ImagePullBackOff).
+        # When workspace files didn't change we skip the ~1.5 min build and
+        # instead re-tag the existing :latest — the workspace fetches its code
+        # from git at runtime, so the cached image is fine.
+        # Non-blocking: a flaky build here must not block the core app deploy.
         continue-on-error: true
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
+          CHANGED: ${{ steps.ws_changes.outputs.changed }}
         run: |
-          docker build --build-arg CACHEBUST="$SHA" \
-            -t "$REGISTRY/druppie/dev-workspace:$TAG" \
-            -f Dockerfile.dev-workspace .
+          if [ ! -f Dockerfile.dev-workspace ]; then
+            echo "Dockerfile.dev-workspace not present — skipping"
+            exit 0
+          fi
+          if [ "$CHANGED" = "true" ]; then
+            docker build --build-arg CACHEBUST="$SHA" \
+              -t "$REGISTRY/druppie/dev-workspace:$TAG" \
+              -f Dockerfile.dev-workspace .
+          else
+            # No workspace changes: reuse the cached :latest under the new tag so
+            # the bumped global.imageTag always resolves. Fall back to a build if
+            # :latest is missing (e.g. fresh registry).
+            if ! docker pull "$REGISTRY/druppie/dev-workspace:latest"; then
+              echo ":latest not found — building instead"
+              docker build --build-arg CACHEBUST="$SHA" \
+                -t "$REGISTRY/druppie/dev-workspace:$TAG" \
+                -f Dockerfile.dev-workspace .
+            else
+              docker tag "$REGISTRY/druppie/dev-workspace:latest" "$REGISTRY/druppie/dev-workspace:$TAG"
+            fi
+          fi
           docker push "$REGISTRY/druppie/dev-workspace:$TAG"
           # Push :latest only from long-lived branches
           if [ "$BRANCH" = "colab-dev" ] || [ "$BRANCH" = "main" ]; then
