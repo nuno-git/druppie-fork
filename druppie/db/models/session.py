@@ -30,6 +30,20 @@ class Session(Base):
     completion_tokens = Column(Integer, default=0)
     total_tokens = Column(Integer, default=0)
 
+    # MDTO archiving metadata (PBI #9737)
+    # Procestype number from the Selectielijst Waterschappen (e.g. "15.1", "17.1.6")
+    classificatie_code = Column(String(20), nullable=True)
+    # Human-readable label for the procestype (e.g. "Beheerobject realiseren — Uitgevoerd")
+    informatiecategorie = Column(String(255), nullable=True)
+    # Waardering: "B" (bewaren/permanent) or "V" (vernietigen/destroy after term)
+    waardering = Column(String(1), nullable=True)
+    # Retention period as ISO 8601 duration (e.g. "P10Y" = 10 years)
+    bewaartermijn_looptijd = Column(String(20), nullable=True)
+    # What triggers the retention clock (e.g. "na_afhandeling", "na_einde_object")
+    bewaartermijn_trigger = Column(String(50), nullable=True)
+    # Confidentiality: "openbaar", "intern", or "vertrouwelijk"
+    access_level = Column(String(20), nullable=True, default="intern")
+
     created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -47,6 +61,12 @@ class Session(Base):
             "prompt_tokens": self.prompt_tokens or 0,
             "completion_tokens": self.completion_tokens or 0,
             "total_tokens": self.total_tokens or 0,
+            "classificatie_code": self.classificatie_code,
+            "informatiecategorie": self.informatiecategorie,
+            "waardering": self.waardering,
+            "bewaartermijn_looptijd": self.bewaartermijn_looptijd,
+            "bewaartermijn_trigger": self.bewaartermijn_trigger,
+            "access_level": self.access_level,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

@@ -40,6 +40,7 @@ class SessionService:
         session_id: UUID,
         user_id: UUID,
         user_roles: list[str],
+        include_superseded: bool = False,
     ) -> SessionDetail:
         """Get session detail with access check.
 
@@ -64,7 +65,7 @@ class SessionService:
         if not (is_owner or is_admin or is_expert):
             raise AuthorizationError("Cannot access this session")
 
-        detail = self.session_repo.get_with_chat(session_id)
+        detail = self.session_repo.get_detail(session_id, include_superseded=include_superseded)
         if not detail:
             raise NotFoundError("session", str(session_id))
 

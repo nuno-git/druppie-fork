@@ -83,6 +83,19 @@ class JobRunStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class Waardering(str, Enum):
+    """MDTO waardering — keep permanently or destroy after retention period."""
+    BEWAREN = "B"
+    VERNIETIGEN = "V"
+
+
+class AccessLevel(str, Enum):
+    """Confidentiality level for Woo and Corsa overdracht."""
+    OPENBAAR = "openbaar"
+    INTERN = "intern"
+    VERTROUWELIJK = "vertrouwelijk"
+
+
 # =============================================================================
 # COMMON MODELS
 # =============================================================================
