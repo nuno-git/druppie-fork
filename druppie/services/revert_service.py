@@ -162,33 +162,35 @@ class RevertService:
         for pr_number in git_analysis["pr_numbers"]:
             await self._close_pr(session_id=session_id, pr_number=pr_number)
 
-        # Step 5: Clear artifacts and reset/delete runs
-        # Clear artifacts for runs we're resetting (keep the AgentRun row)
-        self.execution_repo.clear_execution_artifacts(reset_ids)
+        # Step 5: Mark runs as superseded (preserve history) and create new copies
+        # Mark reset runs as superseded and create fresh PENDING copies
+        self.execution_repo.mark_runs_superseded(reset_ids)
+        old_to_new = self.execution_repo.create_superseding_copies(runs_to_reset)
 
-        # Fully delete planner-created runs (artifacts + AgentRun rows)
-        self.execution_repo.delete_runs_fully(delete_ids)
+        # Mark delete runs as superseded (no copies needed — they won't re-run)
+        self.execution_repo.mark_runs_superseded(delete_ids)
 
-        # Step 5b: Clean up orphan messages (e.g. from create_message tool)
-        self.execution_repo.delete_orphan_messages(session_id, target_sequence)
+        # Step 5b: Mark orphan messages as superseded
+        self.execution_repo.mark_orphan_messages_superseded(session_id, target_sequence)
 
-        # Step 6: Reset the kept runs to PENDING
-        self.execution_repo.reset_runs_to_pending(reset_ids)
+        # Step 6: New runs are already PENDING from create_superseding_copies
 
         # Step 6b: Strip accumulated context from non-target runs.
         # When agents run, done() prepends "PREVIOUS AGENT SUMMARY" and
         # set_intent() prepends "INTENT/PROJECT_ID" to the next run's prompt.
         # On retry these need stripping so re-running agents can add them fresh.
-        prompt_updates = {}
+        prompt_updates: dict[UUID, str] = {}
+        new_target_id = old_to_new.get(target_agent_run_id, target_agent_run_id)
         for run in runs_to_reset:
+            new_id = old_to_new.get(run.id, run.id)
             if run.id != target_agent_run_id and run.planned_prompt:
                 stripped = self._strip_accumulated_context(run.planned_prompt)
                 if stripped != run.planned_prompt:
-                    prompt_updates[run.id] = stripped
+                    prompt_updates[new_id] = stripped
 
-        # Step 6c: Apply edited planned_prompt to target run only
+        # Step 6c: Apply edited planned_prompt to the new target run
         if planned_prompt is not None:
-            prompt_updates[target_agent_run_id] = planned_prompt
+            prompt_updates[new_target_id] = planned_prompt
 
         if prompt_updates:
             self.execution_repo.update_planned_prompt_batch(prompt_updates)
@@ -202,8 +204,8 @@ class RevertService:
         logger.info(
             "retry_from_run_complete",
             session_id=str(session_id),
-            reset_count=len(runs_to_reset),
-            deleted_count=len(runs_to_delete),
+            superseded_count=len(runs_to_reset) + len(runs_to_delete),
+            new_pending_count=len(old_to_new),
             git_reverted=bool(git_analysis["pre_run_commit_sha"]),
             prs_closed=len(git_analysis["pr_numbers"]),
         )
@@ -303,23 +305,24 @@ class RevertService:
             sibling_descendants.extend(self._collect_descendants(sibling.id))
 
         if target_descendants:
-            self.execution_repo.delete_runs_fully(target_descendants)
+            self.execution_repo.mark_runs_superseded(target_descendants)
         if sibling_descendants:
-            self.execution_repo.delete_runs_fully(sibling_descendants)
+            self.execution_repo.mark_runs_superseded(sibling_descendants)
         if later_siblings:
-            self.execution_repo.delete_runs_fully([s.id for s in later_siblings])
+            self.execution_repo.mark_runs_superseded([s.id for s in later_siblings])
 
-        self.execution_repo.clear_execution_artifacts([agent_run_id])
-        self.execution_repo.reset_runs_to_pending([agent_run_id])
+        self.execution_repo.mark_runs_superseded([agent_run_id])
+        old_to_new = self.execution_repo.create_superseding_copies([target])
+        new_run_id = old_to_new.get(agent_run_id, agent_run_id)
 
         if planned_prompt is not None:
-            self.execution_repo.update_planned_prompt(agent_run_id, planned_prompt)
+            self.execution_repo.update_planned_prompt(new_run_id, planned_prompt)
         elif not target.planned_prompt:
             original_prompt = self._extract_subagent_prompt(
                 target.id, target.spawning_tool_call_id
             )
             if original_prompt:
-                self.execution_repo.update_planned_prompt(agent_run_id, original_prompt)
+                self.execution_repo.update_planned_prompt(new_run_id, original_prompt)
 
         self._reset_parent_chain_for_retry(target.parent_run_id, target.spawning_tool_call_id)
 
@@ -329,14 +332,15 @@ class RevertService:
             "retry_nested_subagent_complete",
             session_id=str(session_id),
             target_id=str(agent_run_id),
-            siblings_deleted=len(later_siblings),
-            descendants_deleted=len(target_descendants) + len(sibling_descendants),
+            new_run_id=str(new_run_id),
+            siblings_superseded=len(later_siblings),
+            descendants_superseded=len(target_descendants) + len(sibling_descendants),
             parent_run_id=str(target.parent_run_id),
         )
 
         return {
             "status": "reset",
-            "agent_run_id": str(agent_run_id),
+            "agent_run_id": str(new_run_id),
             "parent_run_id": str(target.parent_run_id),
             "spawning_tool_call_id": str(target.spawning_tool_call_id) if target.spawning_tool_call_id else None,
             "deleted_sibling_ids": [str(s.id) for s in later_siblings],

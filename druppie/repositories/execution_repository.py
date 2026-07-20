@@ -164,6 +164,7 @@ class ExecutionRepository(BaseRepository):
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.status == AgentRunStatus.PAUSED_USER.value,
+                AgentRun.superseded_at.is_(None),
             )
             .all()
         )
@@ -192,6 +193,7 @@ class ExecutionRepository(BaseRepository):
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.status == AgentRunStatus.PAUSED_USER.value,
+                AgentRun.superseded_at.is_(None),
             )
             .all()
         )
@@ -209,6 +211,7 @@ class ExecutionRepository(BaseRepository):
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.status == AgentRunStatus.RUNNING.value,
+                AgentRun.superseded_at.is_(None),
             )
             .order_by(AgentRun.sequence_number)
             .first()
@@ -335,6 +338,8 @@ class ExecutionRepository(BaseRepository):
             ),
             started_at=agent_run.started_at,
             completed_at=agent_run.completed_at,
+            superseded_at=agent_run.superseded_at,
+            superseded_by_run_id=agent_run.superseded_by_run_id,
         )
 
     # =========================================================================
@@ -387,7 +392,12 @@ class ExecutionRepository(BaseRepository):
         """Get a tool call with a specific waiting status for a session."""
         return (
             self.db.query(ToolCall)
-            .filter(ToolCall.session_id == session_id, ToolCall.status == status)
+            .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
+            .filter(
+                ToolCall.session_id == session_id,
+                ToolCall.status == status,
+                AgentRun.superseded_at.is_(None),
+            )
             .order_by(ToolCall.created_at.desc())
             .first()
         )
@@ -685,12 +695,13 @@ class ExecutionRepository(BaseRepository):
     def get_runs_from_sequence(
         self, session_id: UUID, min_sequence: int
     ) -> list[AgentRunSummary]:
-        """Get all runs at or after a sequence number, ordered by sequence."""
+        """Get all non-superseded runs at or after a sequence number, ordered by sequence."""
         runs = (
             self.db.query(AgentRun)
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.sequence_number >= min_sequence,
+                AgentRun.superseded_at.is_(None),
             )
             .order_by(AgentRun.sequence_number)
             .all()
@@ -975,6 +986,152 @@ class ExecutionRepository(BaseRepository):
             Message.sequence_number >= min_sequence,
         ).delete(synchronize_session="fetch")
         self.db.flush()
+
+    # =========================================================================
+    # SUPERSEDE METHODS (used by RevertService — preserve records instead of deleting)
+    # =========================================================================
+
+    def mark_runs_superseded(
+        self,
+        agent_run_ids: list[UUID],
+        superseded_by_run_id: UUID | None = None,
+    ) -> None:
+        """Mark agent runs and their messages as superseded instead of deleting.
+
+        Sets superseded_at on the AgentRun rows and all linked Messages.
+        Does NOT delete ToolCalls, LlmCalls, or other artifacts — they stay
+        linked to the superseded run for full history reconstruction.
+        """
+        if not agent_run_ids:
+            return
+
+        now = datetime.now(timezone.utc)
+        runs = self.db.query(AgentRun).filter(AgentRun.id.in_(agent_run_ids)).all()
+        for run in runs:
+            run.superseded_at = now
+            if superseded_by_run_id is not None:
+                run.superseded_by_run_id = superseded_by_run_id
+
+        self.db.query(Message).filter(
+            Message.agent_run_id.in_(agent_run_ids)
+        ).update({"superseded_at": now}, synchronize_session="fetch")
+
+        # Cancel pending questions and approvals linked to superseded runs
+        self.db.query(Question).filter(
+            Question.agent_run_id.in_(agent_run_ids),
+            Question.status == "pending",
+        ).update({"status": "cancelled"}, synchronize_session="fetch")
+
+        self.db.query(Approval).filter(
+            Approval.agent_run_id.in_(agent_run_ids),
+            Approval.status == "pending",
+        ).update({"status": "cancelled"}, synchronize_session="fetch")
+
+        # Also supersede any spawned child runs (recursive)
+        tc_ids = [
+            tc.id
+            for tc in self.db.query(ToolCall.id)
+            .filter(ToolCall.agent_run_id.in_(agent_run_ids))
+            .all()
+        ]
+        self._collect_and_mark_spawned_runs_superseded(tc_ids)
+
+        self.db.flush()
+        logger.info(
+            "runs_superseded",
+            count=len(agent_run_ids),
+            superseded_by=str(superseded_by_run_id) if superseded_by_run_id else None,
+        )
+
+    def _collect_and_mark_spawned_runs_superseded(self, tc_ids: list[UUID]) -> None:
+        """Recursively mark agent_runs spawned by tool_calls as superseded.
+
+        Mirror of _collect_and_delete_spawned_runs but marks superseded
+        instead of deleting.
+        """
+        if not tc_ids:
+            return
+
+        now = datetime.now(timezone.utc)
+
+        spawned_runs = (
+            self.db.query(AgentRun)
+            .filter(AgentRun.spawning_tool_call_id.in_(tc_ids))
+            .all()
+        )
+
+        if not spawned_runs:
+            return
+
+        spawned_run_ids = [r.id for r in spawned_runs]
+
+        # Recurse first (grandchildren before children)
+        spawned_tc_ids = [
+            tc.id
+            for tc in self.db.query(ToolCall.id)
+            .filter(ToolCall.agent_run_id.in_(spawned_run_ids))
+            .all()
+        ]
+        self._collect_and_mark_spawned_runs_superseded(spawned_tc_ids)
+
+        # Mark spawned runs and their messages
+        for run in spawned_runs:
+            run.superseded_at = now
+
+        self.db.query(Message).filter(
+            Message.agent_run_id.in_(spawned_run_ids)
+        ).update({"superseded_at": now}, synchronize_session="fetch")
+
+        logger.info(
+            "spawned_runs_superseded",
+            count=len(spawned_run_ids),
+            spawned_by_tool_calls=len(tc_ids),
+        )
+
+    def mark_orphan_messages_superseded(
+        self, session_id: UUID, min_sequence: int
+    ) -> None:
+        """Mark orphan messages (agent_run_id=NULL) as superseded instead of deleting."""
+        now = datetime.now(timezone.utc)
+        self.db.query(Message).filter(
+            Message.session_id == session_id,
+            Message.agent_run_id.is_(None),
+            Message.sequence_number >= min_sequence,
+        ).update({"superseded_at": now}, synchronize_session="fetch")
+        self.db.flush()
+
+    def create_superseding_copies(
+        self, runs_to_copy: list[AgentRunSummary]
+    ) -> dict[UUID, UUID]:
+        """Create new PENDING AgentRun copies from superseded runs.
+
+        Returns a mapping of old_run_id -> new_run_id so callers can
+        set superseded_by_run_id on the old runs.
+        """
+        old_to_new: dict[UUID, UUID] = {}
+        for old_run in runs_to_copy:
+            new_run = AgentRun(
+                session_id=old_run.session_id,
+                agent_id=old_run.agent_id,
+                parent_run_id=old_run.parent_run_id,
+                sequence_number=old_run.sequence_number,
+                planned_prompt=old_run.planned_prompt,
+                spawning_tool_call_id=old_run.spawning_tool_call_id,
+                status="pending",
+            )
+            self.db.add(new_run)
+            self.db.flush()
+            old_to_new[old_run.id] = new_run.id
+
+        # Link old runs to their replacements
+        for old_id, new_id in old_to_new.items():
+            old_run_row = self.db.query(AgentRun).filter(AgentRun.id == old_id).first()
+            if old_run_row:
+                old_run_row.superseded_by_run_id = new_id
+
+        self.db.flush()
+        logger.info("superseding_copies_created", count=len(old_to_new))
+        return old_to_new
 
     # =========================================================================
     # BULK UPDATE METHODS (used by RevertService)

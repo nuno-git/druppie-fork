@@ -336,6 +336,7 @@ class Orchestrator:
             .filter(
                 Message.session_id == session_id,
                 Message.role.in_(["user", "assistant"]),
+                Message.superseded_at.is_(None),
             )
             .order_by(Message.created_at)
             .all()
@@ -757,6 +758,7 @@ class Orchestrator:
             .filter(
                 AgentRun.parent_run_id == parent_run_id,
                 AgentRun.spawning_tool_call_id == spawning_tool_call_id,
+                AgentRun.superseded_at.is_(None),
             )
             .all()
         )
@@ -806,6 +808,7 @@ class Orchestrator:
             .filter(
                 AgentRun.parent_run_id == parent_run_id,
                 AgentRun.spawning_tool_call_id == paused_tc.id,
+                AgentRun.superseded_at.is_(None),
             )
             .all()
         )
