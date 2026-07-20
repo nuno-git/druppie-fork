@@ -153,11 +153,10 @@ frontend/
 │   │   ├── ErrorBoundary.jsx
 │   │   └── ...
 │   ├── services/
-│   │   ├── api.js            # API calls (being refactored into domain modules)
+│   │   ├── api.js            # API calls (monolithic — target: split by domain)
 │   │   ├── keycloak.js       # Auth service
 │   │   ├── pendingChat.js    # Module-level pending message store
-│   │   ├── uploadManager.js  # Module-level upload manager
-│   │   └── *.Api.js          # Domain-split modules (e.g. sessionApi.js, approvalApi.js)
+│   │   └── uploadManager.js  # Module-level upload manager
 │   └── utils/                # Utility helpers
 └── tests/e2e/                # Playwright specs
 ```
