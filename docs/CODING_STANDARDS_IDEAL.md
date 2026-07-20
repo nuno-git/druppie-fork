@@ -197,7 +197,7 @@ frontend/
 - **Engine**: PostgreSQL 15 (Alpine in Docker).
 - **ORM**: SQLAlchemy models in `druppie/db/models/`.
 - **Primary keys**: UUID. Use the PostgreSQL native `UUID` type. For test compatibility, the project uses a SQLite UUID shim when running on SQLite.
-- **Normalization**: Prefer relational tables. **Use `Column(JSON)` only for data with genuinely variable or open-ended schema** (e.g. raw LLM payloads, tool call arguments with provider-specific extensions). When you use JSON, document the expected shape in a code comment. Do not use JSON for data with a stable, queryable schema.
+- **Normalization**: Prefer relational tables. **Use `Column(JSON)` only for data with genuinely variable or open-ended schema** (e.g. raw LLM payloads, tool call arguments with provider-specific extensions). When you use JSON, document the expected shape in a code comment. Do not use JSON for data with a stable, queryable schema. Note: `agent_state` is a candidate for normalization (stable, queryable schema).
 - **Migrations**: Forbidden. Update models directly and reset the DB.
 - **Naming**: Table names are snake_case. Model classes are PascalCase.
 
