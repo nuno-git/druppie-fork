@@ -165,14 +165,12 @@ RUN groupadd -g 1000 developer \
     && mkdir -p /workspace \
     && chown developer:developer /workspace
 
-# Bust cache for the source snapshot only (dependency layers below are keyed on
-# the lock/requirements files, so they stay cached across code-only commits).
-# Mirrors the CACHEBUST ARG pattern in the backend Dockerfile.
-ARG CACHEBUST
-# The whole build context (repo root) is baked in as an offline seed. .git is
-# excluded by .dockerignore, so the entrypoint re-inits git and fetches at
-# runtime. node_modules / the venv are (re)built fresh in L4/L5 below.
-COPY --chown=developer:developer . /opt/druppie-src
+# Early dependency file copies — content-hash keyed, so the heavy install
+# layers below (npm install, pip install, per-module venvs) stay cached
+# across commits that only change code or config, not dependency files.
+COPY frontend/package.json /opt/druppie-src/frontend/
+COPY druppie/requirements.txt /opt/druppie-src/druppie/
+COPY druppie/mcp-servers /opt/druppie-src/druppie/mcp-servers
 
 # ===========================================================================
 # Layer 4 — Frontend node_modules
@@ -234,6 +232,15 @@ RUN set -e; \
             echo "[dev-workspace] WARN: playwright chromium fetch failed — browser module may error at runtime"; \
     fi; \
     chown -R developer:developer /opt/venvs
+
+# ===========================================================================
+# Late: CACHEBUST + full repo copy (invalidated on every commit)
+# ===========================================================================
+# The whole build context is baked as an offline seed. .git is excluded by
+# .dockerignore, so the entrypoint re-inits git and fetches at runtime.
+# node_modules / the venvs are baked above and survive the cache bust.
+ARG CACHEBUST
+COPY --chown=developer:developer . /opt/druppie-src
 
 # ===========================================================================
 # Entrypoint
