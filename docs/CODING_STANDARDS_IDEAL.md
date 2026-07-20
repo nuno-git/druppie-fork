@@ -518,3 +518,39 @@ Use this checklist when reviewing a Pull Request. Flag any item that fails.
 | **Leaking MCP connections** | Resource exhaustion and stale state. | Open per session, close in `finally` / context manager. |
 | **Dead code in a PR** — unused imports, functions, variables, commented-out blocks | Creates noise, hides intent, increases review cost. | Remove before PR. Use `ruff check .` (rules F401, F811, F841) and review diff. |
 | **Auto-approving deployment/codeChange tools** | Bypasses governance and HITL policy. | Require explicit human approval via approval workflow. |
+| **N+1 queries** (loop issuing per-row SQLA queries) | The #1 perf footgun in ORM apps. | Eager-load with `selectinload` / `joinedload`; batch reads. |
+| **Broad `except Exception: pass` / returning generic 500** | Swallows bugs; defeats `APIError`+`ErrorCode`. | Catch specific exceptions; raise `APIError` with a code. |
+| **Naive `datetime.now()`** | Clock skew / cron bugs. | `datetime.now(timezone.utc)` — always timezone-aware. |
+| **Leaking secrets into the Vite bundle** (`VITE_`-prefixed env shipped to client) | Frontend is Vite; real leakage risk. | Only prefix public-safe values with `VITE_`. |
+| **Pydantic V1 validators in V2** (`@validator`, `root_validator`, `.dict()`) | `pydantic>=2.5` — deprecation landmines. | Use `@model_validator`, `model_dump()`. |
+| **Importing domain models from internal modules** instead of `druppie.domain` | Breaks the export contract. | Import from `druppie.domain`. |
+| **Hardcoded role strings** (`if role == "admin"`) | Typos, no autocomplete. | Use a `Role` enum/constant; route-level `RequireRole(...)`. |
+| **TOCTOU: check-then-act on DB rows without locking** | Double-spend / double-create races. | `with_for_update()`, unique constraint + `IntegrityError`, or atomic `UPDATE WHERE`. |
+| **Writing persistent state to the container filesystem** | Breaks K8s horizontal scaling; lost on pod restart. | Write to a mounted PVC (RWX if >1 replica) or object storage. |
+| **Sticky sessions / in-memory session state** | Violates 12-Factor VI; blocks autoscaling. | Externalize session state to DB/Redis. |
+| **Logging via `print()` or f-string messages** | Unqueryable; loses structure. | `structlog` event-name-first with key-value context. |
+
+---
+
+## General Software Engineering Principles
+
+One-liners, each a single reviewable pass/fail.
+
+| # | Rule | Review check |
+|---|------|--------------|
+| SWE-1 | **Single Responsibility Principle (SRP)** — a module/function/class has one reason to change. | If you can describe it with "and," split it. |
+| SWE-2 | **Fail Fast** — validate inputs and preconditions at the boundary; raise, don't silently default. | No buried `if x is None: return None` swallowing bad state. Surface errors at the API edge. |
+| SWE-3 | **YAGNI ("You Aren't Gonna Need It")** — don't build for a speculative future. | Flag unused params, unused generics, "we might need this later" abstractions. Delete dead code. |
+| SWE-4 | **KISS ("Keep It Simple, Stupid")** — the simplest correct solution wins. | Reject cleverness: no needless indirection, no one-liners that need a comment to decode. |
+| SWE-5 | **DRY ("Don't Repeat Yourself"), but only for true duplication** — extract when logic + reason-to-change are identical, not when code merely looks similar. | Two similar-looking but independently-evolving blocks should stay separate. Over-abstraction is as harmful as duplication. |
+| SWE-6 | **Law of Demeter (principle of least knowledge)** — don't reach through objects (`a.b.c().d`). | Long accessor chains signal leaky abstractions. |
+| SWE-7 | **Composition over inheritance** — prefer injected collaborators over deep class hierarchies. | Flag inheritance depth > 2 and base classes that exist only to share helpers. |
+| SWE-8 | **Favor immutability** — default to read-only/frozen data; mutate explicitly and locally. | `@dataclass(frozen=True)`, returning new objects instead of mutating inputs. |
+| SWE-9 | **Dependency Inversion (the D in SOLID)** — depend on abstractions (`Protocol`), not concrete classes, at module boundaries. | Services should receive a `Protocol`, not a concrete repo. |
+
+### SOLID quick reference
+- **S**RP — Single Responsibility (SWE-1)
+- **O**CP — Open/Closed: extend via new code, not by editing existing code
+- **L**SP — Liskov Substitution: subclasses must be substitutable for their base
+- **I**SP — Interface Segregation: don't force clients to depend on unused methods
+- **D**IP — Dependency Inversion (SWE-9)
