@@ -9,7 +9,7 @@
   <property name="configver" type="int" value="2"/>
   <property name="panels" type="array">
     <property name="panel-0" type="string" value="panel-0">
-      <property name="position" type="string" value="p=6;x=0;y=0"/>
+      <property name="position" type="string" value="p=12;x=0;y=0"/>
       <property name="length" type="uint" value="100"/>
       <property name="size" type="uint" value="26"/>
       <property name="position-locked" type="bool" value="true"/>
