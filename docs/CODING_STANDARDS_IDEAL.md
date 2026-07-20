@@ -106,7 +106,7 @@ All domain models are exported through `druppie/domain/__init__.py`. Route modul
 - **Line length**: 100 (both `black` and `ruff`)
 - **Formatter**: `black .` (run inside `druppie/`)
 - **Linter**: `ruff check .` — rules `E`, `F`, `W`, `I`; ignores `E501`
-- **Type hints**: Mandatory. Functions, method parameters, and return values must be annotated.
+- **Type hints**: Required on all public functions, method parameters, and return values. Note: no type checker (mypy/pyright) is configured yet — adoption is tracked in BACKLOG. Once added, type hints become enforceable in CI.
 
 ### Error Handling
 
