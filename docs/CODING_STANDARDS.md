@@ -333,7 +333,7 @@ The agent loop lives in `druppie/execution/` and `druppie/agent_runtime/` with t
 ### Evaluation Tests
 
 - Custom framework in `druppie/testing/` (NOT pytest):
-  - `testing/tools/` — ~80 YAML tool test definitions.
+  - `testing/tools/` — YAML tool test definitions.
   - `testing/agents/` — Agent tests with real LLM execution.
   - `testing/checks/` — Reusable assertion bundles.
   - `testing/profiles/` — HITL simulator and judge LLM profiles.
