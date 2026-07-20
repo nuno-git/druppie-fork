@@ -201,11 +201,11 @@ frontend/
 - **ORM**: SQLAlchemy models in `druppie/db/models/`.
 - **Primary keys**: UUID. Use the PostgreSQL native `UUID` type. For test compatibility, the project uses a SQLite UUID shim when running on SQLite.
 - **Normalization**: Relational tables are preferred. However, `Column(JSON)` is used for data with variable or open-ended schema:
-  - `llm_call.request_messages` / `response_tool_calls` / `raw_request` / `raw_response`
+  - `llm_call.request_messages` / `response_tool_calls` / `raw_request` / `raw_response` / `tools_provided`
   - `tool_call.arguments`
   - `approval.arguments`
-  - `question.choices`
-  When adding a JSON column, document the expected shape in a code comment.
+  - `question.choices` / `choices_english` / `selected_indices` / `agent_state`
+  When adding a JSON column, document the expected shape in a code comment. Note: `question.agent_state` is a candidate for normalization (stable, queryable schema).
 - **Migrations**: Forbidden. Update models directly and reset the DB.
 - **Naming**: Table names are snake_case. Model classes are PascalCase.
 
