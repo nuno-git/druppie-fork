@@ -249,6 +249,10 @@ COPY --chown=developer:developer scripts/dev-workspace-entrypoint.sh /usr/local/
 RUN sed -i 's/\r$//' /usr/local/bin/dev-workspace-entrypoint.sh \
     && chmod +x /usr/local/bin/dev-workspace-entrypoint.sh
 
+# XFCE panel: pin VS Code + Terminator launchers next to the Applications menu.
+# MUST come before the chown below so the file is owned by developer.
+COPY scripts/xfce4-panel.xml /home/developer/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
+
 # code-server default config (also passed explicitly on the CLI by the
 # entrypoint). See the L2 comment for why auth:none is correct here.
 RUN install -d -m 755 -o developer -g developer /home/developer/.config/code-server \
@@ -264,9 +268,6 @@ RUN install -d -m 755 /usr/share/applications \
 RUN install -d -m 755 -o developer -g developer /home/developer/.config/autostart \
     && printf '[Desktop Entry]\nType=Application\nName=Workspace Terminal\nExec=terminator --working-directory=/workspace/druppie\nX-GNOME-Autostart-enabled=true\n' > /home/developer/.config/autostart/workspace-terminal.desktop \
     && chown -R developer:developer /home/developer/.config/autostart
-
-# XFCE panel: pin VS Code + Terminator launchers next to the Applications menu.
-COPY scripts/xfce4-panel.xml /home/developer/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
 
 USER developer
 WORKDIR /workspace
