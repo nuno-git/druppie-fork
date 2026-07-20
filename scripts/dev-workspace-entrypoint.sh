@@ -505,13 +505,21 @@ printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.venvs/\n.data/\n.claude/\n' \
 checkout_branch
 configure_git
 clone_side_repos
-ensure_frontend_deps
-ensure_backend_deps
+if [ "${RECOVERY_MODE:-}" != "true" ]; then
+    ensure_frontend_deps
+    ensure_backend_deps
+else
+    log "RECOVERY_MODE=true — skipping frontend/backend dep install"
+fi
 
 start_code_server
-start_backend
-start_frontend
-start_embedded_mcp_modules
+if [ "${RECOVERY_MODE:-}" != "true" ]; then
+    start_backend
+    start_frontend
+    start_embedded_mcp_modules
+else
+    log "RECOVERY_MODE=true — skipping backend, frontend, and MCP modules"
+fi
 start_desktop
 
 log "all services started (pids:${PIDS}) — tailing until a child exits or SIGTERM"

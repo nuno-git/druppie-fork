@@ -85,6 +85,8 @@ class BranchEnvironmentSummary(BaseModel):
     workspace_enabled: bool = False
     workspace_url: str | None = None
     workspace_status: str | None = None
+    # Recovery mode: workspace + Keycloak only, no gitea/druppie-db/modules.
+    recovery_mode: bool = False
 
 
 class BranchEnvironmentDetail(BranchEnvironmentSummary):
@@ -104,6 +106,8 @@ class BranchEnvironmentCreate(BaseModel):
     # any other value maps to druppie/developers/<value>/* (e.g. "robbe" →
     # druppie/developers/robbe/*). Default borrows the colab-dev LLM keys.
     secrets_source: str = "colab-dev"
+    # Recovery mode: workspace + Keycloak only, no gitea/druppie-db/modules.
+    recovery_mode: bool = False
 
 
 class BranchEnvironmentListResponse(BaseModel):

@@ -306,6 +306,13 @@ const BranchEnvCard = ({
           <span className="text-gray-400">image</span>{' '}
           <span className="font-mono">{env.image_tag || 'default'}</span>
         </div>
+        {env.recovery_mode && (
+          <div>
+            <span className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-yellow-100 text-yellow-700 rounded">
+              recovery
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Failure message */}
@@ -427,6 +434,7 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
   const [customSecretsSource, setCustomSecretsSource] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showBranchPicker, setShowBranchPicker] = useState(false)
+  const [recoveryMode, setRecoveryMode] = useState(false)
   const branchInputRef = useRef(null)
   const branchDropdownRef = useRef(null)
 
@@ -472,6 +480,7 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
       branch: branch.trim(),
       image_tag: imageTag.trim() || undefined,
       secrets_source: src,
+      recovery_mode: recoveryMode,
     })
   }
 
@@ -669,6 +678,20 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
                 <p className="text-xs text-gray-400 mt-1">
                   Leave empty to use the branch&apos;s default image tag.
                 </p>
+                <label className="flex items-start gap-2 mt-3 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={recoveryMode}
+                    onChange={(e) => setRecoveryMode(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    Recovery mode
+                    <span className="block text-xs text-gray-400">
+                      Workspace + login only — no gitea, database, or modules. Uses SQLite internally. Minimal RAM usage.
+                    </span>
+                  </span>
+                </label>
               </div>
             )}
           </div>

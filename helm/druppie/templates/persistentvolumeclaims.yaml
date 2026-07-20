@@ -58,6 +58,7 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.sandboxBundles.size }}
+{{- if not .Values.recoveryMode }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -75,4 +76,5 @@ spec:
   resources:
     requests:
       storage: {{ .Values.gitea.storage }}
+{{- end }}
 {{- end }}

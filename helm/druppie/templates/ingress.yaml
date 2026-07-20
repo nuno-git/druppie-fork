@@ -120,6 +120,7 @@ spec:
                 port:
                   number: 8080
 {{- end }}
+{{- if not .Values.recoveryMode }}
 {{- if .Values.global.subdomains.gitea }}
 ---
 # Gitea Ingress: dedicated subdomain (no path stripping needed)
@@ -201,5 +202,6 @@ spec:
                 name: {{ include "druppie.fullname" . }}-gitea
                 port:
                   number: {{ .Values.gitea.httpPort }}
+{{- end }}
 {{- end }}
 {{- end }}

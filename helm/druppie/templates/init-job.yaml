@@ -44,6 +44,7 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
+        {{- if not .Values.recoveryMode }}
         - name: wait-for-gitea
           image: curlimages/curl:latest
           command:
@@ -62,6 +63,7 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
+        {{- end }}
       containers:
         - name: init
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.init.image) }}
@@ -120,6 +122,8 @@ spec:
                   key: GITEA_ADMIN_PASSWORD
             - name: GITEA_ADMIN_EMAIL
               value: {{ .Values.gitea.adminEmail | quote }}
+            - name: SETUP_GITEA_ENABLED
+              value: {{ if .Values.recoveryMode }}"false"{{ else }}"true"{{ end }}
             - name: KEYCLOAK_INTERNAL_URL
               value: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
             - name: KEYCLOAK_REALM

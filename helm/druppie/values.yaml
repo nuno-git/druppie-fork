@@ -1,3 +1,6 @@
+# Recovery mode: deploy workspace + Keycloak only (skip gitea, druppie-db, all modules)
+recoveryMode: false
+
 global:
   instance: druppie
   imagePullPolicy: IfNotPresent

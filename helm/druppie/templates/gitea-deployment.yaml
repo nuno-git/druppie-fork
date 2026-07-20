@@ -1,3 +1,4 @@
+{{- if not .Values.recoveryMode }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -146,3 +147,4 @@ spec:
         - name: gitea-data
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-gitea-data
+{{- end }}

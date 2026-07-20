@@ -86,6 +86,7 @@ async def create_branch_environment(
         # The deployer's own identity — "developer" secrets always resolve to
         # THEIR Vault map; there is deliberately no way to pick someone else's.
         owner_username=user.get("preferred_username"),
+        recovery_mode=body.recovery_mode,
     )
 
 

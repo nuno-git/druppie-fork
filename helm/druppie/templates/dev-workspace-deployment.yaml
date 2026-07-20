@@ -58,6 +58,7 @@ spec:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: 30
+      {{- if eq .Values.devWorkspace.stackMode "real" }}
       initContainers:
         # Wait for Postgres so uvicorn does not crash-loop on a missing DB
         # (only meaningful in stackMode=real; harmless otherwise).
@@ -84,6 +85,7 @@ spec:
           resources:
             requests: { memory: "32Mi", cpu: "50m" }
             limits:   { memory: "64Mi", cpu: "100m" }
+      {{- end }}
       containers:
         - name: workspace
           image: "{{ .Values.global.imageRegistry }}/{{ .Values.devWorkspace.image.repository }}:{{ .Values.devWorkspace.image.tag | default .Values.global.imageTag | default "latest" }}"
@@ -99,6 +101,8 @@ spec:
               value: {{ .Values.devWorkspace.gitSslNoVerify | quote }}
             - name: DEV_STACK
               value: {{ .Values.devWorkspace.stackMode | quote }}
+            - name: RECOVERY_MODE
+              value: {{ if .Values.recoveryMode }}"true"{{ else }}"false"{{ end }}
             # Space-separated MCP module keys to run inside this pod under
             # uvicorn --reload (see scripts/dev-workspace-entrypoint.sh).
             # Empty in prod/colab-dev; set from devWorkspace.embedModules.

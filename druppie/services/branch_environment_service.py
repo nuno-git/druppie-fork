@@ -256,6 +256,7 @@ def build_helmrelease_yaml(
     secrets_source: str = SECRETS_SOURCE_COLAB_DEV,
     workspace_enabled: bool = True,
     stack_mode: str = "real",
+    recovery_mode: bool = False,
 ) -> str:
     namespace = f"druppie-{slug}"
     annotations = {
@@ -296,6 +297,7 @@ def build_helmrelease_yaml(
         "modules": {
             module: {
                 "resources": {"requests": {"cpu": _DEV_CPU["module"]}},
+                **({"enabled": False} if recovery_mode else {}),
             }
             for module in ALL_MODULES
         },
@@ -312,12 +314,14 @@ def build_helmrelease_yaml(
         "persistence": {"storageClass": BRANCH_ENV_STORAGE_CLASS},
         "devWorkspace": {
             "enabled": workspace_enabled,
-            "stackMode": stack_mode,
+            "stackMode": "degraded" if recovery_mode else stack_mode,
             "secretsSource": secrets_source,
             "gitBranch": branch,
             "codeServer": {"devHost": _workspace_host(host)},
         },
     }
+    if recovery_mode:
+        values["recoveryMode"] = True
     if image_tag is not None:
         values["global"]["imageTag"] = image_tag
 
@@ -528,6 +532,29 @@ class GiteaGitopsClient:
         if resp.status_code == 409:  # created concurrently — it exists, which is all we need
             return
         self._raise_for(resp, f"creating branch '{branch}' in {repo}")
+
+    async def dispatch_workflow(
+        self, repo: str, branch: str, workflow: str = "build.yaml"
+    ) -> None:
+        """Trigger a workflow_dispatch on ``workflow`` for ``branch`` in ``repo``.
+
+        Guarantees the CI build runs for an env's branch even when the branch
+        already existed (so no push event fires to trigger build.yaml on its own).
+        """
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self._base}/api/v1/repos/{repo}/actions/workflows/{workflow}/dispatches",
+                json={"ref": branch},
+            )
+        self._raise_for(
+            resp, f"dispatching workflow '{workflow}' for branch '{branch}' in {repo}"
+        )
+        logger.info(
+            "branch_env_workflow_dispatched",
+            repo=repo,
+            branch=branch,
+            workflow=workflow,
+        )
 
     async def change_files(self, message: str, files: list[dict]) -> None:
         """Single-commit batch create/update/delete via POST /contents.
@@ -943,6 +970,7 @@ class BranchEnvironmentService:
         user_roles: list[str],
         secrets_source: str = SECRETS_SOURCE_COLAB_DEV,
         owner_username: str | None = None,
+        recovery_mode: bool = False,
     ) -> BranchEnvironmentDetail:
         """Commit the environment manifests; Flux does the deploy."""
         _ = user_roles  # role gating happens at the route layer
@@ -1007,6 +1035,12 @@ class BranchEnvironmentService:
                 base=APP_BASE_BRANCH,
             )
 
+        # Always dispatch the CI build so images are guaranteed fresh, even
+        # when the branch already existed (no push event fires in that case to
+        # trigger build.yaml). The env stands up on the parent image tag first;
+        # CI's deploy step then patches imageTag once the build finishes.
+        await self.gitea.dispatch_workflow(CHART_REPO, branch)
+
         created_at = _utcnow_iso()
         files = [
             {
@@ -1025,7 +1059,7 @@ class BranchEnvironmentService:
                 "operation": "create",
                 "path": self._env_path(slug, "helmrelease.yaml"),
                 "content": build_helmrelease_yaml(
-                    slug, branch, host, image_tag, created_at, secrets_source=secrets_source
+                    slug, branch, host, image_tag, created_at, secrets_source=secrets_source, recovery_mode=recovery_mode
                 ),
             },
             {
@@ -1050,13 +1084,14 @@ class BranchEnvironmentService:
             status=BranchEnvironmentStatus.DEPLOYING.value,
             status_message=(
                 f"created branch '{branch}' from {APP_BASE_BRANCH}; "
-                "manifests committed; waiting for Flux to deploy"
+                "CI build dispatched; manifests committed; waiting for Flux to deploy"
                 if branch_created
-                else "manifests committed; waiting for Flux to deploy"
+                else "CI build dispatched; manifests committed; waiting for Flux to deploy"
             ),
             created_at=datetime.fromisoformat(created_at),
             owner_id=owner_id,
             secrets_source=secrets_source,
+            recovery_mode=recovery_mode,
         )
 
     async def redeploy(
@@ -1476,6 +1511,7 @@ class BranchEnvironmentService:
         workspace_enabled = False
         developer = ""
         stack_mode = "real"
+        recovery_mode = False
         if hr_file is not None:
             helmrelease_sha = hr_file[1]
             hr_manifest = yaml.safe_load(hr_file[0]) or {}
@@ -1490,6 +1526,7 @@ class BranchEnvironmentService:
             workspace_enabled = bool(dev_ws.get("enabled", False))
             developer = dev_ws.get("developer", "") or ""
             stack_mode = dev_ws.get("stackMode", "real") or "real"
+            recovery_mode = bool(hr_values.get("recoveryMode", False))
 
         owner_raw = annotations.get(f"{_ANN}/owner-id")
         try:
@@ -1511,6 +1548,7 @@ class BranchEnvironmentService:
             "workspace_enabled": workspace_enabled,
             "developer": developer,
             "stack_mode": stack_mode,
+            "recovery_mode": recovery_mode,
         }
 
     async def _live_status(self, namespace: str) -> tuple[str, str | None]:
@@ -1559,6 +1597,7 @@ class BranchEnvironmentService:
             workspace_enabled=enabled,
             workspace_url=f"https://{_workspace_host(env['host'])}" if enabled else None,
             workspace_status=workspace_status,
+            recovery_mode=env.get("recovery_mode", False),
         )
 
     def _detail_from_namespace(self, ns: dict) -> BranchEnvironmentDetail:

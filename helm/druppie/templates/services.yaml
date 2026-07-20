@@ -1,5 +1,6 @@
 {{- if not .Values.cnpg.enabled }}
 # Database Services
+{{- if not .Values.recoveryMode }}
 ---
 apiVersion: v1
 kind: Service
@@ -17,6 +18,7 @@ spec:
     - name: postgres
       port: 5432
       targetPort: postgres
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -34,6 +36,7 @@ spec:
     - name: postgres
       port: 5432
       targetPort: postgres
+{{- if not .Values.recoveryMode }}
 ---
 apiVersion: v1
 kind: Service
@@ -51,6 +54,7 @@ spec:
     - name: postgres
       port: 5432
       targetPort: postgres
+{{- end }}
 {{- end }}
 ---
 # Keycloak Service
@@ -73,6 +77,7 @@ spec:
       {{- if eq (.Values.keycloak.service.type | default "NodePort") "NodePort" }}
       nodePort: {{ .Values.keycloak.service.nodePort | default 30002 }}
       {{- end }}
+{{- if not .Values.recoveryMode }}
 ---
 # Gitea Service
 apiVersion: v1
@@ -97,6 +102,7 @@ spec:
     - name: ssh
       port: 2222
       targetPort: ssh
+{{- end }}
 ---
 # Backend Service
 # When devWorkspace.enabled this routes to the workspace pod's hot-reload
