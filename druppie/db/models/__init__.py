@@ -67,6 +67,7 @@ from .project_dependency import ProjectDependency
 
 # Documentation cache
 from .documentation_cache import DocumentationCache
+from .pdf_render import PdfRender
 
 # Question model (HITL questions from agents)
 from .question import Question
@@ -85,7 +86,7 @@ from .tool_call import ToolCall
 from .tool_call_normalization import ToolCallNormalization
 
 # User models
-from .user import User, UserRole, UserToken
+from .user import User, UserRole, UserToken, UserAvatar
 
 __all__ = [
     # Base
@@ -96,6 +97,7 @@ __all__ = [
     "User",
     "UserRole",
     "UserToken",
+    "UserAvatar",
     # Project
     "Project",
     "ProjectDependency",
@@ -114,6 +116,8 @@ __all__ = [
     "ToolCallNormalization",
     # Message attachments
     "MessageAttachment",
+    # PDF render cache
+    "PdfRender",
     # Approval
     "Approval",
     # Question

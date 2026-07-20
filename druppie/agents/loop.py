@@ -746,6 +746,17 @@ class AgentLoop:
                     llm_tool_call_str_id, "waiting_approval", tool_call_id,
                 )
 
+            # Handle Entra auth pause
+            if status == ToolCallStatus.WAITING_ENTRA_AUTH:
+                assistant_msg, _ = self._build_tool_messages(
+                    llm_tool_call_str_id, tool_name, tool_args, "",
+                )
+                messages.append(assistant_msg)
+                return self._build_pause_state(
+                    messages, prompt, context, iteration,
+                    llm_tool_call_str_id, "waiting_entra_auth", tool_call_id,
+                )
+
             # Handle sandbox pause
             if status == ToolCallStatus.WAITING_SANDBOX:
                 assistant_msg, _ = self._build_tool_messages(

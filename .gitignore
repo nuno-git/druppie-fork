@@ -92,6 +92,9 @@ kubeconfig
 testing/autoscaling/results/*.png
 testing/autoscaling/results/*.jpg
 testing/autoscaling/results/*.jpeg
+
+# Document formatter test outputs
+druppie/templates/documents/test-outputs/
 .omo/
 .claude/
 cicd/act-runner/data/

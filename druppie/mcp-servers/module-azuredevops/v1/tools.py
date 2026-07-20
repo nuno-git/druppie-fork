@@ -36,7 +36,7 @@ module = AzureDevOpsModule()
 
 
 @mcp.tool()
-async def get_current_sprint() -> dict:
+async def get_current_sprint(user_token: str | None = None) -> dict:
     """Get the current sprint (iteration) and all configured sprints.
 
     Returns the sprint that contains today's date as current_sprint, plus the
@@ -47,11 +47,11 @@ async def get_current_sprint() -> dict:
     Returns:
         Dict with current_sprint (name, path, start/end dates) and all_sprints.
     """
-    return await module.get_current_sprint()
+    return await module.get_current_sprint(user_token=user_token)
 
 
 @mcp.tool()
-async def get_sprint_summary(iteration: str) -> dict:
+async def get_sprint_summary(iteration: str, user_token: str | None = None) -> dict:
     """Get an aggregated summary of a sprint: effort by person, board column
     distribution, completion percentage, and item counts by type and state.
 
@@ -65,7 +65,7 @@ async def get_sprint_summary(iteration: str) -> dict:
         counts, effort_summary (total/done/remaining PBI effort + completion %),
         and by_person breakdown (effort and item counts per team member).
     """
-    return await module.get_sprint_summary(iteration)
+    return await module.get_sprint_summary(iteration, user_token=user_token)
 
 
 @mcp.tool()
@@ -76,6 +76,7 @@ async def list_backlog_items(
     iteration: str | None = None,
     assigned_to: str | None = None,
     limit: int = 100,
+    user_token: str | None = None,
 ) -> dict:
     """List backlog / work items from the configured Azure DevOps project.
 
@@ -93,11 +94,11 @@ async def list_backlog_items(
     Returns:
         Dict with items (id, title, type, state, board_column, iteration, assigned_to, effort).
     """
-    return await module.list_backlog_items(work_item_type, state, board_column, iteration, assigned_to, limit)
+    return await module.list_backlog_items(work_item_type, state, board_column, iteration, assigned_to, limit, user_token=user_token)
 
 
 @mcp.tool()
-async def get_work_item(item_id: int) -> dict:
+async def get_work_item(item_id: int, user_token: str | None = None) -> dict:
     """Read full detail of one work item including its parent and children.
 
     The hierarchy in this project is: Epic → Feature → Product Backlog Item → Task.
@@ -116,11 +117,11 @@ async def get_work_item(item_id: int) -> dict:
     Returns:
         Dict with full item detail, parent, children, and children_summary.
     """
-    return await module.get_work_item(item_id)
+    return await module.get_work_item(item_id, user_token=user_token)
 
 
 @mcp.tool()
-async def search_work_items(text: str, limit: int = 50) -> dict:
+async def search_work_items(text: str, limit: int = 50, user_token: str | None = None) -> dict:
     """Search work items in the configured project by title/description text.
 
     Args:
@@ -130,11 +131,11 @@ async def search_work_items(text: str, limit: int = 50) -> dict:
     Returns:
         Dict with the project name and matching items.
     """
-    return await module.search_work_items(text, limit)
+    return await module.search_work_items(text, limit, user_token=user_token)
 
 
 @mcp.tool()
-async def get_work_item_comments(item_id: int, top: int = 50) -> dict:
+async def get_work_item_comments(item_id: int, top: int = 50, user_token: str | None = None) -> dict:
     """Get comments on a work item, newest first.
 
     Args:
@@ -145,11 +146,11 @@ async def get_work_item_comments(item_id: int, top: int = 50) -> dict:
         Dict with comments (id, text, created_by, created_date, modified_date)
         and total_count.
     """
-    return await module.get_work_item_comments(item_id, top)
+    return await module.get_work_item_comments(item_id, top, user_token=user_token)
 
 
 @mcp.tool()
-async def add_work_item_comment(item_id: int, text: str) -> dict:
+async def add_work_item_comment(item_id: int, text: str, user_token: str | None = None) -> dict:
     """Add a comment to a work item.
 
     This tool requires human approval before execution. The approver will
@@ -163,7 +164,7 @@ async def add_work_item_comment(item_id: int, text: str) -> dict:
         Dict with success status and created comment (id, work_item_id, text,
         created_by, created_date).
     """
-    return await module.add_work_item_comment(item_id, text)
+    return await module.add_work_item_comment(item_id, text, user_token=user_token)
 
 
 @mcp.tool()
@@ -178,6 +179,7 @@ async def create_work_item(
     effort: float | None = None,
     tags: str | None = None,
     parent_id: int | None = None,
+    user_token: str | None = None,
 ) -> dict:
     """Create a new work item in the configured Azure DevOps project.
 
@@ -216,6 +218,7 @@ async def create_work_item(
         effort=effort,
         tags=tags,
         parent_id=parent_id,
+        user_token=user_token,
     )
 
 
@@ -232,6 +235,7 @@ async def update_work_item(
     effort: float | None = None,
     tags: str | None = None,
     parent_id: int | None = None,
+    user_token: str | None = None,
 ) -> dict:
     """Update an existing work item in the configured Azure DevOps project.
 
@@ -281,4 +285,5 @@ async def update_work_item(
         effort=effort,
         tags=tags,
         parent_id=parent_id,
+        user_token=user_token,
     )

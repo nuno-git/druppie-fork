@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, LargeBinary, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -25,6 +25,7 @@ class User(Base):
     # Relationships
     roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     tokens = relationship("UserToken", back_populates="user", cascade="all, delete-orphan")
+    avatar = relationship("UserAvatar", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,3 +63,16 @@ class UserToken(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     user = relationship("User", back_populates="tokens")
+
+
+class UserAvatar(Base):
+    """Cached user profile photo from Microsoft Graph."""
+
+    __tablename__ = "user_avatars"
+
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    image_data = Column(LargeBinary, nullable=False)
+    content_type = Column(String(50), nullable=False, default="image/jpeg")
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    user = relationship("User", back_populates="avatar")
