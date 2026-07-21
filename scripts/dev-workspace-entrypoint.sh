@@ -615,6 +615,29 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
 OPENCODE_CFG
 log "opencode: Waterschap LLM provider configured (qwen3.6-27b, qwen3.6-35b-a3b)"
 
+# ---------------------------------------------------------------------------
+# 2d. Patch kubeconfig to use internal API server endpoint.
+# ---------------------------------------------------------------------------
+# The Vault-provided kubeconfig points to the external endpoint
+# (kubeapi.rijnland.dev:6443), but the CiliumNetworkPolicy only allows
+# traffic to the kube-apiserver entity (internal endpoints). The mount is
+# read-only, so we copy to a writable location and rewrite the server URL.
+fix_kubeconfig() {
+    local src="${HOME}/.kube/config"
+    local dst="${WORKSPACE}/.kube/config"
+    if [ -f "${src}" ]; then
+        mkdir -p "$(dirname "${dst}")"
+        cp "${src}" "${dst}"
+        sed -i 's|server: https://kubeapi\.rijnland\.dev:6443|server: https://kubernetes.default.svc:443|' "${dst}"
+        export KUBECONFIG="${dst}"
+        log "kubeconfig patched to use internal API server endpoint"
+    else
+        warn "no kubeconfig found at ${src} — skipping patch"
+    fi
+}
+
+fix_kubeconfig
+
 seed_workspace
 
 # Keep the workspace's own runtime artifacts out of the Source Control pane:
