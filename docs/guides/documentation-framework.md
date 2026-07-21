@@ -28,7 +28,7 @@ This is the practical guide to how we document decisions and specs in this repo.
 
 **Skipping docs.** If a change genuinely needs none, mark it `docs-exempt` in any one of three ways: add the **`docs-exempt` label** to the PR, tick a **`- [x] docs-exempt`** checkbox in the PR description, or add a **`docs-exempt: <reason>`** line to the PR description.
 
-**Where the details live.** The rest of this guide covers each type in depth. The starting-point templates are `docs/prds/TEMPLATE.md`, `docs/adrs/TEMPLATE.md`, `docs/research/TEMPLATE.md`, and `docs/specs/TEMPLATE.feature`.
+**Where the details live.** The rest of this guide covers each type in depth. The starting-point templates are `docs/prds/TEMPLATE.md`, `docs/adrs/TEMPLATE.md`, `docs/research/TEMPLATE.md`, and `docs/specs/TEMPLATE.feature`. Pure naslag (subsystem/architecture overviews) has no template and lives in `docs/reference/`; how-to material lives in `docs/guides/`.
 
 ## The four document types
 
@@ -43,23 +43,24 @@ This is the practical guide to how we document decisions and specs in this repo.
 
 ## Orientation artefacts (no template, optional)
 
-Next to the four *templated* types above (PRD / Research / ADR / Spec) there is one lightweight, **optional** "orientation" category. It has **no template and no schema**, and it is **not checked by the validator (Check B)**:
+Next to the four *templated* types above (PRD / Research / ADR / Spec) there are two lightweight, **optional** "orientation" types. They have **no template and no schema**, and they are **not checked by the validator (Check B)**:
 
 | Type | What it captures | Location |
 |------|------------------|----------|
 | **Guide** | How-to / explanation / conventions / runbooks — *"how do I do X"* | `docs/guides/` |
+| **Reference** | Naslag / subsystem / architecture overview — *"what exists and how it hangs together"* | `docs/reference/` |
 
-- It carries **no mandatory frontmatter/template** and is **not schema-validated**, but it **does count as valid documentation for the mandatory-docs gate (Check A)**.
-- **Back-links:** a guide **SHOULD** link back to the ADR/PRD/Spec that owns the underlying decision/requirement/behaviour. This is a recommendation, not a hard-enforced rule.
+- They carry **no mandatory frontmatter/template** and are **not schema-validated**, but they **do count as valid documentation for the mandatory-docs gate (Check A)**.
+- **Back-links:** a guide or reference doc **SHOULD** link back to the ADR/PRD/Spec that owns the underlying decision/requirement/behaviour. This is a recommendation, not a hard-enforced rule.
 
 ### Decompose first: pick As-1 or As-2
 
 Before writing, decide which axis a doc sits on:
 
 - **As-1 — templated (ADR / PRD / Spec):** if the doc records a **decision, a requirement, or testable behaviour**, use a templated type. This holds **even when you are describing how something already works today** — current behaviour does **not** disqualify an ADR or Spec. Lens ≠ time: an **ADR** is about an *already-taken decision*, and a **Spec** describes exactly *current/required behaviour*.
-- **As-2 — orientation (guide):** if the doc is **pure orientation or naslag**, use a guide, **with a back-link** to the owning ADR/PRD/Spec.
+- **As-2 — orientation (guide / reference):** if the doc is **pure orientation or naslag**, use a **guide** (how-to / conventions) or a **reference** (subsystem / architecture overview), **with a back-link** to the owning ADR/PRD/Spec.
 
-A guide is **not an escape hatch** to avoid writing ADRs or Specs: a decision or a testable behaviour still needs its templated home.
+Decompose first: extract every decision into an ADR, every requirement into a PRD, and every testable behaviour into a Spec. A **guide** or **reference** doc is the **residue that is left after that extraction** — pure orientation with nothing templatable in it. It is **not an escape hatch** to avoid writing ADRs or Specs: a decision or a testable behaviour still needs its templated home.
 
 ## The flow
 
@@ -158,8 +159,8 @@ replacement.
 The PBI 9743 (existing doc migration) and PBI 9744 (validation + enforcement) are both
 complete:
 
-- **All existing docs** migrated to the formal ADR/PRD/Research/Spec structure.
-- **`docs/reference/` eliminated** — archived or relocated to `docs/guides/`.
+- **All existing docs** migrated to the formal ADR/PRD/Research/Spec structure, with pure orientation material kept as `docs/guides/` or `docs/reference/` docs.
+- **`docs/reference/` retained** as an optional, un-templated orientation location for naslag / subsystem / architecture overviews (see [Orientation artefacts](#orientation-artefacts-no-template-optional)).
 - **47 pytest tests** run in CI, covering frontmatter validation, lifecycle tags, link
   resolution, CAS freshness, spec references, and the mandatory-docs gate.
 - **Link validation:** all `linked_*` fields must point to existing files — URLs are rejected.

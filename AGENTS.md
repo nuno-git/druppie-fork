@@ -25,12 +25,15 @@ chore usually needs no docs.
 | **ADR** | The decision taken + its consequences | `docs/adrs/` | `docs/adrs/TEMPLATE.md` |
 | **Spec** | Executable acceptance criteria (Gherkin) | `docs/specs/` | `docs/specs/TEMPLATE.feature` |
 
-## The orientation type (optional, no template)
+## The orientation types (optional, no template)
 
 - **Guide** — how-to / conventions / runbooks → `docs/guides/`
+- **Reference** — naslag / subsystem / architecture overview → `docs/reference/`
 
 They carry no mandatory frontmatter and aren't schema-validated, but they should link back to
-the ADR/PRD/Spec that owns the underlying decision or behaviour.
+the ADR/PRD/Spec that owns the underlying decision or behaviour. They are the residue left after
+extracting decisions (ADR), requirements (PRD), and testable behaviour (Spec) — not an escape
+hatch to avoid those.
 
 ## The rule
 

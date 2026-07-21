@@ -109,6 +109,23 @@ def test_spec_feature_counts_as_docs():
     assert ok is True
 
 
+def test_reference_doc_counts_as_docs():
+    # An un-templated orientation doc under docs/reference/ satisfies the gate.
+    ok, reason = cmd.mandatory_gate(
+        ["druppie/services/x.py", "docs/reference/sierk-platform-visie.md"]
+    )
+    assert ok is True
+    assert reason == "OK"
+
+
+def test_guide_counts_as_docs():
+    # The other orientation type (guide) also satisfies the gate.
+    ok, reason = cmd.mandatory_gate(
+        ["druppie/services/x.py", "docs/guides/some-runbook.md"]
+    )
+    assert ok is True
+
+
 def test_empty_changeset_passes():
     ok, reason = cmd.mandatory_gate([])
     assert ok is True
