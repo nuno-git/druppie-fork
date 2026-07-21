@@ -8,7 +8,7 @@ import {
 import {
   getModelManagement, setAgentModelOverride, removeAgentModelOverride,
   setTranslationModelOverride, removeTranslationModelOverride, validateProvider,
-  getLocalModelStatus, getLocalModelLogs,
+  getLocalModelStatus, getLocalModelLogs, loadModel,
 } from '../services/api'
 import PageHeader from '../components/shared/PageHeader'
 import VersionBadge from '../components/shared/VersionBadge'
@@ -317,8 +317,30 @@ const MODEL_LABELS = {
   'qwen3.6-35b-a3b': 'Qwen 3.6 35B A3B',
 }
 
+const MODES = [
+  {
+    id: 'qwen',
+    label: 'Qwen (27B + 35B)',
+    description: 'GPUs 0 + 1, each model on its own GPU',
+    models: ['qwen3.6-27b', 'qwen3.6-35b-a3b'],
+    loadModel: 'qwen3.6-27b',
+    icon: Cpu,
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek V4 Flash',
+    description: 'Both GPUs, tensor parallelism 2',
+    models: ['deepseek-v4-flash'],
+    loadModel: 'deepseek-v4-flash',
+    icon: Cpu,
+  },
+]
+
 const LocalModelsSection = () => {
   const [showLogs, setShowLogs] = useState({})
+  const [loadingModel, setLoadingModel] = useState(null)
+  const [loadResult, setLoadResult] = useState(null)
+  const queryClient = useQueryClient()
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['local-model-status'],
     queryFn: getLocalModelStatus,
@@ -334,6 +356,7 @@ const LocalModelsSection = () => {
   const services = status?.services || {}
   const switching = status?.switching
   const currentMode = status?.current_mode
+  const activeModels = status?.active_models || []
   const availableModels = status?.available_models || []
 
   const modelToService = {
@@ -344,6 +367,20 @@ const LocalModelsSection = () => {
 
   const getServiceForModel = (modelId) => modelToService[modelId] || modelId
 
+  const handleLoadModel = async (modelId) => {
+    setLoadingModel(modelId)
+    setLoadResult(null)
+    try {
+      const result = await loadModel(modelId)
+      setLoadResult({ model: modelId, success: true, data: result })
+      queryClient.invalidateQueries({ queryKey: ['local-model-status'] })
+    } catch (e) {
+      setLoadResult({ model: modelId, success: false, error: e.message })
+    } finally {
+      setLoadingModel(null)
+    }
+  }
+
   return (
     <SectionCard title="Local GPU Models" icon={Server}>
       {/* Mode banner */}
@@ -352,14 +389,17 @@ const LocalModelsSection = () => {
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200">
             <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
             <span className="text-sm text-amber-700">
-              Switching to <strong>{switching}</strong> mode…
+              Switching to <strong>{MODES.find(m => m.id === switching)?.label || switching}</strong>…
             </span>
           </div>
         ) : currentMode ? (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-50 border border-green-200">
             <CheckCircle className="w-4 h-4 text-green-500" />
             <span className="text-sm text-green-700">
-              Active: <strong className="capitalize">{currentMode}</strong> mode
+              Active: <strong>{MODES.find(m => m.id === currentMode)?.label || currentMode}</strong>
+              <span className="text-green-500 font-normal ml-1">
+                ({activeModels.map(m => MODEL_LABELS[m] || m).join(', ')})
+              </span>
             </span>
           </div>
         ) : (
@@ -368,73 +408,143 @@ const LocalModelsSection = () => {
             <span className="text-sm text-gray-500">Idle — no model loaded</span>
           </div>
         )}
-        {status?.inflight > 0 && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-            <Activity className="w-3 h-3" /> {status.inflight} in-flight
-          </span>
-        )}
       </div>
 
-      {/* Model grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {availableModels.map(modelId => {
-          const svcName = getServiceForModel(modelId)
-          const svc = services[svcName]
-          const isReady = svc?.ready
-          const isLoaded = (svc?.replicas || 0) > 0
-          const isOther = currentMode && !isLoaded && !switching
-          const label = MODEL_LABELS[modelId] || modelId
-
-          return (
-            <div
-              key={modelId}
-              className={`rounded-lg border p-3 ${
-                isReady ? 'border-green-200 bg-green-50/30' :
-                isLoaded ? 'border-amber-200 bg-amber-50/30' :
-                'border-gray-200 bg-gray-50/30'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-medium text-sm">{label}</span>
-                <div className={`w-2.5 h-2.5 rounded-full ${
-                  isReady ? 'bg-green-500' :
-                  isLoaded ? 'bg-amber-400 animate-pulse' :
-                  'bg-gray-300'
-                }`} />
-              </div>
-              <div className="text-xs text-gray-500">
-                {isReady ? (
-                  <span className="text-green-600 flex items-center gap-1">
-                    <CheckCircle className="w-3 h-3" /> Ready
-                  </span>
-                ) : isLoaded ? (
-                  <span className="text-amber-600 flex items-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Loading…
-                  </span>
-                ) : isOther ? (
-                  <span className="text-gray-400">Idle</span>
+      {/* Load mode buttons */}
+      {!switching && (
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          {MODES.map(mode => {
+            const isActive = currentMode === mode.id
+            const isLoading = loadingModel === mode.loadModel
+            const isOtherLoading = loadingModel && loadingModel !== mode.loadModel
+            return (
+              <button
+                key={mode.id}
+                onClick={() => handleLoadModel(mode.loadModel)}
+                disabled={isActive || isLoading || isOtherLoading}
+                className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-colors ${
+                  isActive
+                    ? 'bg-green-100 border-green-300 text-green-700 cursor-default'
+                    : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                }`}
+                title={mode.description}
+              >
+                {isLoading ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : isActive ? (
+                  <CheckCircle className="w-3 h-3" />
                 ) : (
-                  <span className="text-gray-400">Not deployed</span>
+                  <Zap className="w-3 h-3" />
+                )}
+                {mode.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Load result */}
+      {loadResult && (
+        <div className={`mb-4 px-3 py-2 rounded-lg text-xs ${
+          loadResult.success
+            ? 'bg-green-50 border border-green-200 text-green-700'
+            : 'bg-red-50 border border-red-200 text-red-700'
+        }`}>
+          {loadResult.success ? (
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>
+                <strong>{MODES.find(m => m.models.includes(loadResult.model))?.label || MODEL_LABELS[loadResult.model] || loadResult.model}</strong> loaded in{' '}
+                <strong>{loadResult.data?.elapsed_seconds || '?'}s</strong>
+                — mode: <strong>{loadResult.data?.mode}</strong>
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>Failed to load: {loadResult.error}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Model grid */}
+      <div className="space-y-2 mb-2">
+        {MODES.map(mode => {
+          const modeModels = mode.models.filter(m => availableModels.includes(m))
+          if (modeModels.length === 0) return null
+          return (
+            <div key={mode.id}>
+              <div className="text-xs font-medium text-gray-400 mb-1.5 flex items-center gap-1.5">
+                <Cpu className="w-3 h-3" />
+                {mode.label}
+                {currentMode === mode.id && (
+                  <span className="text-green-500 font-normal">— active</span>
                 )}
               </div>
-              {isLoaded && logsData?.services?.[svcName] && (
-                <button
-                  onClick={() => setShowLogs(prev => ({ ...prev, [svcName]: !prev[svcName] }))}
-                  className="mt-2 text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
-                >
-                  <Terminal className="w-3 h-3" />
-                  {showLogs[svcName] ? 'Hide' : 'Show'} logs
-                </button>
-              )}
-              {showLogs[svcName] && logsData?.services?.[svcName] && (
-                <div className="mt-2 max-h-48 overflow-y-auto rounded bg-gray-900 p-2">
-                  {(logsData.services[svcName].logs || []).map((line, i) => (
-                    <div key={i} className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap break-all leading-tight">
-                      {line}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {modeModels.map(modelId => {
+                  const svcName = getServiceForModel(modelId)
+                  const svc = services[svcName]
+                  const isReady = svc?.ready
+                  const isLoaded = (svc?.replicas || 0) > 0
+                  const isOther = currentMode && !isLoaded && !switching
+                  const label = MODEL_LABELS[modelId] || modelId
+
+                  return (
+                    <div
+                      key={modelId}
+                      className={`rounded-lg border p-3 ${
+                        isReady ? 'border-green-200 bg-green-50/30' :
+                        isLoaded ? 'border-amber-200 bg-amber-50/30' :
+                        'border-gray-200 bg-gray-50/30'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-medium text-sm">{label}</span>
+                        <div className={`w-2.5 h-2.5 rounded-full ${
+                          isReady ? 'bg-green-500' :
+                          isLoaded ? 'bg-amber-400 animate-pulse' :
+                          'bg-gray-300'
+                        }`} />
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {isReady ? (
+                          <span className="text-green-600 flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3" /> Ready
+                          </span>
+                        ) : isLoaded ? (
+                          <span className="text-amber-600 flex items-center gap-1">
+                            <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+                          </span>
+                        ) : isOther ? (
+                          <span className="text-gray-400">Idle</span>
+                        ) : (
+                          <span className="text-gray-400">Not deployed</span>
+                        )}
+                      </div>
+                      {isLoaded && logsData?.services?.[svcName] && (
+                        <button
+                          onClick={() => setShowLogs(prev => ({ ...prev, [svcName]: !prev[svcName] }))}
+                          className="mt-2 text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                        >
+                          <Terminal className="w-3 h-3" />
+                          {showLogs[svcName] ? 'Hide' : 'Show'} logs
+                        </button>
+                      )}
+                      {showLogs[svcName] && logsData?.services?.[svcName] && (
+                        <div className="mt-2 max-h-48 overflow-y-auto rounded bg-gray-900 p-2">
+                          {(logsData.services[svcName].logs || []).map((line, i) => (
+                            <div key={i} className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap break-all leading-tight">
+                              {line}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  ))}
-                </div>
-              )}
+                  )
+                })}
+              </div>
             </div>
           )
         })}
