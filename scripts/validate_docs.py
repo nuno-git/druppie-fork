@@ -66,6 +66,9 @@ def extract_frontmatter(text):
     Frontmatter is the text between the first ``---`` line and the next
     ``---`` line.
     """
+    # Strip an optional UTF-8 BOM so a file that begins with `﻿---`
+    # still has its `---` fence recognized on the first line.
+    text = text.lstrip("﻿")
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return None
@@ -128,7 +131,12 @@ def validate_frontmatter_file(path, schema_validator, root):
                 continue
             if value.startswith("http"):
                 continue
-            target = root / value
+            # Strip a `#anchor` and/or `?query` fragment so a link like
+            # "docs/prds/001-x.md#goal" resolves to the actual file on disk.
+            file_part = re.split(r"[#?]", value, maxsplit=1)[0]
+            if not file_part:
+                continue
+            target = root / file_part
             if not target.exists():
                 errors.append(
                     f"{field}: linked file does not exist: {value}"
@@ -176,21 +184,24 @@ def check_spec_files(root):
     if not features_dir.is_dir():
         return results
 
-    tag_re = re.compile(r"^\s*@(prd|adr)\s+(\S+)")
+    # Match every @prd/@adr tag on a line, not just the first, so a second
+    # tag on the same Gherkin line (e.g. "@prd docs/prds/001-x.md @adr ...")
+    # is validated too.
+    tag_re = re.compile(r"@(prd|adr)\s+(\S+)")
     for path in sorted(features_dir.glob("*.feature")):
         if path.name == "TEMPLATE.feature":
             continue
         errors = []
         rel = path.relative_to(root).as_posix()
         for line in path.read_text(encoding="utf-8").splitlines():
-            m = tag_re.match(line)
-            if not m:
-                continue
-            ref = m.group(2)
-            if "<" in ref:  # placeholder like <feature-name>
-                continue
-            if not (root / ref).exists():
-                errors.append(f"@{m.group(1)}: referenced file does not exist: {ref}")
+            for m in tag_re.finditer(line):
+                ref = m.group(2)
+                if "<" in ref:  # placeholder like <feature-name>
+                    continue
+                if not (root / ref).exists():
+                    errors.append(
+                        f"@{m.group(1)}: referenced file does not exist: {ref}"
+                    )
         results.append((rel, errors))
 
     return results

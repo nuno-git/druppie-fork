@@ -23,11 +23,15 @@ import sys
 # Exempt detection (replicates the 3 bash checks in docs.yml Check A).
 # ---------------------------------------------------------------------------
 
-# (b) A *checked* checkbox line mentioning docs-exempt: "- [x] ... docs-exempt".
-#     Empty "[ ]" must NOT count. Case-insensitive.
-_CHECKBOX_RE = re.compile(r"^\s*-\s*\[[xX]\].*docs-exempt", re.IGNORECASE)
+# (b) A *checked* checkbox whose label IS docs-exempt: "- [x] docs-exempt".
+#     Empty "[ ]" must NOT count, and "docs-exempt" must follow the checkbox
+#     directly — prose like "- [x] I read the docs-exempt guide" must NOT match.
+#     Case-insensitive.
+_CHECKBOX_RE = re.compile(r"^\s*-\s*\[[xX]\]\s*docs-exempt\b", re.IGNORECASE)
 
 # (c) An explicit directive line: "docs-exempt: <non-empty reason>".
+#     NOTE: a prose line that happens to start with "docs-exempt: ..." matches
+#     too, but that is acceptable — it is an explicit directive form on its own.
 _DIRECTIVE_RE = re.compile(r"^\s*docs-exempt:\s*\S", re.IGNORECASE)
 
 
@@ -71,6 +75,11 @@ _DOC_RE = re.compile(
     r"^(docs/(adrs|prds|research|reference|guides)/|testing/specs/features/)"
 )
 
+# Scaffolding that lives inside the doc folders but is NOT a real doc: the
+# per-type TEMPLATE.md, the JSON schemas, and the generated CAS.md. Editing
+# only these must NOT satisfy the mandatory-docs gate.
+_NON_DOC_RE = re.compile(r"(^|/)(TEMPLATE\.md|CAS\.md|[^/]*\.schema\.json)$")
+
 
 def mandatory_gate(changed_files: list[str]) -> tuple[bool, str]:
     """Decide whether the set of changed files satisfies the docs gate.
@@ -79,7 +88,11 @@ def mandatory_gate(changed_files: list[str]) -> tuple[bool, str]:
     otherwise ``(True, "OK")``.
     """
     code_changed = any(_CODE_RE.match(f.strip()) for f in changed_files if f.strip())
-    doc_changed = any(_DOC_RE.match(f.strip()) for f in changed_files if f.strip())
+    doc_changed = any(
+        _DOC_RE.match(f.strip()) and not _NON_DOC_RE.search(f.strip())
+        for f in changed_files
+        if f.strip()
+    )
 
     if code_changed and not doc_changed:
         return (

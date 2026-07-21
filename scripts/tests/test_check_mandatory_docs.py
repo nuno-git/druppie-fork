@@ -21,7 +21,8 @@ def test_label_substring_does_not_count():
 
 
 def test_exempt_via_checked_checkbox():
-    body = "Some intro\n- [x] This PR is docs-exempt because reasons\nrest"
+    # docs-exempt must follow the checkbox directly.
+    body = "Some intro\n- [x] docs-exempt because reasons\nrest"
     assert cmd.is_exempt("", body) is True
     # Upper-case X also counts.
     assert cmd.is_exempt("", "- [X] docs-exempt") is True
@@ -30,6 +31,15 @@ def test_exempt_via_checked_checkbox():
 def test_unchecked_checkbox_does_not_count():
     body = "- [ ] docs-exempt (not ticked)"
     assert cmd.is_exempt("", body) is False
+
+
+def test_checkbox_prose_does_not_count_as_exempt():
+    # A checked checkbox that merely mentions docs-exempt somewhere in prose
+    # must NOT trip the gate — docs-exempt must follow the checkbox directly.
+    body = "- [x] I read the docs-exempt guide"
+    assert cmd.is_exempt("", body) is False
+    # But "- [x] docs-exempt" right after the checkbox DOES count.
+    assert cmd.is_exempt("", "- [x] docs-exempt") is True
 
 
 def test_exempt_via_directive_with_reason():
@@ -101,6 +111,43 @@ def test_spec_feature_counts_as_docs():
 
 def test_empty_changeset_passes():
     ok, reason = cmd.mandatory_gate([])
+    assert ok is True
+
+
+def test_template_edit_does_not_count_as_docs():
+    # Editing only the ADR template alongside code must NOT satisfy the gate.
+    ok, reason = cmd.mandatory_gate(
+        ["druppie/api/routes.py", "docs/adrs/TEMPLATE.md"]
+    )
+    assert ok is False
+    assert "documentation" in reason
+
+
+def test_schema_edit_does_not_count_as_docs():
+    # Editing only a *.schema.json alongside code must NOT satisfy the gate.
+    ok, reason = cmd.mandatory_gate(
+        ["druppie/api/routes.py", "docs/adrs/adr.schema.json"]
+    )
+    assert ok is False
+
+
+def test_cas_edit_does_not_count_as_docs():
+    # The generated CAS.md is not a real doc for the gate.
+    ok, reason = cmd.mandatory_gate(
+        ["druppie/api/routes.py", "docs/adrs/CAS.md"]
+    )
+    assert ok is False
+
+
+def test_real_doc_next_to_template_still_passes():
+    # A genuine doc alongside the template/schema still satisfies the gate.
+    ok, reason = cmd.mandatory_gate(
+        [
+            "druppie/api/routes.py",
+            "docs/adrs/TEMPLATE.md",
+            "docs/adrs/001-real.md",
+        ]
+    )
     assert ok is True
 
 

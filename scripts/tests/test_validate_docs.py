@@ -106,6 +106,30 @@ def test_extract_frontmatter_unclosed():
     assert validate_docs.extract_frontmatter("---\nid: 001\nno closing fence") is None
 
 
+def test_extract_frontmatter_with_bom():
+    # A leading UTF-8 BOM must not hide the opening `---` fence.
+    text = "﻿---\nid: 001\ntitle: x\n---\n\nbody"
+    raw = validate_docs.extract_frontmatter(text)
+    assert raw is not None
+    assert "id: 001" in raw
+
+
+def test_valid_adr_with_bom_has_no_errors(mini_repo):
+    # A valid ADR written with a UTF-8 BOM should still validate cleanly.
+    p = mini_repo / "docs/adrs/001-decision.md"
+    p.write_text(
+        "﻿"
+        + VALID_ADR.format(
+            id="001", status="accepted", superseded_by="null", linked_prd="null"
+        ),
+        encoding="utf-8",
+    )
+    errors = validate_docs.validate_frontmatter_file(
+        p, _validator_for(mini_repo, "docs/adrs"), mini_repo
+    )
+    assert errors == []
+
+
 # ---------------------------------------------------------------------------
 # load_frontmatter — the _StrDateLoader invariant
 # ---------------------------------------------------------------------------
@@ -226,6 +250,45 @@ def test_http_link_is_skipped(mini_repo):
     assert errors == []
 
 
+def test_link_with_anchor_resolves(mini_repo):
+    # A link with a "#section" anchor must resolve to the underlying file.
+    (mini_repo / "docs/prds/001-product.md").write_text(
+        VALID_PRD.format(id="001"), encoding="utf-8"
+    )
+    p = mini_repo / "docs/adrs/001-decision.md"
+    p.write_text(
+        VALID_ADR.format(
+            id="001",
+            status="accepted",
+            superseded_by="null",
+            linked_prd="docs/prds/001-product.md#goal",
+        ),
+        encoding="utf-8",
+    )
+    errors = validate_docs.validate_frontmatter_file(
+        p, _validator_for(mini_repo, "docs/adrs"), mini_repo
+    )
+    assert errors == []
+
+
+def test_link_with_anchor_to_missing_file_still_errors(mini_repo):
+    # Anchor-stripping must not mask a genuinely missing target file.
+    p = mini_repo / "docs/adrs/001-decision.md"
+    p.write_text(
+        VALID_ADR.format(
+            id="001",
+            status="accepted",
+            superseded_by="null",
+            linked_prd="docs/prds/404-missing.md#goal",
+        ),
+        encoding="utf-8",
+    )
+    errors = validate_docs.validate_frontmatter_file(
+        p, _validator_for(mini_repo, "docs/adrs"), mini_repo
+    )
+    assert any("linked file does not exist" in e for e in errors)
+
+
 def test_superseded_without_superseded_by_is_error(mini_repo):
     p = mini_repo / "docs/adrs/001-decision.md"
     p.write_text(
@@ -276,6 +339,39 @@ def test_spec_valid_reference_no_error(mini_repo):
     )
     feat = mini_repo / "testing/specs/features/thing.feature"
     feat.write_text("@prd docs/prds/001-product.md\n", encoding="utf-8")
+    results = validate_docs.check_spec_files(mini_repo)
+    rel, errors = results[0]
+    assert errors == []
+
+
+def test_spec_second_tag_on_same_line_is_checked(mini_repo):
+    # Two tags on one line: the first resolves, the second is broken and
+    # must still be reported (regression: re.match only saw the first tag).
+    (mini_repo / "docs/prds/001-product.md").write_text(
+        VALID_PRD.format(id="001"), encoding="utf-8"
+    )
+    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat.write_text(
+        "@prd docs/prds/001-product.md @adr docs/adrs/404-missing.md\n",
+        encoding="utf-8",
+    )
+    results = validate_docs.check_spec_files(mini_repo)
+    rel, errors = results[0]
+    assert any(
+        "referenced file does not exist" in e and "404-missing.md" in e
+        for e in errors
+    )
+
+
+def test_spec_second_tag_placeholder_is_skipped(mini_repo):
+    # A placeholder second tag on the same line is skipped, not errored.
+    (mini_repo / "docs/prds/001-product.md").write_text(
+        VALID_PRD.format(id="001"), encoding="utf-8"
+    )
+    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat.write_text(
+        "@prd docs/prds/001-product.md @adr <adr-name>\n", encoding="utf-8"
+    )
     results = validate_docs.check_spec_files(mini_repo)
     rel, errors = results[0]
     assert errors == []
