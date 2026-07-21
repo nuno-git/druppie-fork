@@ -39,6 +39,12 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+      {{- if has "kubernetes" .Values.devWorkspace.embedModules }}
+      # module-kubernetes needs the k8s-readonly ClusterRoleBinding. Reuse its
+      # ServiceAccount (the rbac template still renders the SA + binding when
+      # the module is embedded, just not the Deployment).
+      serviceAccountName: {{ include "druppie.fullname" . }}-module-kubernetes
+      {{- end }}
       {{- with .Values.devWorkspace.ingressVIP }}
       # Resolve the public app domain to the in-cluster Traefik ClusterIP so
       # oauth2-proxy can reach Keycloak without hairpinning to the LB external IP.
@@ -52,6 +58,7 @@ spec:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: 30
+      {{- if eq .Values.devWorkspace.stackMode "real" }}
       initContainers:
         # Wait for Postgres so uvicorn does not crash-loop on a missing DB
         # (only meaningful in stackMode=real; harmless otherwise).
@@ -78,11 +85,14 @@ spec:
           resources:
             requests: { memory: "32Mi", cpu: "50m" }
             limits:   { memory: "64Mi", cpu: "100m" }
+      {{- end }}
       containers:
         - name: workspace
-          image: {{ .Values.devWorkspace.image }}
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.devWorkspace.image.repository }}:{{ .Values.devWorkspace.image.tag | default .Values.global.imageTag | default "latest" }}"
           imagePullPolicy: {{ .Values.devWorkspace.imagePullPolicy }}
           env:
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.postgresql.druppie.username }}:$(DRUPPIE_DB_PASSWORD)@{{ include "druppie.fullname" . }}-druppie-db:5432/{{ .Values.postgresql.druppie.database }}"
             - name: DRUPPIE_GIT_BRANCH
               value: {{ .Values.devWorkspace.gitBranch | quote }}
             - name: DRUPPIE_REPO_URL
@@ -91,12 +101,22 @@ spec:
               value: {{ .Values.devWorkspace.gitSslNoVerify | quote }}
             - name: DEV_STACK
               value: {{ .Values.devWorkspace.stackMode | quote }}
+            - name: RECOVERY_MODE
+              value: {{ if .Values.recoveryMode }}"true"{{ else }}"false"{{ end }}
+            # Space-separated MCP module keys to run inside this pod under
+            # uvicorn --reload (see scripts/dev-workspace-entrypoint.sh).
+            # Empty in prod/colab-dev; set from devWorkspace.embedModules.
+            - name: EMBED_MODULES
+              value: {{ join " " .Values.devWorkspace.embedModules | quote }}
             - name: DRUPPIE_DESKTOP
-              value: {{ .Values.devWorkspace.desktop.enabled | quote }}
+              value: "1"
             # The frontend preview is reached through code-server's port proxy
             # (/proxy/5173); its API calls go to /proxy/8000 on the same origin.
             - name: VITE_API_URL
               value: /proxy/8000
+            # Read-only kubeconfig for kubectl access inside the workspace.
+            - name: KUBECONFIG
+              value: /home/developer/.kube/config
             # KEYCLOAK_SERVER_URL / KEYCLOAK_ISSUER_URL / KEYCLOAK_REALM /
             # MCP_*_URL / GITEA_* come from <instance>-config via envFrom below
             # (identical wiring to the baked backend).
@@ -125,11 +145,44 @@ spec:
             - { name: backend,     containerPort: 8000 }
             - { name: frontend,    containerPort: 5173 }
             - { name: code-server, containerPort: 8080 }
+            {{- range $key := .Values.devWorkspace.embedModules }}
+            {{- $mod := index $.Values.modules $key }}
+            {{- if $mod }}
+            # Named port for the embedded {{ $key }} MCP module — the matching
+            # <instance>-module-{{ $key }} Service targets this port when the
+            # module is embedded. Underscore in the key is replaced so the port
+            # name matches RFC 1123 (data_access -> mcp-data-access).
+            - { name: mcp-{{ $key | replace "_" "-" }}, containerPort: {{ $mod.port }} }
+            {{- end }}
+            {{- end }}
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            # Read-only kubeconfig from Vault (synced by ExternalSecret).
+            - name: kubeconfig
+              mountPath: /home/developer/.kube/config
+              subPath: kubeconfig
+              readOnly: true
+            {{- $needDocker := or (has "coding" $.Values.devWorkspace.embedModules) (has "docker" $.Values.devWorkspace.embedModules) }}
+            {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
+            # module-coding / module-docker talk to the host Docker daemon.
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            {{- end }}
           resources:
             {{- toYaml .Values.devWorkspace.resources | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              {{- if .Values.recoveryMode }}
+              # In recovery/degraded mode the backend doesn't start; probe code-server instead.
+              port: code-server
+              {{- else }}
+              port: backend
+              {{- end }}
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
         - name: oauth2-proxy
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
           args:
@@ -142,7 +195,7 @@ spec:
             # HTTPS host. issuerUrl must match the `iss` claim Keycloak mints on
             # the internal redeem path (http://<domain>/realms/<realm>).
             - --skip-oidc-discovery=true
-            - --oidc-issuer-url={{ .Values.devWorkspace.oauth.issuerUrl | default (printf "http://%s/realms/%s" .Values.global.domain .Values.frontend.vite.keycloakRealm) }}
+            - --oidc-issuer-url={{ .Values.devWorkspace.oauth.issuerUrl | default (printf "https://%s/realms/%s" .Values.global.domain .Values.frontend.vite.keycloakRealm) }}
             - --login-url={{ printf "https://%s/realms/%s/protocol/openid-connect/auth" .Values.global.domain .Values.frontend.vite.keycloakRealm }}
             - --redeem-url={{ printf "http://%s-keycloak:8080/realms/%s/protocol/openid-connect/token" (include "druppie.fullname" .) .Values.frontend.vite.keycloakRealm }}
             - --validate-url={{ printf "http://%s-keycloak:8080/realms/%s/protocol/openid-connect/userinfo" (include "druppie.fullname" .) .Values.frontend.vite.keycloakRealm }}
@@ -174,6 +227,19 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        # Read-only kubeconfig synced from Vault via ExternalSecret.
+        - name: kubeconfig
+          secret:
+            secretName: {{ include "druppie.fullname" . }}-kubeconfig
+            optional: true
+        {{- $needDocker := or (has "coding" .Values.devWorkspace.embedModules) (has "docker" .Values.devWorkspace.embedModules) }}
+        {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
+        # Host Docker socket for embedded module-coding / module-docker.
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        {{- end }}
       {{- with .Values.devWorkspace.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

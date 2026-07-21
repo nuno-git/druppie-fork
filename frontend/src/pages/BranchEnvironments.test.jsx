@@ -168,6 +168,7 @@ describe('BranchEnvironments page', () => {
         branch: 'feature/foo',
         image_tag: undefined,
         secrets_source: 'colab-dev',
+        recovery_mode: false,
       })
     )
   })

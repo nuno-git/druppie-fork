@@ -320,7 +320,8 @@ export const wipeProject = (projectId) =>
 // (deploying → running/failed, deleting → gone) happen server-side asynchronously.
 export const branchEnvironmentsApi = {
   list: () => request('/api/branch-environments'),
-  deploy: ({ branch, image_tag, secrets_source }) => {
+  listBranches: () => request('/api/branches'),
+  deploy: ({ branch, image_tag, secrets_source, recovery_mode }) => {
     // Callers should always pass secrets_source; fall back to the shared
     // colab-dev keys so a deploy never silently uses an unintended source.
     if (!secrets_source) {
@@ -335,6 +336,7 @@ export const branchEnvironmentsApi = {
         branch,
         secrets_source,
         ...(image_tag ? { image_tag } : {}),
+        ...(recovery_mode ? { recovery_mode: true } : {}),
       }),
     })
   },
@@ -572,3 +574,8 @@ export const validateProvider = (provider, model) =>
   request(`/api/admin/models/providers/${provider}/validate${model ? `?model=${encodeURIComponent(model)}` : ''}`, { method: 'POST' })
 export const getLocalModelStatus = () => request('/api/admin/models/local-status')
 export const getLocalModelLogs = (tail = 50) => request(`/api/admin/models/local-logs?tail=${tail}`)
+export const loadModel = (modelId) =>
+  request('/api/admin/models/load', {
+    method: 'POST',
+    body: JSON.stringify({ model: modelId }),
+  })

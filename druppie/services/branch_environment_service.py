@@ -78,21 +78,17 @@ CHART_REPO_URL = os.getenv(
 CHART_REPO = urlparse(CHART_REPO_URL).path.strip("/").removesuffix(".git")
 # Base for app branches the deployer creates when they don't exist yet.
 APP_BASE_BRANCH = os.getenv("BRANCH_ENV_APP_BASE_BRANCH", "colab-dev")
-# The instance that creates branch-envs — its imageTag is the default for new
-# envs (callers can still override with an explicit image_tag).
-PARENT_NAMESPACE = os.getenv("BRANCH_ENV_PARENT_NAMESPACE", f"druppie-{APP_BASE_BRANCH}")
 
 BRANCH_ENV_REGISTRY = os.getenv("BRANCH_ENV_REGISTRY", "harbor.rijnland.dev/druppie")
 BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
 # Ephemeral StorageClass: 1 replica, strict-local, reclaimPolicy=Delete.
 BRANCH_ENV_STORAGE_CLASS = os.getenv("BRANCH_ENV_STORAGE_CLASS", "longhorn-branch-env")
 
-# Secrets source for branch envs: "developer" syncs the deployer's own
-# self-service Vault map druppie/developers/<username>.
+# Secrets source for branch envs: determines the Vault path prefix for env
+# secrets. "colab-dev" → druppie/colab-dev/*, any other value maps to
+# druppie/developers/<value>/*. Accept any non-empty string.
 SECRETS_SOURCE_COLAB_DEV = "colab-dev"
-SECRETS_SOURCE_DEVELOPER = "developer"
-_SECRETS_SOURCES = frozenset({SECRETS_SOURCE_COLAB_DEV, SECRETS_SOURCE_DEVELOPER})
-_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
+_SECRETS_SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
 # Domain suffix: environments live at druppie-<slug>.<DOMAIN_SUFFIX>. Must stay a
 # single label under this suffix to match the *.rijnland.dev wildcard cert.
@@ -254,9 +250,10 @@ def build_helmrelease_yaml(
     image_tag: str | None,
     updated_at: str,
     reconcile_epoch: str | None = None,
-    developer: str = "",
+    secrets_source: str = SECRETS_SOURCE_COLAB_DEV,
     workspace_enabled: bool = True,
     stack_mode: str = "real",
+    recovery_mode: bool = False,
 ) -> str:
     namespace = f"druppie-{slug}"
     annotations = {
@@ -297,17 +294,15 @@ def build_helmrelease_yaml(
         "modules": {
             module: {
                 "resources": {"requests": {"cpu": _DEV_CPU["module"]}},
+                **({"enabled": False} if recovery_mode else {}),
             }
             for module in ALL_MODULES
         },
         # The branch namespace IS the hot-reload dev workspace: a single pod
         # (code-server + uvicorn --reload + Vite HMR) replaces the baked
         # backend/frontend Deployments. externalSecrets.managed=true lets ESO
-        # own <instance>-secrets; devWorkspace.developer syncs it from the
-        # deployer's own Vault map (druppie/developers/<developer>/* — seeded
-        # via scripts/seed-developer-env.py). The chart's oauth2-proxy reaches
-        # Keycloak over the in-cluster service (skip-oidc-discovery), so no
-        # issuerUrl override is needed (chart default = http://<host>/realms/…).
+        # own <instance>-secrets; devWorkspace.secretsSource determines the
+        # Vault path prefix (druppie/colab-dev/* or druppie/developers/<name>/*).
         "externalSecrets": {"managed": True},
         # Ephemeral storage: 1 replica + Delete reclaim policy. Branch-env
         # data is disposable (DBs rebuilt by the init job, repos re-cloned
@@ -316,12 +311,14 @@ def build_helmrelease_yaml(
         "persistence": {"storageClass": BRANCH_ENV_STORAGE_CLASS},
         "devWorkspace": {
             "enabled": workspace_enabled,
-            "stackMode": stack_mode,
-            "developer": developer,
+            "stackMode": "degraded" if recovery_mode else stack_mode,
+            "secretsSource": secrets_source,
             "gitBranch": branch,
             "codeServer": {"devHost": _workspace_host(host)},
         },
     }
+    if recovery_mode:
+        values["recoveryMode"] = True
     if image_tag is not None:
         values["global"]["imageTag"] = image_tag
 
@@ -515,6 +512,13 @@ class GiteaGitopsClient:
         self._raise_for(resp, f"checking branch '{branch}' in {repo}")
         return True
 
+    async def list_branches(self, repo: str) -> list[dict]:
+        """List all branches in a repo."""
+        async with self._client() as client:
+            resp = await client.get(f"{self._base}/api/v1/repos/{repo}/branches")
+        self._raise_for(resp, f"listing branches in {repo}")
+        return resp.json()
+
     async def create_branch(self, repo: str, branch: str, from_branch: str) -> None:
         """Create `branch` in `repo` from `from_branch`; existing branch is fine."""
         async with self._client() as client:
@@ -525,6 +529,29 @@ class GiteaGitopsClient:
         if resp.status_code == 409:  # created concurrently — it exists, which is all we need
             return
         self._raise_for(resp, f"creating branch '{branch}' in {repo}")
+
+    async def dispatch_workflow(
+        self, repo: str, branch: str, workflow: str = "build.yaml"
+    ) -> None:
+        """Trigger a workflow_dispatch on ``workflow`` for ``branch`` in ``repo``.
+
+        Guarantees the CI build runs for an env's branch even when the branch
+        already existed (so no push event fires to trigger build.yaml on its own).
+        """
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self._base}/api/v1/repos/{repo}/actions/workflows/{workflow}/dispatches",
+                json={"ref": branch},
+            )
+        self._raise_for(
+            resp, f"dispatching workflow '{workflow}' for branch '{branch}' in {repo}"
+        )
+        logger.info(
+            "branch_env_workflow_dispatched",
+            repo=repo,
+            branch=branch,
+            workflow=workflow,
+        )
 
     async def change_files(self, message: str, files: list[dict]) -> None:
         """Single-commit batch create/update/delete via POST /contents.
@@ -569,23 +596,66 @@ class ClusterStatusClient:
     def available(self) -> bool:
         return self._token_path.exists()
 
-    async def _get(self, path: str) -> dict | None:
+    async def _request(
+        self, method: str, path: str, json_body: dict | None = None
+    ) -> dict | None:
         if not self.available:
             return None
         token = self._token_path.read_text().strip()
         verify: bool | str = str(self._ca_path) if self._ca_path.exists() else True
+        headers: dict[str, str] = {"Authorization": f"Bearer {token}"}
+        if json_body is not None:
+            headers["Content-Type"] = "application/merge-patch+json"
         async with httpx.AsyncClient(
-            headers={"Authorization": f"Bearer {token}"}, verify=verify, timeout=_HTTP_TIMEOUT
+            headers=headers, verify=verify, timeout=_HTTP_TIMEOUT
         ) as client:
-            resp = await client.get(f"{self._api_url}{path}")
+            resp = await client.request(method, f"{self._api_url}{path}", json=json_body)
         if resp.status_code == 404:
             return None
         if resp.status_code >= 400:
+            verb = method.upper()
             raise ExternalServiceError(
                 service="kubernetes",
-                message=f"GET {path} failed: HTTP {resp.status_code} {resp.text[:300]}",
+                message=f"{verb} {path} failed: HTTP {resp.status_code} {resp.text[:300]}",
             )
-        return resp.json()
+        return resp.json() if resp.text else None
+
+    async def _get(self, path: str) -> dict | None:
+        return await self._request("GET", path)
+
+    async def _patch(self, path: str, body: dict) -> dict | None:
+        return await self._request("PATCH", path, body)
+
+    async def force_reconcile_flux(self) -> None:
+        """Force Flux to immediately reconcile the GitRepository that sources
+        the branch-envs manifests and the Kustomization that applies them.
+
+        Without this, Flux waits up to 5 minutes for the GitRepository poll
+        interval before it notices the backend's commit — this cuts the deploy
+        wait from minutes to seconds. Safe to call outside the cluster (no-op).
+        """
+        if not self.available:
+            return
+        epoch = str(int(time.time()))
+        annotation = {"metadata": {"annotations": {"fluxcd.io/request": epoch}}}
+        # GitRepository ai-k8s is in flux-custom (the bootstrap namespace).
+        try:
+            await self._patch(
+                "/apis/source.toolkit.fluxcd.io/v1/namespaces/flux-custom"
+                "/gitrepositories/ai-k8s",
+                annotation,
+            )
+        except Exception:
+            logger.warning("flux_reconcile_gitsrc_failed", exc_info=True)
+        # Kustomization branch-envs is in flux-system.
+        try:
+            await self._patch(
+                "/apis/kustomize.toolkit.fluxcd.io/v1/namespaces/flux-system"
+                "/kustomizations/branch-envs",
+                annotation,
+            )
+        except Exception:
+            logger.warning("flux_reconcile_kustomization_failed", exc_info=True)
 
     async def get_helmrelease(self, namespace: str, name: str = HELMRELEASE_NAME) -> dict | None:
         return await self._get(
@@ -858,6 +928,37 @@ class BranchEnvironmentService:
     # Public API
     # -------------------------------------------------------------------------
 
+    async def list_branches(self) -> list[str]:
+        """List all branches from the application repo (ai/druppie)."""
+        branches = await self.gitea.list_branches(CHART_REPO)
+        return [
+            b["name"]
+            for b in branches
+            if not b.get("protected", False)
+        ]
+
+    async def _change_files_with_retry(
+        self,
+        slug: str,
+        message: str,
+        files: list[dict],
+        max_retries: int = 3,
+    ) -> None:
+        """Commit files with retry on 409/422 (stal SHA from concurrent CI writes)."""
+        for attempt in range(max_retries):
+            try:
+                await self.gitea.change_files(message, files)
+                return
+            except ConflictError:
+                if attempt == max_retries - 1:
+                    raise
+                logger.warning("change_files_conflict", slug=slug, attempt=attempt + 1)
+                await asyncio.sleep(1)
+        raise ExternalServiceError(
+            service="gitops-repo",
+            message=f"could not commit to git for {slug} after {max_retries} attempts",
+        )
+
     async def create(
         self,
         owner_id: UUID,
@@ -866,23 +967,15 @@ class BranchEnvironmentService:
         user_roles: list[str],
         secrets_source: str = SECRETS_SOURCE_COLAB_DEV,
         owner_username: str | None = None,
+        recovery_mode: bool = False,
     ) -> BranchEnvironmentDetail:
         """Commit the environment manifests; Flux does the deploy."""
         _ = user_roles  # role gating happens at the route layer
         _validate_branch(branch)
-        if secrets_source not in _SECRETS_SOURCES:
+        secrets_source = (secrets_source or SECRETS_SOURCE_COLAB_DEV).strip().lower()
+        if not secrets_source or not _SECRETS_SOURCE_RE.match(secrets_source):
             raise ValidationError(
                 f"invalid secrets_source: {secrets_source!r}", field="secrets_source"
-            )
-        # The deployer's OWN Vault map only (identity from the token, not a free
-        # choice) — sanitized because it becomes a Vault path. Always required:
-        # the dev workspace's <instance>-secrets is synced from
-        # druppie/developers/<developer>/* via ESO (seed-developer-env.py).
-        developer = (owner_username or "").lower()
-        if not _USERNAME_RE.match(developer):
-            raise ValidationError(
-                f"cannot derive a developer map from username {owner_username!r}",
-                field="secrets_source",
             )
         slug = _slugify(branch)
         namespace = f"druppie-{slug}"
@@ -908,14 +1001,6 @@ class BranchEnvironmentService:
         _assert_safe_namespace(namespace, slug)
         if image_tag is not None:
             image_tag = _validate_image_tag(image_tag)
-        elif self.cluster.available:
-            parent = await self.cluster.get_helmrelease(PARENT_NAMESPACE, name=PARENT_NAMESPACE)
-            image_tag = (
-                (parent or {}).get("spec", {}).get("values", {})
-                .get("global", {}).get("imageTag")
-            ) or None
-            if image_tag:
-                logger.info("branch_env_image_tag_resolved", tag=image_tag, source=PARENT_NAMESPACE)
 
         if await self.gitea.get_file(self._env_path(slug, "namespace.yaml")) is not None:
             raise ConflictError(f"branch environment already exists for branch '{branch}'")
@@ -939,6 +1024,14 @@ class BranchEnvironmentService:
                 base=APP_BASE_BRANCH,
             )
 
+        # Always dispatch the CI build so images are guaranteed fresh, even
+        # when the branch already existed (no push event fires in that case to
+        # trigger build.yaml). No fallback tag is committed: the HelmRelease is
+        # committed without an imageTag, so the env cannot pull anything (it
+        # stays "deploying") until CI's deploy step yq-patches the branch's own
+        # tag into this helmrelease.yaml once the build finishes.
+        await self.gitea.dispatch_workflow(CHART_REPO, branch)
+
         created_at = _utcnow_iso()
         files = [
             {
@@ -957,7 +1050,7 @@ class BranchEnvironmentService:
                 "operation": "create",
                 "path": self._env_path(slug, "helmrelease.yaml"),
                 "content": build_helmrelease_yaml(
-                    slug, branch, host, image_tag, created_at, developer=developer
+                    slug, branch, host, image_tag, created_at, secrets_source=secrets_source, recovery_mode=recovery_mode
                 ),
             },
             {
@@ -969,6 +1062,7 @@ class BranchEnvironmentService:
         await self.gitea.change_files(
             f"branch-env: deploy {namespace} (branch {branch}, by {owner_id})", files
         )
+        await self.cluster.force_reconcile_flux()
         logger.info("branch_env_created", slug=slug, branch=branch, namespace=namespace)
 
         return BranchEnvironmentDetail(
@@ -981,13 +1075,14 @@ class BranchEnvironmentService:
             status=BranchEnvironmentStatus.DEPLOYING.value,
             status_message=(
                 f"created branch '{branch}' from {APP_BASE_BRANCH}; "
-                "manifests committed; waiting for Flux to deploy"
+                "CI build dispatched; manifests committed; waiting for Flux to deploy"
                 if branch_created
-                else "manifests committed; waiting for Flux to deploy"
+                else "CI build dispatched; manifests committed; waiting for Flux to deploy"
             ),
             created_at=datetime.fromisoformat(created_at),
             owner_id=owner_id,
             secrets_source=secrets_source,
+            recovery_mode=recovery_mode,
         )
 
     async def redeploy(
@@ -1024,11 +1119,12 @@ class BranchEnvironmentService:
             image_tag,
             updated_at,
             reconcile_epoch=str(int(time.time())),
-            developer=env.get("developer", ""),
+            secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             workspace_enabled=env.get("workspace_enabled", True),
             stack_mode=env.get("stack_mode", "real"),
         )
-        await self.gitea.change_files(
+        await self._change_files_with_retry(
+            slug,
             f"branch-env: redeploy {env['namespace']} (tag {image_tag or 'unchanged'}, by {user_id})",
             [
                 {
@@ -1040,6 +1136,7 @@ class BranchEnvironmentService:
             ],
         )
         logger.info("branch_env_redeploy", slug=slug, image_tag=image_tag)
+        await self.cluster.force_reconcile_flux()
 
         detail = await self.get(slug)
         return detail.model_copy(
@@ -1056,28 +1153,52 @@ class BranchEnvironmentService:
         user_id: UUID,
         user_roles: list[str],
     ) -> BranchEnvironmentDetail:
-        """Delete the env directory from git; Flux prunes the namespace."""
+        """Delete the env directory from git; Flux prunes the namespace.
+
+        Retries up to 3 times on 409/422 conflict (e.g. CI updating the
+        HelmRelease at the same time), re-reading the directory for fresh SHAs.
+        """
         slug = _validate_slug(env_id)
         env = await self._read_env(slug)
         if env is None:
-            # Already gone from git (possibly still pruning in the cluster).
             raise NotFoundError("branch_environment", slug)
 
         _require_owner_or_admin(env["owner_id"], user_id, user_roles, "tear down")
         _assert_safe_namespace(env["namespace"], slug)
 
-        entries = await self.gitea.list_dir(self._env_path(slug)) or []
-        deletes = [
-            {"operation": "delete", "path": e["path"], "sha": e["sha"]}
-            for e in entries
-            if e.get("type") == "file"
-        ]
-        if not deletes:
-            raise NotFoundError("branch_environment", slug)
-        await self.gitea.change_files(
-            f"branch-env: teardown {env['namespace']} (by {user_id})", deletes
-        )
+        max_retries = 3
+        for attempt in range(max_retries):
+            entries = await self.gitea.list_dir(self._env_path(slug)) or []
+            deletes = [
+                {"operation": "delete", "path": e["path"], "sha": e["sha"]}
+                for e in entries
+                if e.get("type") == "file"
+            ]
+            if not deletes:
+                raise NotFoundError("branch_environment", slug)
+            try:
+                await self.gitea.change_files(
+                    f"branch-env: teardown {env['namespace']} (by {user_id})",
+                    deletes,
+                )
+                break
+            except ConflictError:
+                if attempt == max_retries - 1:
+                    raise
+                logger.warning(
+                    "branch_env_teardown_conflict",
+                    slug=slug,
+                    attempt=attempt + 1,
+                )
+                await asyncio.sleep(1)
+        else:
+            raise ExternalServiceError(
+                service="gitops-repo",
+                message=f"could not delete {slug} after {max_retries} attempts",
+            )
+
         logger.info("branch_env_teardown", slug=slug, namespace=env["namespace"])
+        await self.cluster.force_reconcile_flux()
 
         return self._detail_from_env(
             env,
@@ -1123,11 +1244,12 @@ class BranchEnvironmentService:
             env["image_tag"],
             updated_at,
             reconcile_epoch=str(int(time.time())),
-            developer=env.get("developer", ""),
+            secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             workspace_enabled=True,
             stack_mode=env.get("stack_mode", "real"),
         )
-        await self.gitea.change_files(
+        await self._change_files_with_retry(
+            slug,
             f"branch-env: enable workspace {env['namespace']} (by {user_id})",
             [
                 {
@@ -1139,6 +1261,7 @@ class BranchEnvironmentService:
             ],
         )
         logger.info("branch_env_workspace_enabled", slug=slug, namespace=env["namespace"])
+        await self.cluster.force_reconcile_flux()
 
         env["workspace_enabled"] = True
         status, message = await self._live_status(env["namespace"])
@@ -1174,11 +1297,12 @@ class BranchEnvironmentService:
             env["image_tag"],
             updated_at,
             reconcile_epoch=str(int(time.time())),
-            developer=env.get("developer", ""),
+            secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             workspace_enabled=False,
             stack_mode=env.get("stack_mode", "real"),
         )
-        await self.gitea.change_files(
+        await self._change_files_with_retry(
+            slug,
             f"branch-env: disable workspace {env['namespace']} (by {user_id})",
             [
                 {
@@ -1190,6 +1314,7 @@ class BranchEnvironmentService:
             ],
         )
         logger.info("branch_env_workspace_disabled", slug=slug, namespace=env["namespace"])
+        await self.cluster.force_reconcile_flux()
 
         env["workspace_enabled"] = False
         status, message = await self._live_status(env["namespace"])
@@ -1377,6 +1502,7 @@ class BranchEnvironmentService:
         workspace_enabled = False
         developer = ""
         stack_mode = "real"
+        recovery_mode = False
         if hr_file is not None:
             helmrelease_sha = hr_file[1]
             hr_manifest = yaml.safe_load(hr_file[0]) or {}
@@ -1391,6 +1517,7 @@ class BranchEnvironmentService:
             workspace_enabled = bool(dev_ws.get("enabled", False))
             developer = dev_ws.get("developer", "") or ""
             stack_mode = dev_ws.get("stackMode", "real") or "real"
+            recovery_mode = bool(hr_values.get("recoveryMode", False))
 
         owner_raw = annotations.get(f"{_ANN}/owner-id")
         try:
@@ -1412,6 +1539,7 @@ class BranchEnvironmentService:
             "workspace_enabled": workspace_enabled,
             "developer": developer,
             "stack_mode": stack_mode,
+            "recovery_mode": recovery_mode,
         }
 
     async def _live_status(self, namespace: str) -> tuple[str, str | None]:
@@ -1460,6 +1588,7 @@ class BranchEnvironmentService:
             workspace_enabled=enabled,
             workspace_url=f"https://{_workspace_host(env['host'])}" if enabled else None,
             workspace_status=workspace_status,
+            recovery_mode=env.get("recovery_mode", False),
         )
 
     def _detail_from_namespace(self, ns: dict) -> BranchEnvironmentDetail:

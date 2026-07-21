@@ -1,4 +1,4 @@
-{{- if .Values.modules.archimate.enabled }}
+{{- if and .Values.modules.archimate.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "archimate"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

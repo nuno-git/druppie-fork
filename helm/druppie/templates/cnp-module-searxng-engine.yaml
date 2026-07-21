@@ -1,0 +1,32 @@
+{{- if .Values.modules.searxng.enabled }}
+# CiliumNetworkPolicy: allow module-searxng to reach the SearXNG engine.
+#
+# The app-net NetworkPolicy blocks egress to private IPs (10/8). The SearXNG
+# engine runs in the separate `searxng` namespace (ClusterIP 10.43.x.x, pod IP
+# 10.42.x.x) on port 8080, so without this exception every search/fetch call
+# from the module-searxng pod hangs (ConnectTimeout).
+# Cilium unions CNP and NP egress, so this only ADDS to app-net.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-searxng-engine
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-searxng
+  egress:
+    # Allow module-searxng -> SearXNG engine in the `searxng` namespace on 8080.
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": searxng
+            "k8s:app.kubernetes.io/name": searxng
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+{{- end }}

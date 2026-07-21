@@ -1,4 +1,4 @@
-{{- if .Values.modules.llm.enabled }}
+{{- if and .Values.modules.llm.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "llm"))) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
