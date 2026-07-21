@@ -294,8 +294,9 @@ class ModelManagementService:
         if provider not in PROVIDER_CONFIGS:
             return {"provider": provider, "model": model, "valid": False, "error": "Unknown provider", "latency_ms": 0}
 
+        config = PROVIDER_CONFIGS[provider]
+
         if not has_api_key(provider):
-            config = PROVIDER_CONFIGS[provider]
             env_var = config.get("api_key_env", "")
             return {
                 "provider": provider,
@@ -304,6 +305,21 @@ class ModelManagementService:
                 "error": f"{env_var} is not set",
                 "latency_ms": 0,
             }
+
+        # llmkube: skip live LLM call because the model router may return 503
+        # when the requested model isn't the active mode. Just validate
+        # the model is known.
+        if provider == "llmkube":
+            known = config.get("known_models", [])
+            if model and model not in known:
+                return {
+                    "provider": provider,
+                    "model": model,
+                    "valid": False,
+                    "error": f"Unknown model '{model}'. Available: {', '.join(known)}",
+                    "latency_ms": 0,
+                }
+            return {"provider": provider, "model": model, "valid": True, "error": None, "latency_ms": 0}
 
         from druppie.llm.litellm_provider import ChatLiteLLM
 
