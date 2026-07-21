@@ -9,9 +9,11 @@ This is the practical guide to how we document decisions and specs in this repo.
 
 ## Start here (for the team)
 
-**Why we do this.** We write short docs so the decisions and requirements behind our features stay findable and reusable — future-you (and everyone else) shouldn't have to reverse-engineer *why* something is the way it is. Not every change needs docs: only the ones that add or change what the product does or how it was decided.
+**Why.** We write short docs so the decisions and requirements behind our features stay findable and reusable — future-you (and everyone else) shouldn't have to reverse-engineer *why* something is the way it is. Not every change needs docs: only the ones that add or change what the product does or how it was decided.
 
-**Which doc do I write?** Pick based on your situation:
+### Which doc do I write?
+
+Pick based on your situation:
 
 | Your situation | Write a… |
 |----------------|----------|
@@ -21,14 +23,53 @@ This is the practical guide to how we document decisions and specs in this repo.
 | Pinning behaviour down as acceptance criteria | **Spec** |
 | Bugfix, chore, or other small change | usually **nothing** (or mark it `docs-exempt`) |
 
-**Two quick examples:**
+Two quick examples:
 
 - You add a new approval screen → write a **PRD** (and a **Spec** for its acceptance criteria).
 - You choose Postgres instead of Mongo → write an **ADR** (and a **Research** doc if you weighed several options first).
 
-**Skipping docs.** If a change genuinely needs none, mark it `docs-exempt` in any one of three ways: add the **`docs-exempt` label** to the PR, tick a **`- [x] docs-exempt`** checkbox in the PR description, or add a **`docs-exempt: <reason>`** line to the PR description.
+### Start from a template
 
-**Where the details live.** The rest of this guide covers each type in depth. The starting-point templates are `docs/prds/TEMPLATE.md`, `docs/adrs/TEMPLATE.md`, `docs/research/TEMPLATE.md`, and `docs/specs/TEMPLATE.feature`. Pure naslag (subsystem/architecture overviews) has no template and lives in `docs/reference/`; how-to material lives in `docs/guides/`.
+You don't write a doc from scratch — you **copy the matching template** to a new file and fill it in:
+
+1. Copy the template into its type folder as `docs/<type>/NNN-kebab-title.md` (Specs: `docs/specs/NNN-kebab-title.feature`). Pick the next free `NNN` (3-digit) number in that folder — e.g. the next ADR after `033-…` is `034-…`.
+2. Set the `id` in the frontmatter to the same number as a **zero-padded string**, e.g. `id: "014"` — it **must** match the filename prefix (Check B enforces this).
+3. Fill in the rest of the frontmatter and body as the template comments explain.
+
+The templates:
+
+- [PRD template](../prds/TEMPLATE.md)
+- [ADR template](../adrs/TEMPLATE.md)
+- [Research template](../research/TEMPLATE.md)
+- [Spec template](../specs/TEMPLATE.feature)
+
+**Link your docs together.** Connect related docs via the `linked_*` frontmatter fields (ADR/PRD/Research, e.g. `linked_research`, `linked_adrs`) or the `@prd` / `@adr` Gherkin tags at the top of a Spec. Linked values are repo-root-relative paths to existing files (e.g. `docs/adrs/007-strict-layered-architecture.md`).
+
+### How it's checked
+
+**GitHub Actions ([Docs check](../../.github/workflows/docs.yml)) runs on every PR** and posts two checks:
+
+- **Check A — mandatory-docs gate.** If your PR changes feature code (anything under `druppie/` or `frontend/src/`) but adds no doc, it flags the PR — unless you mark it `docs-exempt` (see below). Editing only a `TEMPLATE.md`, `CAS.md`, or `*.schema.json` does **not** count as a doc.
+- **Check B — validity.** Every existing templated doc must be valid: correct frontmatter/schema, `id` matching the filename, resolvable `linked_*` / `@prd` / `@adr` links (existing files, no URLs), consistent `superseded_by`, and a fresh `docs/adrs/CAS.md`.
+
+> **Warn-mode for now.** Both checks currently run with `continue-on-error`, so they appear as **annotations on the PR but do not block the merge** while existing docs are migrated. They become blocking later. (A third step — the validator's own regression tests — *is* already blocking.)
+
+**Catch it before you push:**
+
+- Local check: `docker compose --profile docs-validator run --rm docs-validator` (runs Check B).
+- Optional git hook: run `./scripts/setup-hooks.sh` once to install the [lefthook](https://github.com/evilmartians/lefthook) pre-commit hook, which validates on every commit.
+
+### Skipping docs
+
+If a change genuinely needs none, mark it `docs-exempt` in any one of three ways:
+
+- add the **`docs-exempt` label** to the PR, or
+- tick a **`- [x] docs-exempt`** checkbox in the PR description, or
+- add a **`docs-exempt: <reason>`** line to the PR description.
+
+### Where the details live
+
+The rest of this guide covers each type in depth, and [`Enforcement (checks)`](#enforcement-checks) has the full check reference. Pure naslag (subsystem/architecture overviews) has no template and lives in `docs/reference/`; how-to material like this guide lives in `docs/guides/`.
 
 ## The four document types
 
