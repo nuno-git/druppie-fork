@@ -173,7 +173,12 @@ spec:
             {{- toYaml .Values.devWorkspace.resources | nindent 12 }}
           readinessProbe:
             tcpSocket:
-              port: 8000
+              {{- if .Values.recoveryMode }}
+              # In recovery/degraded mode the backend doesn't start; probe code-server instead.
+              port: code-server
+              {{- else }}
+              port: backend
+              {{- end }}
             initialDelaySeconds: 15
             periodSeconds: 5
             timeoutSeconds: 3
