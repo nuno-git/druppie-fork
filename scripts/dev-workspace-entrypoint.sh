@@ -533,6 +533,9 @@ mkdir -p "${CLAUDE_CONFIG_DIR}"
 # opencode: conversations + config
 persist_dir ".opencode" ".config/opencode"
 
+# Claude Code: conversations + config (in addition to CLAUDE_CONFIG_DIR)
+persist_dir ".config-claude" ".config/claude"
+
 # code-server: workspace layout, extensions, settings
 persist_dir ".code-server" ".local/share/code-server"
 
