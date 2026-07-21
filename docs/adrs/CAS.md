@@ -6,7 +6,7 @@ Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`
 
 | ADR | Title |
 |-----|-------|
-| [002](002-kubernetes-migration.md) | Kubernetes migratie architectuur |
+| [002](002-kubernetes-migration.md) | Kubernetes migration architecture |
 | [003](003-developer-agent-testing-page.md) | Add developer page for single-agent testing |
 | [004](004-agent-runtime.md) | Build native agent runtime with done() enforcement |
 | [005](005-dev-prod-infrastructure.md) | Adopt dual-layer dev/prod infrastructure |
