@@ -14,6 +14,7 @@ import NavRail from './components/NavRail'
 // Pages
 import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
+import ScheduledJobs from './pages/ScheduledJobs'
 import Questions from './pages/Questions'
 import Chat from './pages/Chat'
 import DebugMCP from './pages/DebugMCP'
@@ -224,6 +225,14 @@ function App() {
                             element={
                               <ProtectedRoute>
                                 <Tasks />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/jobs"
+                            element={
+                              <ProtectedRoute requiredRole="admin">
+                                <ScheduledJobs />
                               </ProtectedRoute>
                             }
                           />
