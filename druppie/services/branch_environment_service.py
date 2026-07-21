@@ -108,6 +108,29 @@ ALL_MODULES = [
     "layout_service",
     "azuredevops",
 ]
+# MCP modules embeddable into the dev-workspace pod: they run under
+# `uvicorn --reload` inside the workspace container instead of as separate
+# baked-image Deployments. Mirrors the chart's valid keys
+# (helm/druppie/values.yaml devWorkspace.embedModules) and the default set in
+# scripts/deploy-branch-env.sh. Embedding skips the per-module Deployments,
+# which avoids (a) pulling per-module images on the chart-default :latest tag
+# that CI never publishes, and (b) the RWO-PVC co-location that otherwise leaves
+# module-coding/module-docker Pending on the CPU-full shared node.
+EMBEDDABLE_MODULES = [
+    "coding",
+    "docker",
+    "filesearch",
+    "web",
+    "archimate",
+    "registry",
+    "llm",
+    "kubernetes",
+    "vision",
+    "searxng",
+    "browser",
+    "data_access",
+    "azuredevops",
+]
 # Dev-profile CPU requests: a whole env must fit on the shared pinned node, so
 # request little and burst up to the chart's default limits. Memory requests
 # stay at chart defaults (the node is CPU-request-bound, not memory-bound).
@@ -315,6 +338,17 @@ def build_helmrelease_yaml(
             "secretsSource": secrets_source,
             "gitBranch": branch,
             "codeServer": {"devHost": _workspace_host(host)},
+            # Embed every MCP module into the workspace pod so their separate
+            # Deployments are skipped: no per-module image pulls (chart-default
+            # :latest that CI never publishes) and no RWO-PVC co-location CPU
+            # crunch that leaves module-coding/module-docker Pending on the full
+            # shared node. Recovery mode disables modules, and a disabled
+            # workspace has no pod to host them, so embed nothing in both cases.
+            "embedModules": (
+                []
+                if (recovery_mode or not workspace_enabled)
+                else list(EMBEDDABLE_MODULES)
+            ),
         },
     }
     if recovery_mode:
