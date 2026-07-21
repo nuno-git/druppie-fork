@@ -62,6 +62,8 @@ Last updated: 2026-07-15
 - FD Escalation — `fd_escalation_mode` Latch Never Reset (once escalated, always escalated)
 - FD Escalation — Planner Routing Relies on LLM Counting `DESIGN_FEEDBACK` (orchestrator backstop is the safety net)
 - ~~FD Escalation — Undocumented~~ ✅ DONE (FEATURES.md / TECHNICAL.md updated)
+- ~~FD Escalation — Sticky loop bypassed on approval-resume~~ ✅ DONE (`_evaluate_escalation` now called in `_handle_agent_resume_result`, covering approval-gate and HITL-answer resume paths)
+- ~~FD Escalation — Judge/HITL profile loader ignored YAML profiles~~ ✅ DONE (`get_judge("default")` / `get_hitl("default")` in `loaders.py` now check YAML-loaded profiles before falling back to hardcoded defaults)
 
 ---
 

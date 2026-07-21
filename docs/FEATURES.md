@@ -327,13 +327,17 @@ When a session enters a HITL pause, role-targeted in-app notifications are creat
 
 ### UI
 
-The chat timeline renders dedicated review cards:
+The chat timeline renders dedicated review cards (they scroll with the chat, not pinned separately):
 
 - **BA review card** (`BAHitlCard`) — iterate / ready / escalate / terminate, with rejection context. The escalate button is disabled until a post-HITL rejection has occurred.
+  - **View FD** button opens a full-screen modal preview of the functional design (reuses the `FilePreviewModal` from the approval card).
+  - **Iterate** opens a feedback textarea with Send and Cancel. While the textarea is open, the other action buttons are hidden to prevent conflicting actions.
+  - **Ready**, **Escalate**, and **Terminate** each show a confirmation dialog before submitting, with a Cancel option to return to the button selection.
+  - **Terminate** includes a reason textarea — the reason is stored as `session.error_message` and displayed in the terminated banner so the session owner understands why the session was ended.
 - **Architect review card** (`ArchitectHitlCard`) — approve, or reject (choose route back to BA or terminate).
 - **Escalation history** (`EscalationHistoryList`) — read-only audit trail of every escalation event.
 
-A terminated session shows a termination banner and is not resumable.
+A terminated session shows a termination banner with the reason (if provided) and is not resumable.
 
 ---
 
