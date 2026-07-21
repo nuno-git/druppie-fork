@@ -1325,8 +1325,6 @@ class Orchestrator:
                 agent_run_id=agent_run.id,
                 status=AgentRunStatus.COMPLETED.value,
             )
-            parent_chain_completed = await self._walk_parent_chain(
-                session_id, agent_run, db,
             db.commit()
             logger.warning(
                 "entra_token_retrieval_failed",

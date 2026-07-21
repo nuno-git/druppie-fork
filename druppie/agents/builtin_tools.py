@@ -959,7 +959,6 @@ async def create_message(
     # Get next unique sequence number so message never collides with agent_run
     seq = execution_repo.get_next_sequence_number(session_id)
 
-    message = execution_repo.create_message(
     caller_agent_id = "summarizer"
     try:
         caller_run = execution_repo.get_by_id(agent_run_id)
