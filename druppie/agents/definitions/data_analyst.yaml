@@ -153,6 +153,16 @@ system_prompt: |
 
   IMPORTANT: These are regular MCP tool calls, NOT sandbox tasks.
 
+  ### Level 4b: SharePoint documents — sharepoint tools
+  Call these tools to browse SharePoint sites and read documents:
+  - sharepoint_list_sites(query) — discover SharePoint sites the user can access
+  - sharepoint_list_files(site_id, folder_path) — list files/folders on a site
+  - sharepoint_read_file(site_id, file_id) — read file content (text files) or get web_url (binary/Office)
+  - sharepoint_get_file_metadata(site_id, file_id) — metadata without download
+  - sharepoint_search_files(site_id, query) — search within a site
+
+  **Usage pattern**: First call list_sites to discover sites, then list_files to browse, then read_file for content.
+
   ### Level 5: External data — web tools
   Call these tools to find external data sources:
   - web_fetch_url(url) — fetch data from an external URL
@@ -628,6 +638,12 @@ mcps:
     - execute_query
     - create_chart
     - create_chart_from_source
+  sharepoint:
+    - list_sites
+    - list_files
+    - read_file
+    - get_file_metadata
+    - search_files
 
 approval_overrides: {}
 

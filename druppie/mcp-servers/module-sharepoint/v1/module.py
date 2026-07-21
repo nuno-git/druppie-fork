@@ -1,9 +1,7 @@
 """SharePoint module — read-only file access via Microsoft Graph.
 
-Reads the SharePoint site ID and root folder path from the environment,
-builds a SharePointClient, and exposes high-level read operations consumed
-by the MCP tools. The site and folder are fixed here; no operation accepts
-a caller-supplied site or folder root.
+Supports browsing any SharePoint site the user has access to. All operations
+take a site_id parameter so the agent can discover sites and navigate them.
 """
 
 import logging
@@ -13,7 +11,6 @@ from .client import SharePointClient
 
 logger = logging.getLogger("sharepoint-mcp")
 
-# Text-based MIME types that we can return as string content
 TEXT_MIME_PREFIXES = (
     "text/",
     "application/json",
@@ -28,34 +25,44 @@ TEXT_EXTENSIONS = {
 
 
 class SharePointModule:
-    """High-level file operations for the configured SharePoint site."""
+    """High-level file operations for SharePoint sites."""
 
     def __init__(self) -> None:
-        self._site_id = os.getenv("SHAREPOINT_SITE_ID", "").strip()
-        self._folder_path = os.getenv("SHAREPOINT_FOLDER_PATH", "").strip()
+        self._client = SharePointClient()
+        logger.info("SharePoint MCP initialized (multi-site mode)")
 
-        if not self._site_id:
-            raise ValueError(
-                "SHAREPOINT_SITE_ID environment variable is required"
-            )
-        if not self._folder_path:
-            raise ValueError(
-                "SHAREPOINT_FOLDER_PATH environment variable is required"
-            )
-
-        self._client = SharePointClient(self._site_id, self._folder_path)
-        logger.info(
-            "SharePoint MCP bound to site '%s', folder '%s'",
-            self._site_id,
-            self._folder_path,
-        )
+    async def list_sites(self, user_token: str, query: str = "") -> dict:
+        """List SharePoint sites the user has access to."""
+        try:
+            sites = await self._client.search_sites(query, user_token)
+            result = []
+            for site in sites:
+                result.append({
+                    "id": site["id"],
+                    "name": site.get("displayName", ""),
+                    "web_url": site.get("webUrl", ""),
+                    "description": site.get("description", ""),
+                })
+            return {
+                "success": True,
+                "sites": result,
+                "count": len(result),
+            }
+        except Exception as exc:
+            logger.warning("list_sites failed: %s", exc)
+            return {"success": False, "error": str(exc)}
 
     async def list_files(
-        self, user_token: str, subfolder: str | None = None
+        self,
+        site_id: str,
+        user_token: str,
+        folder_path: str | None = None,
     ) -> dict:
-        """List files and folders in the configured root (or a subfolder)."""
+        """List files and folders on a site (at root or a specific folder)."""
         try:
-            items = await self._client.list_folder(user_token, subfolder)
+            items = await self._client.list_folder(
+                site_id, user_token, folder_path
+            )
             files = []
             for item in items:
                 entry = {
@@ -76,15 +83,10 @@ class SharePointModule:
                     )
                 files.append(entry)
 
-            folder_display = self._folder_path
-            if subfolder:
-                folder_display = (
-                    f"{self._folder_path}/{subfolder.strip('/')}"
-                )
-
             return {
                 "success": True,
-                "folder": folder_display,
+                "site_id": site_id,
+                "folder": folder_path or "/",
                 "items": files,
                 "count": len(files),
             }
@@ -92,11 +94,13 @@ class SharePointModule:
             logger.warning("list_files failed: %s", exc)
             return {"success": False, "error": str(exc)}
 
-    async def read_file(self, file_id: str, user_token: str) -> dict:
+    async def read_file(
+        self, site_id: str, file_id: str, user_token: str
+    ) -> dict:
         """Read file: text content for text formats, metadata-only for binary."""
         try:
-            content_bytes, content_type, metadata = await self._client.download_file(
-                file_id, user_token
+            content_bytes, content_type, metadata = (
+                await self._client.download_file(site_id, file_id, user_token)
             )
             name = metadata.get("name", "")
             ext = os.path.splitext(name)[1].lower() if name else ""
@@ -137,17 +141,16 @@ class SharePointModule:
             return {"success": False, "error": str(exc)}
 
     async def get_file_metadata(
-        self, file_id: str, user_token: str
+        self, site_id: str, file_id: str, user_token: str
     ) -> dict:
         """Get metadata for a file or folder without downloading content."""
         try:
-            metadata = await self._client.get_item(file_id, user_token)
-            name = metadata.get("name", "")
+            metadata = await self._client.get_item(site_id, file_id, user_token)
 
             result = {
                 "success": True,
                 "id": file_id,
-                "name": name,
+                "name": metadata.get("name", ""),
                 "size": metadata.get("size", 0),
                 "web_url": metadata.get("webUrl", ""),
                 "last_modified": metadata.get("lastModifiedDateTime", ""),
@@ -181,10 +184,12 @@ class SharePointModule:
             logger.warning("get_file_metadata(%s) failed: %s", file_id, exc)
             return {"success": False, "error": str(exc)}
 
-    async def search_files(self, query: str, user_token: str) -> dict:
-        """Search files within the configured SharePoint site's drive."""
+    async def search_files(
+        self, site_id: str, query: str, user_token: str
+    ) -> dict:
+        """Search files within a SharePoint site's drive."""
         try:
-            items = await self._client.search(query, user_token)
+            items = await self._client.search(site_id, query, user_token)
             files = []
             for item in items:
                 entry = {
@@ -203,6 +208,7 @@ class SharePointModule:
 
             return {
                 "success": True,
+                "site_id": site_id,
                 "query": query,
                 "items": files,
                 "count": len(files),

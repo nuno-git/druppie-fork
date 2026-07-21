@@ -494,8 +494,10 @@ mcps:
       user_token:
         from: user.entra_token
         hidden: true
-        tools: [list_files, read_file, get_file_metadata, search_files]
+        tools: [list_sites, list_files, read_file, get_file_metadata, search_files]
     tools:
+      - name: list_sites
+        requires_approval: false
       - name: list_files
         requires_approval: false
       - name: read_file

@@ -32,10 +32,14 @@ async def list_datasources(
     except Exception as e:
         logger.warning("datasources_list_failed", error=str(e))
 
-    # Azure DevOps: check if the MCP server is configured
     mcp_config = get_mcp_config()
-    devops_configured = "azuredevops" in mcp_config.get_servers()
+    servers = mcp_config.get_servers()
+
+    devops_configured = "azuredevops" in servers
     devops_accessible = devops_configured and entra_linked
+
+    sharepoint_configured = "sharepoint" in servers
+    sharepoint_accessible = sharepoint_configured and entra_linked
 
     return {
         "entra_configured": entra_configured,
@@ -46,6 +50,12 @@ async def list_datasources(
                 "configured": devops_configured,
                 "accessible": devops_accessible,
                 "name": "Azure DevOps",
+                "auth_type": "obo",
+            },
+            "sharepoint": {
+                "configured": sharepoint_configured,
+                "accessible": sharepoint_accessible,
+                "name": "SharePoint",
                 "auth_type": "obo",
             },
         },

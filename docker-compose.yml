@@ -517,8 +517,6 @@ services:
     profiles: [sharepoint]
     environment:
       MCP_PORT: "9014"
-      SHAREPOINT_SITE_ID: ${SHAREPOINT_SITE_ID:-}
-      SHAREPOINT_FOLDER_PATH: ${SHAREPOINT_FOLDER_PATH:-}
     ports:
       - "${MCP_SHAREPOINT_PORT:-9014}:9014"
     networks:

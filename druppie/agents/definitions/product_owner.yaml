@@ -113,14 +113,15 @@ system_prompt: |
 
   ### Tools (sharepoint MCP)
 
-  Use these tools to read documents from the configured SharePoint folder. All calls use the user's own permissions (OBO authentication).
+  Use these tools to read documents from SharePoint sites the user has access to. All calls use the user's own permissions (OBO authentication).
 
-  - **list_files**: List files and subfolders in the configured root folder. Pass `subfolder` to navigate deeper.
+  - **list_sites**: Discover SharePoint sites the user has access to. Use this first to get a `site_id`.
+  - **list_files**: List files and subfolders on a site. Pass `folder_path` to navigate into folders.
   - **read_file**: Read file content. Use `list_files` first to get the `file_id`. Returns text content for text files, or metadata with a `web_url` for Office/binary files.
   - **get_file_metadata**: Get metadata (size, author, dates) without downloading content.
-  - **search_files**: Search for files by name or content within the SharePoint site.
+  - **search_files**: Search for files by name or content within a SharePoint site.
 
-  **Usage pattern**: When asked about documents, use `list_files` to find the file, then `read_file` to get its content. If the file is a binary format (docx, xlsx, pdf), share the `web_url` so the user can view it directly.
+  **Usage pattern**: First use `list_sites` to discover available sites, then `list_files` to browse a site's files, then `read_file` to get content. If the file is a binary format (docx, xlsx, pdf), share the `web_url` so the user can view it directly.
 
   ## Work Item Hierarchy
 
@@ -280,6 +281,7 @@ mcps:
     - create_work_item
     - update_work_item
   sharepoint:
+    - list_sites
     - list_files
     - read_file
     - get_file_metadata
