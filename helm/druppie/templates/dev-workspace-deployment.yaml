@@ -116,7 +116,7 @@ spec:
               value: /proxy/8000
             # Read-only kubeconfig for kubectl access inside the workspace.
             - name: KUBECONFIG
-              value: /root/.kube/config
+              value: /home/developer/.kube/config
             # KEYCLOAK_SERVER_URL / KEYCLOAK_ISSUER_URL / KEYCLOAK_REALM /
             # MCP_*_URL / GITEA_* come from <instance>-config via envFrom below
             # (identical wiring to the baked backend).
@@ -160,7 +160,7 @@ spec:
               mountPath: /workspace
             # Read-only kubeconfig from Vault (synced by ExternalSecret).
             - name: kubeconfig
-              mountPath: /root/.kube/config
+              mountPath: /home/developer/.kube/config
               subPath: kubeconfig
               readOnly: true
             {{- $needDocker := or (has "coding" $.Values.devWorkspace.embedModules) (has "docker" $.Values.devWorkspace.embedModules) }}
