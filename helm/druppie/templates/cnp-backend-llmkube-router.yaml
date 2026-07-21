@@ -1,0 +1,29 @@
+# CiliumNetworkPolicy: allow the backend to reach the in-cluster model router.
+#
+# The app-net NetworkPolicy blocks egress to private IPs (10/8). The model
+# router runs in the `llm` namespace (ClusterIP 10.43.x.x, pod IP 10.42.x.x)
+# on port 8001, so without this exception every model-status/load-model call
+# from the backend hangs (ConnectTimeout / Name or service not known).
+# Cilium unions CNP and NP egress, so this only ADDS to app-net.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-backend-llmkube-router
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": llm
+            "k8s:app": model-server
+      toPorts:
+        - ports:
+            - port: "8001"
+              protocol: TCP

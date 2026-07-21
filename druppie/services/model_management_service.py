@@ -365,7 +365,7 @@ class ModelManagementService:
         """Fetch live status from the in-cluster model router."""
         import httpx
 
-        url = os.getenv("LLMKUBE_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
+        url = os.getenv("MODEL_ROUTER_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
         status_url = url.rstrip("/v1").rstrip("/") + "/status"
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -387,7 +387,7 @@ class ModelManagementService:
         """Fetch recent pod logs from the model router."""
         import httpx
 
-        url = os.getenv("LLMKUBE_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
+        url = os.getenv("MODEL_ROUTER_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
         logs_url = url.rstrip("/v1").rstrip("/") + f"/logs?tail={tail}"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -402,7 +402,7 @@ class ModelManagementService:
         """Tell the in-cluster router to load a specific model."""
         import httpx
 
-        url = os.getenv("LLMKUBE_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
+        url = os.getenv("MODEL_ROUTER_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
         load_url = url.rstrip("/v1").rstrip("/") + "/admin/load-model"
         try:
             async with httpx.AsyncClient(timeout=1200.0) as client:
