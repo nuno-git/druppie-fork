@@ -215,7 +215,7 @@ async def _async_main() -> int:
     print(f"  3. Open a chat in the project and ask: ")
     print(f'        "Run the architect on docs/functional-design.md and produce')
     print(f'         a technical design with an ArchiMate context view."')
-    print(f"  4. Approve the make_design + archimate_* tool calls as the architect.")
+    print(f"  4. Approve the submit_design_for_review + archimate_* tool calls as the architect.")
     print(f"  5. When save_model is approved, check Gitea for:")
     print(f"        docs/technical-design.md")
     print(f"        docs/architecture.archimate")

@@ -25,27 +25,27 @@ mcps:
         hidden: true
         # Not injected into project discovery tools (list_projects, read_project_file, list_project_files)
         # — those use Gitea API directly, not workspaces
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, submit_design_for_review, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
       project_id:
         from: project.id
         hidden: true
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, submit_design_for_review, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, submit_design_for_review, push_changes, create_pr, git_fetch, git_pull, get_file_info, search_files]
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, submit_design_for_review, push_changes, create_pr, git_fetch, git_pull, get_file_info, search_files]
       git_scope:
         from: agent.git_scope
         hidden: true
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, submit_design_for_review, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
       sandbox_networks:
         from: agent.coding_networks
         hidden: true
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, submit_design_for_review, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
     tools:
       - name: read_file
         requires_approval: false
@@ -55,7 +55,7 @@ mcps:
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
 
-      - name: make_design
+      - name: submit_design_for_review
         requires_approval: false
 
       - name: batch_write_files
@@ -308,7 +308,7 @@ mcps:
       # --- WRITE tools on per-project architecture.archimate ---
       # Intentionally UNGATED. The architect builds up the plate freely
       # (create_*, add_*, save_model). The single human review point is
-      # the coding:make_design gate on docs/technical-design.md — at
+      # the coding:submit_design_for_review gate on docs/technical-design.md — at
       # that moment the reviewer sees the markdown + the embedded
       # ```archimate block that renders the just-saved view. Approving
       # one MCP call at a time is meaningless because the reviewer

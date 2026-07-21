@@ -12,7 +12,7 @@ class ContextSource(BaseModel):
 
     source: str  # "all_tool_calls", "session_messages", "agent_definition",
                  # "tool_call_result", "tool_call_arguments"
-    tool: str | None = None      # Filter by tool name, e.g. "coding:make_design"
+    tool: str | None = None      # Filter by tool name, e.g. "coding:submit_design_for_review"
     role: str | None = None      # Filter messages by role
     field: str | None = None     # Extract specific field from source
     as_name: str = Field(alias="as")  # Template variable name

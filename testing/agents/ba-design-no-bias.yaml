@@ -18,4 +18,4 @@ agent-test:
   judge:
     context: [router, business_analyst]
     checks:
-      - "The BA must have asked at least one clarifying question to the user before writing the design. Check that hitl_ask_multiple_choice_question or hitl_ask_question was called at least once before make_design was called."
+      - "The BA must have asked at least one clarifying question to the user before writing the design. Check that hitl_ask_multiple_choice_question or hitl_ask_question was called at least once before submit_design_for_review was called."

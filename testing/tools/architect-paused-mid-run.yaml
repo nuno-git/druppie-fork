@@ -76,7 +76,7 @@ tool-test:
 
     # Architect writes the technical research first (with HITL approval)
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect
@@ -145,7 +145,7 @@ tool-test:
       tool: coding:push_changes
 
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect

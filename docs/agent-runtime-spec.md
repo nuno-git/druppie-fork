@@ -98,7 +98,7 @@ done_variables:                # Optional. Custom variables for done() (beyond s
 
 mcps:                          # Required. MCP server configuration
   sandbox:                     # Sandbox MCP (file operations, per-agent containers)
-    tools: [read_file, write_file, edit_file, bash, push_changes, make_design]
+    tools: [read_file, write_file, edit_file, bash, push_changes, submit_design_for_review]
     git: current_project | other_projects | update_core  # Git scope for sandbox
   core-tools: [hitl_ask_question, make_plan, set_intent]  # Core tools (list of allowed tools)
   docker: [deploy]             # Docker MCP (optional, shared infrastructure)
@@ -108,7 +108,7 @@ approval_overrides:            # Override default approval behavior for specific
   "sandbox:push_changes":
     requires_approval: true
     required_role: "architect"
-  "sandbox:make_design":
+  "sandbox:submit_design_for_review":
     requires_approval: false
     pre_validate: "validate_mermaid"
 
@@ -127,8 +127,8 @@ The following table provides a broad overview of all agents for quick reference.
 |-------|------|---------|-----------|
 | router | primary | Classifies user intent, creates/selects projects | set_intent, done |
 | planner | primary | Creates execution plans, re-evaluates after each agent | make_plan, done |
-| business_analyst | primary | Gathers requirements, creates functional design | hitl_ask_question, make_design, done |
-| architect | primary | Creates technical design | make_design, done |
+| business_analyst | primary | Gathers requirements, creates functional design | hitl_ask_question, submit_design_for_review, done |
+| architect | primary | Creates technical design | submit_design_for_review, done |
 | developer | primary | Implements features, spawns coding subagents | subagents, done |
 | coding_planner | subagent | Plans coding tasks within developer | subagents, done |
 | builder | subagent | Executes coding tasks | sandbox file tools, bash, done |
@@ -146,14 +146,14 @@ role: primary
 system_prompt: |
   You are a business analyst. Gather requirements from the user,
   ask clarifying questions via hitl_ask_question, and create
-  functional designs using make_design.
+  functional designs using submit_design_for_review.
 system_prompts:
   - professional_tone
   - requirement_gathering
 skills: [code-review]
 mcps:
   sandbox:
-    tools: [read_file, make_design]
+    tools: [read_file, submit_design_for_review]
     git: current_project
   core-tools: [hitl_ask_question, invoke_skill]
 llm_profile: standard
@@ -164,13 +164,13 @@ completion_preconditions:
   - summary_contains: "DESIGN_APPROVED"
     unless_summary_contains: "REQUIREMENT_CHALLENGE outcome: HARD"
     required_tools:
-      - tool_name: "make_design"
+      - tool_name: "submit_design_for_review"
         min_calls: 1
     error_message: >
       PRECONDITION FAILED: You cannot call done() with DESIGN_APPROVED without
       first creating docs/functional-design.md.
 approval_overrides:
-  "sandbox:make_design":
+  "sandbox:submit_design_for_review":
     requires_approval: false
 ```
 
@@ -189,19 +189,19 @@ done_variables:
     required: false
 system_prompt: |
   You are an architect. Review technical designs, approve them
-  via make_design, and oversee deployment using docker MCP tools.
+  via submit_design_for_review, and oversee deployment using docker MCP tools.
 system_prompts:
   - professional_tone
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, make_design, push_changes]
+    tools: [read_file, write_file, edit_file, bash, submit_design_for_review, push_changes]
     git: current_project
   docker: [build, run, compose_up]
   core-tools: [hitl_ask_question, make_plan]
 llm_profile: standard
 temperature: 0.7
 approval_overrides:
-  "sandbox:make_design":
+  "sandbox:submit_design_for_review":
     requires_approval: true
     required_role: architect
     pre_validate: "validate_mermaid"
@@ -969,21 +969,21 @@ class ToolProvider(Protocol):
 
 #### Pre-Validation + Approval Flow
 
-Example: `make_design` needs mermaid validation + architect approval.
+Example: `submit_design_for_review` needs mermaid validation + architect approval.
 
 ```
-1. LLM calls make_design(content="graph TD...")
-2. Runtime calls provider.execute("make_design", {content: "..."})
+1. LLM calls submit_design_for_review(content="graph TD...")
+2. Runtime calls provider.execute("submit_design_for_review", {content: "..."})
 3. Provider: pre-validation hook
    ├── Call mermaid_validate(content) on MCP server
    ├── If validation fails → return error to LLM immediately
    └── If validation passes → continue
 4. Provider: approval gate
-   ├── Check: does make_design need approval for this agent?
+   ├── Check: does submit_design_for_review need approval for this agent?
    ├── Yes → return {"_pending": true, "_resume_id": "approval_xxx"}
    └── User approves (hours later)
 5. Provider: actual execution
-   └── Call make_design(content) on MCP server → return result
+   └── Call submit_design_for_review(content) on MCP server → return result
 ```
 
 #### Role Enforcement for Subagents
@@ -1145,7 +1145,7 @@ The sandbox MCP exposes these tools (representative list, defined during impleme
     "delete_file",
     "search_files",
     "get_file_info",
-    "make_design",  # Auto-commits
+    "submit_design_for_review",  # Auto-commits
     "push_changes"       # Runs outside sandbox via ToolProvider
 ]
 ```
@@ -1157,17 +1157,17 @@ Agents declare which sandbox tools they need in YAML:
 ```yaml
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, make_design, push_changes]
+    tools: [read_file, write_file, edit_file, bash, submit_design_for_review, push_changes]
     git: current_project
 ```
 
 The runtime filters the full sandbox tool list to only the tools in the agent's `mcps.sandbox.tools`.
 
-#### Tool Schema: make_design
+#### Tool Schema: submit_design_for_review
 
 ```json
 {
-  "name": "make_design",
+  "name": "submit_design_for_review",
   "description": "Create or update design documents. Path implies type (e.g., /docs/technical_design.md). Auto-commits after write.",
   "parameters": {
     "type": "object",
@@ -2423,7 +2423,7 @@ execute_pending_runs() starts
   ])
   ↓
 ━━━ Run architect (seq=4) ━━━
-  Architect: make_design(path="docs/technical-design.md", ...) → auto-committed
+  Architect: submit_design_for_review(path="docs/technical-design.md", ...) → auto-committed
   Architect: done(summary="DESIGN_APPROVED", next_agent="developer")
     → Caller creates developer run (seq=5) BEFORE planner (seq=6)
   ↓
@@ -2450,7 +2450,7 @@ No more pending runs → session.status = COMPLETED
 
 ### Pause/Resume in the Core Loop
 
-When an agent pauses (HITL question, approval gate, make_design approval):
+When an agent pauses (HITL question, approval gate, submit_design_for_review approval):
 1. `run()` returns with `result.status == "paused"`
 2. Events are already saved to DB via event callbacks (all events so far are persisted)
 3. Caller marks agent_run status as "paused", session status → PAUSED, `execute_pending_runs()` returns

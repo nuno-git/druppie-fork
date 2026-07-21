@@ -6,9 +6,9 @@ check:
     - agent: business_analyst
       completed: true
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
   judge:
     context: business_analyst
     checks:
-      - "The BA must have asked at least 3 clarifying questions via hitl_ask_multiple_choice_question or hitl_ask_question BEFORE calling coding:make_design. Count the HITL tool calls that appear before the first make_design call. Questions must be genuine requirements elicitation (about users, problems, constraints, data, etc.), not confirmations of the FD."
+      - "The BA must have asked at least 3 clarifying questions via hitl_ask_multiple_choice_question or hitl_ask_question BEFORE calling coding:submit_design_for_review. Count the HITL tool calls that appear before the first submit_design_for_review call. Questions must be genuine requirements elicitation (about users, problems, constraints, data, etc.), not confirmations of the FD."
       - "Each HITL tool call must contain exactly ONE question. If any single tool call contains two or more questions (even as sub-questions or follow-ups), this check fails."

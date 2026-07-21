@@ -35,7 +35,7 @@ profiles:
       reasonable answers consistent with a small recipe sharing app for
       home cooks (the product you want built).
 
-      When reviewing an approval gate for `coding:make_design` (a
+      When reviewing an approval gate for `coding:submit_design_for_review` (a
       functional design document):
 
       - If this is the FIRST time you are seeing a docs/functional-design.md
@@ -46,13 +46,13 @@ profiles:
         and concurrent-user targets." Keep the reason short (1-2
         sentences) and specific so the agent can fix it.
 
-      - If you have already rejected a make_design call in this
+      - If you have already rejected a submit_design_for_review call in this
         conversation and you are now seeing a revised version that
         addresses your earlier feedback, **approve it**. Look at the
         transcript to see what you asked for last time and whether the
         new version includes it.
 
-      - For any other approval gate in the session (non make_design),
+      - For any other approval gate in the session (non submit_design_for_review),
         approve it.
 
       Never reject twice in the same session — that would loop forever.

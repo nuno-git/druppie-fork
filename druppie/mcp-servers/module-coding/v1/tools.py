@@ -169,7 +169,7 @@ SANDBOX_NETWORK = os.getenv("DRUPPIE_SANDBOX_NETWORK", "bridge")
 SANDBOX_INET_NETWORK = os.getenv("DRUPPIE_SANDBOX_INET_NETWORK", "")
 SANDBOX_MODULES_NETWORK = os.getenv("DRUPPIE_SANDBOX_MODULES_NETWORK", "")
 SANDBOX_RUNTIME = os.getenv("DRUPPIE_SANDBOX_RUNTIME", "sysbox-runc")
-_ALLOWED_RUNTIMES = {"sysbox-runc", "kata-runtime"}
+_ALLOWED_RUNTIMES = {"sysbox-runc", "kata-runtime", "runc"}
 assert SANDBOX_RUNTIME in _ALLOWED_RUNTIMES, (
     f"Invalid DRUPPIE_SANDBOX_RUNTIME={SANDBOX_RUNTIME!r}. "
     f"Must be one of {_ALLOWED_RUNTIMES}. "
@@ -2418,7 +2418,7 @@ async def create_pr(
 
 
 @mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
-async def make_design(
+async def submit_design_for_review(
     path: str,
     content: str,
     session_id: str | None = None,
@@ -2430,50 +2430,25 @@ async def make_design(
     git_scope: str | None = None,
     sandbox_networks: list[str] | None = None,
 ) -> dict:
-    """Write a design document with Mermaid syntax validation.
+    """Submit a design document for human review (approval gate).
 
-    Validates all Mermaid diagrams in the markdown content before writing.
-    If validation fails, the file is NOT written and errors are returned.
+    This tool triggers the approval gate for design documents. The file
+    should already be written to the workspace by the documenter agent.
+    The content parameter is used for the approval card preview so the
+    reviewer can see the formatted document.
 
     Args:
         path: File path for the design document (e.g. "docs/functional-design.md")
-        content: Full markdown content for the design document
+        content: Full markdown content for the approval card preview
         session_id: Session ID
         repo_name: Gitea repository name
         repo_owner: Gitea repository owner
         git_scope: Git scope
 
     Returns:
-        Dict with success, path, size — or error with Mermaid validation details
+        Dict with success, path — the approval gate is handled by the tool executor
     """
-    try:
-        # Validate Mermaid syntax before writing
-        errors = validate_mermaid_in_markdown(content)
-        if errors:
-            error_lines = [
-                f"Line {e.line_number} [{e.rule}]: {e.message}" for e in errors
-            ]
-            error_msg = (
-                "MERMAID SYNTAX ERRORS — file was NOT written. "
-                "Fix these errors and try again:\n\n"
-                + "\n".join(error_lines)
-                + "\n\nAfter fixing, call make_design again with the corrected content."
-            )
-            return {"success": False, "error": error_msg}
-
-        return await _write_file_impl(
-            path=path,
-            content=content,
-            session_id=session_id,
-            repo_name=repo_name,
-            repo_owner=repo_owner,
-            git_scope=git_scope,
-            sandbox_networks=sandbox_networks,
-        )
-
-    except Exception as e:
-        logger.error("Error writing design: %s", e)
-        return {"success": False, "error": str(e)}
+    return {"success": True, "path": path, "message": "Design submitted for review"}
 
 
 @mcp.tool(

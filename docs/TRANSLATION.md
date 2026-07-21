@@ -93,7 +93,7 @@ Wraps raw user text with detected language metadata. Used by the orchestrator to
 ### Design Documents (Tool Executor)
 
 ```
-1. Agent calls make_design with English content and path (e.g., docs/functional-design.md)
+1. Agent calls submit_design_for_review with English content and path (e.g., docs/functional-design.md)
 2. Tool executor checks session.language and path against DESIGN_TRANSLATION_PATHS
 3. If Dutch session + known path:
    a. Translate content (chunked for long documents)

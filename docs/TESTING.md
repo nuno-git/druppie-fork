@@ -113,7 +113,7 @@ Every test produces assertions that are stored and displayed in the analytics UI
 | Type | UI Label | What it checks | Example |
 |------|----------|----------------|---------|
 | `completed` | **Agent Status** | Did the agent finish by calling `done()`? | `summarizer.completed` → "Expected completed, got completed" |
-| `tool` | **Tool Call** | Was a specific tool called with expected args/result? | `architect.tool(coding:make_design)` → checks tool was called |
+| `tool` | **Tool Call** | Was a specific tool called with expected args/result? | `architect.tool(coding:submit_design_for_review)` → checks tool was called |
 | `verify` | **Side Effect** | Does a file/repo actually exist in Gitea? | `file_exists: docs/functional-design.md` → hits Gitea API |
 
 ### LLM Judge (quality evaluation)

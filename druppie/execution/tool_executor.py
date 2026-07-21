@@ -941,13 +941,13 @@ class ToolExecutor:
     async def _translate_design_content(self, tool_call) -> None:
         """Translate design content to the session language before the approval gate.
 
-        For make_design calls in non-English sessions, translates the English content
+        For submit_design_for_review calls in non-English sessions, translates the English content
         and adds translated_content/translated_path to tool_call.arguments.
         The approval card shows the translated version; the MCP tool writes both files.
 
         On translation failure, switches the session to English and notifies the user.
         """
-        if tool_call.tool_name != "make_design":
+        if tool_call.tool_name != "submit_design_for_review":
             return
 
         from druppie.repositories import SessionRepository

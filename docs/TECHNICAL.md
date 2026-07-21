@@ -534,7 +534,7 @@ File and git operations within workspace sandboxes.
 | `create_pull_request` | None | Create PR on Gitea |
 | `merge_pull_request` | Developer | Merge PR and delete branch |
 | `execute_coding_task` | None | Execute coding task in isolated sandbox |
-| `make_design` | None (overridable per agent) | Write design document (FD/TD) with Mermaid syntax validation; file is rejected if Mermaid contains errors |
+| `submit_design_for_review` | None (overridable per agent) | Write design document (FD/TD) with Mermaid syntax validation; file is rejected if Mermaid contains errors |
 | `revert_to_commit` | None (internal) | Hard reset + force push to a target commit |
 | `close_pull_request` | None (internal) | Close a PR on Gitea without merging |
 
@@ -586,7 +586,7 @@ Read tools (WILMA + project model):
 | `list_models` / `get_statistics` / `list_elements` / `get_element` / `list_views` / `get_view` / `search_model` / `get_impact` | None | Query WILMA elements, relationships, views, and impact paths |
 | `assess_layout` | None | Element/connection count + density recommendation for a view (used to decide when to recommend `request_full_relayout`) |
 
-Write tools (per-project `docs/architecture.archimate`, **all ungated** — the architect builds the plate freely; the single human review point is the `coding:make_design` gate on `docs/technical-design.md` where the reviewer sees the markdown + embedded plate as one artifact):
+Write tools (per-project `docs/architecture.archimate`, **all ungated** — the architect builds the plate freely; the single human review point is the `coding:submit_design_for_review` gate on `docs/technical-design.md` where the reviewer sees the markdown + embedded plate as one artifact):
 
 | Tool | Description |
 |------|-------------|
@@ -822,8 +822,8 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 |-------|------|---------------|------------|--------|
 | `router` | Classifies user intent, selects project | `set_intent` | None | — |
 | `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
-| `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
-| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` (read + write) | `making-mermaid-diagrams`, `making-archimate-diagrams` |
+| `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, submit_design_for_review, list_dir) | `making-mermaid-diagrams` |
+| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, submit_design_for_review, list_dir), `archimate` (read + write) | `making-mermaid-diagrams`, `making-archimate-diagrams` |
 | `builder_planner` | Creates implementation plans, writes builder_plan.md | Default | `coding` | — |
 | `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
 | `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |
@@ -1567,7 +1567,7 @@ User (Dutch) → Orchestrator → [detect language] → [translate to English] �
 Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
     │
     ├─► HITL question → [translate question + choices to Dutch] → User
-    ├─► make_design   → [translate content] → Dutch file alongside English original
+    ├─► submit_design_for_review   → [translate content] → Dutch file alongside English original
     └─► done (summary) → [translate to Dutch] → Chat timeline
 ```
 

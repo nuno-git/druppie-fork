@@ -2,7 +2,7 @@
 ##
 ## Starting point for manually testing the session-owner approval flow
 ## for functional designs. When this test finishes, the session is paused
-## with a pending `coding:make_design` approval for
+## with a pending `coding:submit_design_for_review` approval for
 ## `docs/functional-design.md` that requires the `session_owner` role
 ## to resolve.
 ##
@@ -17,7 +17,7 @@
 ##      After approval, resume the session to let the BA commit, push,
 ##      and call done().
 ##
-## Chain: router → planner → BA calls coding:make_design → PENDING.
+## Chain: router → planner → BA calls coding:submit_design_for_review → PENDING.
 ## Deterministic (no LLM).
 
 tool-test:
@@ -65,7 +65,7 @@ tool-test:
     # UI. After approval the session can be resumed to let the BA
     # git commit + push + done.
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: pending
       arguments:

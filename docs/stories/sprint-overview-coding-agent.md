@@ -122,7 +122,7 @@ De modules sandbox kan via Docker DNS `http://module-filesearch:9004/health` ber
 | `push_changes` | Git bundle + push naar Gitea/GitHub |
 | `create_pr` | PR aanmaken via API |
 | `get_git_status` | Git status van workspace |
-| `make_design` | Design doc schrijven met Mermaid validatie |
+| `submit_design_for_review` | Design doc schrijven met Mermaid validatie |
 | `install_dependencies` | npm/pip install in container |
 | `detect_test_framework` | Auto-detect test framework |
 
@@ -143,8 +143,8 @@ De modules sandbox kan via Docker DNS `http://module-filesearch:9004/health` ber
 ```
 router (primary) → classifyt intent
 planner (primary) → maakt plan met agent stappen
-business_analyst (primary) → HITL + make_design, git: current_project
-architect (primary) → make_design + read, git: current_project
+business_analyst (primary) → HITL + submit_design_for_review, git: current_project
+architect (primary) → submit_design_for_review + read, git: current_project
 summarizer (primary) → samenvatting
 ```
 

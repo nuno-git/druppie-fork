@@ -6,6 +6,6 @@ check:
     - agent: business_analyst
       completed: true
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
     - agent: business_analyst
       tool: coding:run_git

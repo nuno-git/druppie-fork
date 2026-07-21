@@ -49,7 +49,7 @@ tool-test:
     # BA — minimal FD
     # =========================================================================
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:

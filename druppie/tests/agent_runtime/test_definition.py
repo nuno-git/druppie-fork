@@ -125,7 +125,7 @@ class TestParseDefinition:
             "summary_contains": "DESIGN_APPROVED",
             "unless_summary_contains": "EXCEPTION",
             "required_tools": [
-                {"tool_name": "make_design", "min_calls": 1},
+                {"tool_name": "submit_design_for_review", "min_calls": 1},
                 {"tool_name": "push_changes", "min_calls": 2},
             ],
             "error_message": "Must create design first",
@@ -150,7 +150,7 @@ class TestParseDefinition:
     def test_parse_approval_overrides(self):
         data = self._minimal_yaml(approval_overrides={
             "sandbox:push_changes": {"requires_approval": True, "required_role": "architect"},
-            "sandbox:make_design": {"requires_approval": False, "pre_validate": "validate_mermaid"},
+            "sandbox:submit_design_for_review": {"requires_approval": False, "pre_validate": "validate_mermaid"},
         })
         defn = parse_definition(data)
         assert "sandbox:push_changes" in defn.approval_overrides

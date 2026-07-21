@@ -36,7 +36,7 @@ tool-test:
         summary: "Agent planner: Planned business_analyst"
 
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:

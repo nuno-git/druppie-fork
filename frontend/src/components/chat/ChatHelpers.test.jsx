@@ -106,7 +106,7 @@ describe('extractOrderedItems', () => {
   })
 
   it('includes approvals when no following message', () => {
-    const tc = { tool_name: 'make_design', status: 'completed', approval: { status: 'approved' } }
+    const tc = { tool_name: 'submit_design_for_review', status: 'completed', approval: { status: 'approved' } }
     const run = makeRun([tc])
     const items = extractOrderedItems(run, false)
     expect(items).toHaveLength(1)
@@ -114,13 +114,13 @@ describe('extractOrderedItems', () => {
   })
 
   it('excludes approvals when there is a following message', () => {
-    const tc = { tool_name: 'make_design', status: 'completed', approval: { status: 'approved' } }
+    const tc = { tool_name: 'submit_design_for_review', status: 'completed', approval: { status: 'approved' } }
     const run = makeRun([tc])
     expect(extractOrderedItems(run, true)).toEqual([])
   })
 
   it('excludes pending approvals', () => {
-    const tc = { tool_name: 'make_design', status: 'waiting_approval', approval: { status: 'pending' } }
+    const tc = { tool_name: 'submit_design_for_review', status: 'waiting_approval', approval: { status: 'pending' } }
     const run = makeRun([tc])
     expect(extractOrderedItems(run, false)).toEqual([])
   })

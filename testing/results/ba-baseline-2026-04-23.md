@@ -87,7 +87,7 @@ As of 2026-05-12, all baseline tests have completed and been reviewed. Here are 
 - **Assertions**: 1/1 passed (100%)
 - **Judge checks**: 5/5 passed (100%)
 - **Duration**: 7m 57s
-- **Finding**: BA correctly identified the accented-character search bug as a technical issue (not a functional change). Asked clarifying questions about when the bug occurs and which characters are affected. Called `done()` with `NO_FD_CHANGE` and a clear technical description. Did NOT call `coding:make_design`.
+- **Finding**: BA correctly identified the accented-character search bug as a technical issue (not a functional change). Asked clarifying questions about when the bug occurs and which characters are affected. Called `done()` with `NO_FD_CHANGE` and a clear technical description. Did NOT call `coding:submit_design_for_review`.
 - **History**: Originally blocked by test infrastructure (2026-04-23) and planner routing (2026-04-28). Fixed and re-run 2026-05-12.
 
 **Final pass rate: 8/11 tests passed** (includes 1 test with judge parse errors where BA behavior was actually correct)

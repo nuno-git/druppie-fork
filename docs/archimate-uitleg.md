@@ -137,11 +137,11 @@ ER — blijft Mermaid. De twee zijn complementair; een TD kan beide bevatten.
 3. `save_model` schrijft het model naar `docs/architecture.archimate` **en**
    exporteert per view een SVG naar `docs/diagrams/` (zodat Gitea de plaat
    inline toont).
-4. De architect schrijft de TD via `make_design` met het `archimate`-blok.
+4. De architect schrijft de TD via `submit_design_for_review` met het `archimate`-blok.
 
 > **Eén goedkeurmoment.** De afzonderlijke archimate-tools zijn *ongated* —
 > de architect bouwt de plaat vrij. Het enige menselijke goedkeurpunt is de
-> `make_design`-call op de technical design: de reviewer ziet daar de
+> `submit_design_for_review`-call op de technical design: de reviewer ziet daar de
 > markdown én de gerenderde plaat als één geheel en keurt de TD in z'n
 > geheel goed.
 >
@@ -185,7 +185,7 @@ het bouwen naar boven in plaats van pas bij de review.
 - **Relaties** zijn gericht en betekenisvol; richting doet ertoe.
 - Druppie bouwt platen met **composite builders**, valideert met
   `validate_view`, persisteert met `save_model`, en kent **één**
-  goedkeurmoment: de `make_design`-gate op de TD.
+  goedkeurmoment: de `submit_design_for_review`-gate op de TD.
 - Voor waterschap-platen gelden de **Rijnland-tekenregels** (kleur = laag,
   vocabulaire, stereotypes, beveiligingsdomeinen) — kort hier, volledig in
   `archimate-rijnland-tekenafspraken.md`.

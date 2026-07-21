@@ -8,7 +8,7 @@
 ##   Phase 1: Intake & context exploration (registry + project calls)
 ##   Phase 4: Elicitation (multiple clarifying questions)
 ##   Phase 9: User validation (present summary, user confirms)
-##   Phase 7: Write FD via make_design
+##   Phase 7: Write FD via submit_design_for_review
 ##   Phase 10: FD confirmation (present full FD, user approves)
 ##   Git add/commit/push → done()
 
@@ -190,7 +190,7 @@ tool-test:
           - "Gedeeltelijk, er missen nog een paar dingen"
           - "Nee, er zijn belangrijke punten die niet kloppen"
 
-    # --- Phase 7: Write functional design via make_design ---
+    # --- Phase 7: Write functional design via submit_design_for_review ---
     - agent: business_analyst
       tool: builtin:invoke_skill
       mock: true
@@ -199,7 +199,7 @@ tool-test:
         skill_name: making-mermaid-diagrams
 
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: analyst

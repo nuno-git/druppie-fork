@@ -150,7 +150,7 @@ Toegevoegd vanwege data_analyst agent die data-access MCP nodig had. Geconfigure
 | `push_changes` | Git bundle extractie + push naar Gitea/GitHub | ✅ |
 | `create_pr` | Pull request aanmaken op Gitea/GitHub | ✅ |
 | `get_git_status` | Git status van workspace | ✅ |
-| `make_design` | Functioneel/technisch design document schrijven met Mermaid validatie | ✅ |
+| `submit_design_for_review` | Functioneel/technisch design document schrijven met Mermaid validatie | ✅ |
 | `install_dependencies` | npm install / pip install in sandbox | ✅ |
 | `detect_test_framework` | Auto-detect pytest/vitest/jest | ✅ |
 
@@ -172,8 +172,8 @@ Toegevoegd vanwege data_analyst agent die data-access MCP nodig had. Geconfigure
 |-------|------|------|-----------|-----------|
 | router | primary | web (search, fetch) | — | — |
 | planner | primary | — | — | — |
-| business_analyst | primary | coding (make_design, bash, push_changes) | — | current_project |
-| architect | primary | coding (make_design, bash, push_changes, read_file, grep) | — | current_project |
+| business_analyst | primary | coding (submit_design_for_review, bash, push_changes) | — | current_project |
+| architect | primary | coding (submit_design_for_review, bash, push_changes, read_file, grep) | — | current_project |
 | summarizer | primary | — | — | — |
 
 #### Coding Agents — Project (`definitions/coding/project/`)

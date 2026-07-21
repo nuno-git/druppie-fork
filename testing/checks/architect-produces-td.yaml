@@ -6,7 +6,7 @@ check:
     - agent: architect
       completed: true
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       arguments:
         path: docs/technical-design.md
   judge:

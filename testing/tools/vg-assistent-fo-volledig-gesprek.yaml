@@ -2,11 +2,11 @@
 ## Gezond Werken Assistent" (VG Assistent), paused on the session-owner
 ## approval gate for the Functioneel Ontwerp (FO / docs/functional-design.md).
 ##
-## This is the EXTENSIVE variant: instead of only seeding the make_design
+## This is the EXTENSIVE variant: instead of only seeding the submit_design_for_review
 ## call, it reproduces the whole BA create_project run as a real session
 ## would have it -- context gathering (registry/coding/dataaccess), a full
 ## hitl ELICITATION with the user's answers, the mandatory mermaid skill,
-## and then make_design on the PENDING gate. Every pre-gate step is
+## and then submit_design_for_review on the PENDING gate. Every pre-gate step is
 ## mock: true, so seeding is 100% deterministic (no LLM).
 ##
 ## Why the full conversation: when the reviewer REJECTS the FO and the run
@@ -24,15 +24,15 @@
 ##      On reject the SAME BA run resumes and revises the FO; on approve it
 ##      commits + done().
 ##
-## Chain: router -> planner -> BA (context + elicitation + skill + make_design
+## Chain: router -> planner -> BA (context + elicitation + skill + submit_design_for_review
 ## PENDING). Deterministic seeding (no LLM); only the post-gate resume is live.
 
 tool-test:
   name: vg-assistent-fo-volledig-gesprek
-  description: "Volledig geseed create_project-gesprek voor het VG Assistent FO -- context + elicitatie + make_design, gepauzeerd op de session-owner approval gate, klaar voor handmatige feedback"
+  description: "Volledig geseed create_project-gesprek voor het VG Assistent FO -- context + elicitatie + submit_design_for_review, gepauzeerd op de session-owner approval gate, klaar voor handmatige feedback"
   tags: [seed, paused, business_analyst, approval-gate, fd, elicitation, full-conversation]
   # Land in the REAL approval-gate state (session=paused_approval,
-  # BA run=paused_tool, make_design tool=waiting_approval). The UI then shows
+  # BA run=paused_tool, submit_design_for_review tool=waiting_approval). The UI then shows
   # ONLY the approve/reject gate on the FO -- no separate "Continue" button.
   session_status: paused_approval
 
@@ -115,7 +115,7 @@ tool-test:
         module_id: coding
       mock: true
       mock_result: |
-        {"success": true, "module": {"id": "coding", "type": "core", "tools": [{"name": "make_design"}, {"name": "read_file"}, {"name": "write_file"}, {"name": "run_git"}, {"name": "list_projects"}, {"name": "list_dir"}]}}
+        {"success": true, "module": {"id": "coding", "type": "core", "tools": [{"name": "submit_design_for_review"}, {"name": "read_file"}, {"name": "write_file"}, {"name": "run_git"}, {"name": "list_projects"}, {"name": "list_dir"}]}}
 
     - agent: business_analyst
       tool: coding:read_file
@@ -227,13 +227,13 @@ tool-test:
         skill_name: making-mermaid-diagrams
       mock: true
       mock_result: |
-        {"success": true, "skill_name": "making-mermaid-diagrams", "instructions": "VOLLEDIGE mermaid-syntaxregels zijn geladen. Diagramtype: flowchart TD voor processen met beslissingen. Node-shapes -- gebruik exact EEN delimiter per node: rechthoek = vierkante haken met quotes voor processtappen; ruit = accolades met quotes voor beslissingen; stadium = haken-rond-haken voor start en eind; cilinder = ronde-binnen-haken voor database/opslag. Edges: gebruik twee streepjes als pijl; edge-labels staan tussen pipes met quotes. Regels: quote ALLE labels met gewone dubbele quotes; gebruik nooit een backslash voor een quote; gebruik nooit het woord end als node-id; node-ids zijn alleen alfanumeriek; verifieer elke node voordat je het diagram uitvoert. Dit is de volledige instructie -- er is geen verdere skill-aanroep nodig voordat je coding_make_design aanroept."}
+        {"success": true, "skill_name": "making-mermaid-diagrams", "instructions": "VOLLEDIGE mermaid-syntaxregels zijn geladen. Diagramtype: flowchart TD voor processen met beslissingen. Node-shapes -- gebruik exact EEN delimiter per node: rechthoek = vierkante haken met quotes voor processtappen; ruit = accolades met quotes voor beslissingen; stadium = haken-rond-haken voor start en eind; cilinder = ronde-binnen-haken voor database/opslag. Edges: gebruik twee streepjes als pijl; edge-labels staan tussen pipes met quotes. Regels: quote ALLE labels met gewone dubbele quotes; gebruik nooit een backslash voor een quote; gebruik nooit het woord end als node-id; node-ids zijn alleen alfanumeriek; verifieer elke node voordat je het diagram uitvoert. Dit is de volledige instructie -- er is geen verdere skill-aanroep nodig voordat je coding_submit_design_for_review aanroept."}
 
     # ====================== BA: WRITE FO -- approval gate PENDING ======================
     # The session_owner approval must be resolved manually through the UI.
     # Reject with feedback (or approve) and then resume the session.
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: pending
       arguments:

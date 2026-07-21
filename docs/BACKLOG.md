@@ -303,7 +303,7 @@ Last updated: 2026-07-15
 
 - **Location:** `druppie/execution/tool_executor.py` (lines 332-367, 468-487)
 - **GitHub Issue:** [#79](https://github.com/nuno-git/druppie-fork/issues/79)
-- **Current state:** The tool executor has a hardcoded `if tool_call.tool_name == "make_design"` check that runs Mermaid validation before the approval gate. The mermaid validator is imported via a fragile `importlib.util.spec_from_file_location` hack because it lives in `mcp-servers/coding/` (hyphenated directory, not a proper Python package).
+- **Current state:** The tool executor has a hardcoded `if tool_call.tool_name == "submit_design_for_review"` check that runs Mermaid validation before the approval gate. The mermaid validator is imported via a fragile `importlib.util.spec_from_file_location` hack because it lives in `mcp-servers/coding/` (hyphenated directory, not a proper Python package).
 - **Problem:** Adding content validation for any other tool requires adding more `if` statements to the tool executor and more fragile imports.
 - **Desired improvement:** Add an optional `pre_validate(self) -> str | None` method to Pydantic params models. The tool executor calls it generically after schema validation succeeds. This way adding a new validator = adding a method to a params model, with zero changes to `tool_executor.py`. The mermaid validator moves to `druppie/tools/validators/mermaid.py` (properly importable). See issue #79 for the full plan.
 
@@ -473,7 +473,7 @@ Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incr
 ### Approval-Gate Relaxation — DONE in v1
 
 - ~~All ArchiMate write tools approval-gated~~ → archimate_* writes are
-  ungated; the single review point is `coding:make_design` on
+  ungated; the single review point is `coding:submit_design_for_review` on
   `docs/technical-design.md` (architect-gated via the architect agent's
   approval_overrides). The reviewer sees the markdown + the embedded
   plate as one artifact and approves the TD as a whole.

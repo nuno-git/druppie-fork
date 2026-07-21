@@ -3,14 +3,14 @@
 ## at the technical-research.md approval gate (status: pending).
 ##
 ## What happens when you approve the research in the UI:
-##   1. The approval-resume executes the make_design tool (writes
+##   1. The approval-resume executes the submit_design_for_review tool (writes
 ##      docs/technical-research.md to the session workspace).
 ##   2. The architect's loop resumes from there and proceeds with the
 ##      part we want to test: git-add/commit/push the research, then
 ##      build the ArchiMate plate using the new composite tools
 ##      (add_layered_view / add_cooperation_view), run validate_view,
 ##      write docs/technical-design.md, and commit.
-##   3. The TD make_design fires a second architect-role approval gate
+##   3. The TD submit_design_for_review fires a second architect-role approval gate
 ##      that you also approve in the UI.
 ##
 ## Saves ~10 min vs archimate-e2e-paused-at-fd-approval because the
@@ -58,7 +58,7 @@ tool-test:
 
     # --- Business Analyst writes the FD (pre-approved + committed) ---
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -324,7 +324,7 @@ tool-test:
     # the UI to trigger: write research.md → git add/commit/push → plate
     # build via composite tools + validate_view → make TD → push.
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: pending
       arguments:
