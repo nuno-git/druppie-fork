@@ -1,3 +1,10 @@
+> **⚠️ SUPERSEDED** — The architectural decisions from this backlog have been
+> migrated to proposed ADRs:
+> - **ADRs 015-017** (`docs/adrs/`) — database-domain alignment, context window management, observability strategy
+>
+> Remaining items (bugs, tech debt, minor feature ideas) should be tracked as
+> GitHub Issues, not in this file. This file is retained for historical reference.
+
 # Backlog
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
@@ -241,7 +248,7 @@ Last updated: 2026-06-11
 
 ### ~~Language Matching~~ ✅ DONE
 
-- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a configurable translation model (legacy default Gemma 3 27B). See [docs/reference/TRANSLATION.md](reference/TRANSLATION.md) for details.
+- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a configurable translation model (legacy default Gemma 3 27B). See [ADR 006](adrs/006-translation-subsystem.md) for the decision and wiring detail.
 
 ### File Upload: Context Window Guardrails for Large Attachments
 
@@ -365,7 +372,7 @@ Last updated: 2026-06-11
 
 ### Kubernetes — Production Hardening (TLS, External Secrets, HPA)
 
-- **Current state:** The Helm chart is designed for local Kind clusters. Production requires TLS, external secret management, autoscaling, and a real container registry. See `docs/kubernetes.md` section 9 and `docs/KUBERNETES-STRATEGY.md` for the full production roadmap.
+- **Current state:** The Helm chart is designed for local Kind clusters. Production requires TLS, external secret management, autoscaling, and a real container registry. See `docs/guides/kubernetes-deployment.md` section 9 and `docs/research/006-kubernetes-strategy.md` for the full production roadmap.
 - **Desired improvement:**
   - cert-manager integration for automatic TLS certificates
   - External Secrets Operator or Sealed Secrets support
@@ -418,7 +425,7 @@ Last updated: 2026-06-11
   - Use DuckDB/Polars to run SQL-style aggregation directly over CSV/Parquet with column projection (no full in-memory materialization).
   - Cache the read/aggregation within a session so follow-up charts don't re-scan.
   - Chunked/streaming aggregation for files too large to hold in memory.
-- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/reference/mcp/data-access.md`.
+- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/adrs/020-data-access-mcp.md`.
 
 ### Visualization — Smarter Graphing
 
@@ -570,3 +577,18 @@ Deze items zijn out-of-scope voor de eerste Kubernetes migratie (Story 3) en wor
 - Frontend "Download PDF" button in chat timeline or project page.
 
 **Priority:** Medium — agent-driven PDF generation works; REST API purely adds convenience.
+
+---
+
+## Coding Agent Quality (salvaged from sprint docs)
+
+> Salvaged from the archived coding-agent stories (now removed; their content was fully superseded by the ADRs/PRDs above). The as-built runtime is documented in `docs/TECHNICAL.md` §11.
+
+| Item | Source | Description |
+|------|--------|-------------|
+| **Core agent self-test in sandbox** | supplement C1–C3 | Coding agents must be able to install Druppie core dependencies and run the core test suite (unit + Playwright) inside their sandbox, so an agent can verify its own changes build and pass tests. |
+| **Better planner — smarter task decomposition** | supplement P1–P4 | `builder_planner` should investigate the codebase (patterns, dependencies, data model) before planning, produce at least 2 proposals with pros/cons/impact/effort, ask developer approval before executing, and emit code conventions, test strategy, and file-level change approach. Detect cross-file dependencies. |
+| **Error recovery — retry & fallback** | supplement F1–F3 | Auto-recreate the sandbox container on crash while the agent keeps running; cap build/test failures at 3 retries with a failure report back to the parent; eliminate silent crashes so every error surfaces in events. |
+| **E2E test — vergunningzoeker build** | supplement E1–E5 | End-to-end proof that the coding agent builds the full vergunningzoeker application: `docker compose build` succeeds, app reachable on HTTP port, functional endpoints work as specified, at least one test passes, and the agent does not stop/crash mid-execution. |
+| **Network isolation E2E at agent-pipeline layer** | sprint-overview item 6 | The infrastructure layer is tested (6/6 ✅), but the full chain YAML config → context injection → container networks through a real agent run is not yet exercised end-to-end. |
+| **Sandbox `modules` network use case** | sprint-overview item 7 | `test_executor` has `networks: [modules]` but the practical use case is undefined. Clarify whether the sandbox can call the data-access MCP directly (e.g. `bash curl` to its HTTP endpoint) or whether an MCP client inside the sandbox is required. |

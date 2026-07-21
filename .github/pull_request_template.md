@@ -6,7 +6,7 @@
 
 Zie [`docs/guides/documentation-framework.md`](../docs/guides/documentation-framework.md) voor de standaard en wanneer welk documenttype nodig is.
 
-- [ ] Documentatie toegevoegd/bijgewerkt waar nodig (ADR / PRD / Research / Spec / reference / guide)
+- [ ] Documentatie toegevoegd/bijgewerkt waar nodig (ADR / PRD / Research / Spec / guide)
 - [ ] `docs-exempt` — deze wijziging heeft bewust geen documentatie nodig (reden: … )
 
 <!--

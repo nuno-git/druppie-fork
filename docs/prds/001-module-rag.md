@@ -195,7 +195,7 @@ The module enforces the platform defaults from
 When `module-rag` lands, at minimum cover:
 
 - A Dutch-language doc-heavy use-case (e.g. HDSR-notas validation
-  scenario from `docs/reference/rag/testing.md`) end-to-end via `rag_query`.
+  scenario from `docs/guides/rag-testing.md`) end-to-end via `rag_query`.
 - Multilingual corpus: same corpus with NL and EN documents, each
   findable in its own language with `question_language` auto-detect.
 - Conversational follow-up resolution via `rag_conversational_query`.

@@ -24,7 +24,7 @@ def mini_repo(tmp_path):
     for folder, schema_rel in validate_docs.DOC_TYPES.items():
         (tmp_path / folder).mkdir(parents=True)
         shutil.copy(REPO_ROOT / schema_rel, tmp_path / schema_rel)
-    (tmp_path / "testing/specs/features").mkdir(parents=True)
+    (tmp_path / "docs/specs").mkdir(parents=True)
     return tmp_path
 
 
@@ -233,7 +233,7 @@ def test_broken_link_is_error(mini_repo):
     assert any("linked file does not exist" in e for e in errors)
 
 
-def test_http_link_is_skipped(mini_repo):
+def test_http_link_is_rejected(mini_repo):
     p = mini_repo / "docs/adrs/001-decision.md"
     p.write_text(
         VALID_ADR.format(
@@ -247,7 +247,40 @@ def test_http_link_is_skipped(mini_repo):
     errors = validate_docs.validate_frontmatter_file(
         p, _validator_for(mini_repo, "docs/adrs"), mini_repo
     )
-    assert errors == []
+    assert any("linked file does not exist" in e for e in errors)
+
+
+def test_comma_separated_linked_research(mini_repo):
+    (mini_repo / "docs/research/004-agent-runtime.md").write_text(
+        "---\nid: \"004\"\ntitle: Test\nstatus: complete\nauthor: nuno\ndate: 2026-01-01\noutcome: null\n---\n\n# Test\n",
+        encoding="utf-8",
+    )
+    (mini_repo / "docs/research/002-foo.md").write_text(
+        "---\nid: \"002\"\ntitle: Foo\nstatus: complete\nauthor: nuno\ndate: 2026-01-01\noutcome: null\n---\n\n# Foo\n",
+        encoding="utf-8",
+    )
+    content = """\
+---
+id: "001"
+title: Test comma-separated linked fields
+status: accepted
+date: 2026-07-17
+deciders:
+  - nuno
+supersedes: null
+superseded_by: null
+linked_prd: null
+linked_research: docs/research/004-agent-runtime.md, docs/research/002-foo.md
+---
+
+# Test
+"""
+    p = mini_repo / "docs/adrs/001-decision.md"
+    p.write_text(content, encoding="utf-8")
+    errors = validate_docs.validate_frontmatter_file(
+        p, _validator_for(mini_repo, "docs/adrs"), mini_repo
+    )
+    assert not any("linked file does not exist" in e for e in errors)
 
 
 def test_link_with_anchor_resolves(mini_repo):
@@ -309,27 +342,27 @@ def test_superseded_without_superseded_by_is_error(mini_repo):
 
 
 def test_spec_missing_reference_is_error(mini_repo):
-    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat = mini_repo / "docs/specs/thing.feature"
     feat.write_text(
         "@prd docs/prds/404-missing.md\nFeature: x\n", encoding="utf-8"
     )
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     rel, errors = results[0]
     assert any("referenced file does not exist" in e for e in errors)
 
 
 def test_spec_placeholder_is_skipped(mini_repo):
-    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat = mini_repo / "docs/specs/thing.feature"
     feat.write_text("@prd <feature-name>\nFeature: x\n", encoding="utf-8")
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     rel, errors = results[0]
     assert errors == []
 
 
 def test_spec_template_is_skipped(mini_repo):
-    tmpl = mini_repo / "testing/specs/features/TEMPLATE.feature"
+    tmpl = mini_repo / "docs/specs/TEMPLATE.feature"
     tmpl.write_text("@prd docs/prds/404-missing.md\n", encoding="utf-8")
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     assert results == []
 
 
@@ -337,9 +370,9 @@ def test_spec_valid_reference_no_error(mini_repo):
     (mini_repo / "docs/prds/001-product.md").write_text(
         VALID_PRD.format(id="001"), encoding="utf-8"
     )
-    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat = mini_repo / "docs/specs/thing.feature"
     feat.write_text("@prd docs/prds/001-product.md\n", encoding="utf-8")
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     rel, errors = results[0]
     assert errors == []
 
@@ -350,12 +383,12 @@ def test_spec_second_tag_on_same_line_is_checked(mini_repo):
     (mini_repo / "docs/prds/001-product.md").write_text(
         VALID_PRD.format(id="001"), encoding="utf-8"
     )
-    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat = mini_repo / "docs/specs/thing.feature"
     feat.write_text(
         "@prd docs/prds/001-product.md @adr docs/adrs/404-missing.md\n",
         encoding="utf-8",
     )
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     rel, errors = results[0]
     assert any(
         "referenced file does not exist" in e and "404-missing.md" in e
@@ -363,16 +396,32 @@ def test_spec_second_tag_on_same_line_is_checked(mini_repo):
     )
 
 
+def test_spec_comment_and_prose_tags_are_ignored(mini_repo):
+    # @prd/@adr mentions inside comment lines ("# @adr foo.md") or prose
+    # ("the @prd / @adr tags below ...") are not tag references and must not
+    # be resolved (regression: unanchored finditer flagged them as broken).
+    feat = mini_repo / "docs/specs/thing.feature"
+    feat.write_text(
+        "# @adr 404-missing.md\n"
+        "# the @prd / @adr tags below link this behaviour back to the docs\n"
+        "Feature: x\n",
+        encoding="utf-8",
+    )
+    checked, results = validate_docs.check_spec_files(mini_repo)
+    rel, errors = results[0]
+    assert errors == []
+
+
 def test_spec_second_tag_placeholder_is_skipped(mini_repo):
     # A placeholder second tag on the same line is skipped, not errored.
     (mini_repo / "docs/prds/001-product.md").write_text(
         VALID_PRD.format(id="001"), encoding="utf-8"
     )
-    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat = mini_repo / "docs/specs/thing.feature"
     feat.write_text(
         "@prd docs/prds/001-product.md @adr <adr-name>\n", encoding="utf-8"
     )
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     rel, errors = results[0]
     assert errors == []
 

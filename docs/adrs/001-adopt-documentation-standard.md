@@ -8,7 +8,7 @@ deciders:
 supersedes: null
 superseded_by: null
 linked_prd: null
-linked_research: https://github.com/nuno-git/druppie-fork/pull/283
+linked_research: null
 ---
 
 > **Where this fits:** This ADR is the first application of the standard it defines
@@ -42,7 +42,7 @@ We adopt a spec-driven documentation standard:
   (`docs/{adrs,prds,research}/*.schema.json`) defines the required fields.
 - **Language:** English is the source of truth; frontmatter, ids and status are never translated.
 - **Templates** live at fixed locations: `docs/adrs/TEMPLATE.md`, `docs/prds/TEMPLATE.md`,
-  `docs/research/TEMPLATE.md`, `testing/specs/features/TEMPLATE.feature`.
+  `docs/research/TEMPLATE.md`, `docs/specs/TEMPLATE.feature`.
 
 ## Consequences
 

@@ -738,6 +738,7 @@ services:
     volumes:
       - ./druppie:/app/druppie
       - ./testing:/app/testing:ro
+      - ./docs:/app/docs:ro
       - ./secrets:/app/secrets:ro
       - workspace:/app/workspace
       - sandbox_bundles:/app/sandbox_bundles

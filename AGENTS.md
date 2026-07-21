@@ -23,12 +23,11 @@ chore usually needs no docs.
 | **PRD** | The feature: problem + goal | `docs/prds/` | `docs/prds/TEMPLATE.md` |
 | **Research** | Options considered + trade-offs (optional) | `docs/research/` | `docs/research/TEMPLATE.md` |
 | **ADR** | The decision taken + its consequences | `docs/adrs/` | `docs/adrs/TEMPLATE.md` |
-| **Spec** | Executable acceptance criteria (Gherkin) | `testing/specs/features/` | `testing/specs/features/TEMPLATE.feature` |
+| **Spec** | Executable acceptance criteria (Gherkin) | `docs/specs/` | `docs/specs/TEMPLATE.feature` |
 
-## The two orientation types (optional, no template)
+## The orientation type (optional, no template)
 
 - **Guide** — how-to / conventions / runbooks → `docs/guides/`
-- **Reference** — subsystem & architecture naslag → `docs/reference/`
 
 They carry no mandatory frontmatter and aren't schema-validated, but they should link back to
 the ADR/PRD/Spec that owns the underlying decision or behaviour.

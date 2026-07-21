@@ -100,8 +100,6 @@ docker compose logs -f                       # All services
 docker compose logs -f druppie-backend-dev   # Backend only
 docker compose logs -f druppie-frontend-dev  # Frontend only
 docker compose logs -f keycloak              # Keycloak only
-docker compose logs -f sandbox-control-plane # Sandbox control plane
-docker compose logs -f sandbox-manager       # Sandbox manager
 ```
 
 ### Reset
@@ -230,14 +228,17 @@ GITEA_PORT=3101
 
 | Document | Description |
 |----------|-------------|
-| [docs/FEATURES.md](docs/FEATURES.md) | Functional features: agents, workflows, approvals, HITL, sandbox coding |
-| [docs/TECHNICAL.md](docs/TECHNICAL.md) | Technical architecture: backend, database, agent runtime, security |
+| [docs/TECHNICAL.md](docs/TECHNICAL.md) | Technical architecture (as-built reference, superseded by formal ADRs/PRDs/Specs) |
 | [docs/SANDBOX.md](docs/SANDBOX.md) | Sandbox infrastructure: OpenCode integration, provider resilience, Kata Containers |
-| [docs/BACKLOG.md](docs/BACKLOG.md) | Bugs, technical debt, and improvement ideas |
+| [docs/adrs/](docs/adrs/) | Architectural Decision Records (ADRs 001-017) |
+| [docs/prds/](docs/prds/) | Product Requirements Documents (PRDs 001-013) |
+| [docs/research/](docs/research/) | Research and analysis (001-007) |
+| [docs/specs/](docs/specs/) | Executable behavioral specs (Gherkin) |
+| [docs/guides/](docs/guides/) | Operational guides |
 
 ## Documentation checks
 
-Docs under `docs/adrs`, `docs/prds`, `docs/research` and `testing/specs/features` are validated against the documentation standard (PBI 9744).
+Docs under `docs/adrs`, `docs/prds`, `docs/research` and `docs/specs` are validated against the documentation standard (PBI 9744).
 
 Run the check locally (no host Python needed — it runs in Docker):
 
