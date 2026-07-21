@@ -13,7 +13,7 @@ outcome: null
 > **Date**: 2026-02-24 (initial brainstorm) to 2026-03-11 (iterative design)
 > **Author**: Druppie team
 > **User Story**: Als Druppie-teamlid wil ik een gestandaardiseerd format/contract voor core-modules, zodat uitbreidingen op een uniforme manier worden toegevoegd ongeacht wie ze bouwt.
-> **Related**: `docs/adrs/019-module-system-architecture.md` (architectural decisions — ADR), `docs/plans/2026-03-11-auth-governance-design.md` (auth & governance design). The full technical contract that resulted from this research lives in Part III below.
+> **Related**: `docs/adrs/019-module-system-architecture.md` (architectural decisions — ADR), and the auth & governance design (design doc, not yet migrated). The full technical contract that resulted from this research lives in Part III below.
 
 This document captures the full design journey for Druppie's module convention: the original research exploring five architectural approaches (Part I), the comparative analysis and test cases that drove the recommendation, the design decisions made during specification development (Part II), and the resulting technical specification (Part III) — file layout, MODULE.yaml contract, DB schemas, SDK interface, auth flow, and the OCR v1.0→v2.0 worked example that ADR 019 commits to. It is the "why" and the "what" behind the decisions.
 
@@ -909,7 +909,7 @@ Modules are created through the **update core** flow — the Architect adds new 
                                 future applications
 ```
 
-**Why update core?** Modules live in the Druppie core (`druppie/mcp-servers/module-<name>/`). Adding a new module means modifying the core codebase — adding the module directory, updating `docker-compose.yaml`, updating `mcp_config.yaml`, etc. The update core flow (see `docs/plans/2026-03-02-update-core-flow-design.md`) provides the mechanism for agents to safely modify the core through PRs that require human review.
+**Why update core?** Modules live in the Druppie core (`druppie/mcp-servers/module-<name>/`). Adding a new module means modifying the core codebase — adding the module directory, updating `docker-compose.yaml`, updating `mcp_config.yaml`, etc. The update core flow (see the update-core-flow design doc, not yet migrated) provides the mechanism for agents to safely modify the core through PRs that require human review.
 
 **Timing**: Module creation happens *before* the application that needs it is built. The Architect first ensures the required modules exist in core, then the application development can proceed with those modules available.
 

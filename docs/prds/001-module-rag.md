@@ -30,8 +30,8 @@ superseded_by: null
 > implement as defaults.
 > Convention: follows
 > [`module-convention`](../../druppie/skills/module-convention/SKILL.md).
-> Today's primitive lives at
-> [`druppie/mcp-servers/module-vectorstore/`](../../druppie/mcp-servers/module-vectorstore/).
+> Today's primitive lives under `druppie/mcp-servers/` (vectorstore module, not yet
+> migrated).
 
 ## 1. Why this module
 

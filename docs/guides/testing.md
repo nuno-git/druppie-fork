@@ -175,4 +175,4 @@ The Analytics page (`/admin/analytics`) shows per-batch results with:
 
 Each test step controls its own mocking via `mock: true`. There is no global blocklist — tests are explicit about what's real and what's mocked.
 
-For more details, see [testing/README.md](../testing/README.md).
+For more details, see [testing/README.md](../../testing/README.md).

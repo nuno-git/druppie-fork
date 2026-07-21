@@ -203,8 +203,9 @@ complete:
 - **47 pytest tests** run in CI, covering frontmatter validation, lifecycle tags, link
   resolution, CAS freshness, spec references, and the mandatory-docs gate.
 - **Link validation:** all `linked_*` fields must point to existing files — URLs are rejected.
-- **Enforcement:** the validator runs in CI (`docs.yml`), blocking on errors. Lefthook
-  pre-commit hook is available as opt-in local convenience.
+- **Enforcement:** the validator runs in CI on every PR (`.github/workflows/docs.yml`) and
+  locally via the `docs-validator` compose service. A lefthook pre-commit hook is available
+  as opt-in local convenience.
 
 Future improvements (agent-writer skills, in-core documentation portal) are tracked as
 separate epics.
@@ -221,5 +222,3 @@ Docs in `docs/{adrs,prds,research}` and `docs/specs` are checked automatically (
   - **Validity** — docs that exist must have the required frontmatter/fields, a matching `id`, resolvable `linked_*` / `@prd` / `@adr` (must point to existing files; URLs are rejected), and a fresh `CAS.md`.
   - **Mandatory-docs** — a PR that changes feature code must include documentation, unless it is marked `docs-exempt`. The mandatory-docs gate treats changes under `druppie/` and `frontend/src/` as code that needs docs; tooling/infra paths are intentionally exempt.
 - **Exempt** a change that genuinely needs no docs via the **`docs-exempt` label** or a **checked `docs-exempt` box** / a **`docs-exempt: <reason>` line** in the PR description.
-
-> These checks currently run in **warn-mode** (they report but do not block) while existing docs are migrated. They become blocking once the baseline is clean and the team agrees.

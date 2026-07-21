@@ -18,7 +18,7 @@ CloudNativePG, KEDA, Traefik, and Keycloak all expose native Prometheus endpoint
 
 ## Prerequisites
 
-- K3s cluster running (see [cluster setup](../iac/README.md))
+- K3s cluster running (see [cluster setup](../../iac/README.md))
 - `kubectl` configured with cluster access
 - `helm` installed
 
