@@ -152,12 +152,12 @@ mcps:
       - list_dir
     git: update_core
 
-# Local models only (in-cluster LLMKube/vLLM, no per-token API cost). The
-# llmkube profile resolves dynamically against what the endpoint serves and
-# prefers the best-ranked local model; an external fallback is never used
-# silently (FallbackLLM requires explicit approval, which an unattended
-# cron run never gives).
-llm_profile: llmkube
+# Hosted providers via the shared `standard` chain (zai glm-5 first, then
+# glm-4.7 / DeepSeek-V4-Flash / gpt-oss / GPT-5-MINI). The resolver picks the
+# first entry whose API key is available. This is the same profile the other
+# agents run on; the previous local-only `llmkube` endpoint did not reliably
+# serve models for this unattended cron run.
+llm_profile: standard
 temperature: 0.1
 max_tokens: 16000
 # Context reads (read_file/grep) add tool calls per PR on top of the three
