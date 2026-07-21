@@ -44,9 +44,10 @@ class SharePointClient:
 
     async def search_sites(self, query: str, user_token: str) -> list[dict]:
         """Search for SharePoint sites the user has access to."""
-        params = {"$select": "id,displayName,webUrl,description"}
-        if query:
-            params["search"] = query
+        params = {
+            "$select": "id,displayName,webUrl,description",
+            "search": query if query else "*",
+        }
         result = await self._get("sites", user_token, params=params)
         return result.get("value", [])
 
