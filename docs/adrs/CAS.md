@@ -22,3 +22,13 @@ Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`
 | [016](016-context-window-management.md) | Auto-compression of agent conversation context via single-shot LLM summarization |
 | [019](019-module-system-architecture.md) | Adopt the Druppie Module System architecture (SDK + MCP hybrid with direct module access) |
 | [020](020-data-access-mcp.md) | Data Access MCP architecture |
+| [022](022-platform-orchestration-router-planner.md) | Platform Orchestration — Router + Planner Pattern with Subagents for Fast Iteration |
+| [023](023-entra-id-identity-brokering.md) | Entra ID identity brokering via Keycloak with OBO token exchange |
+| [024](024-kubernetes-mcp-server.md) | Dedicated read-only Kubernetes MCP server and kubernetes_admin agent |
+| [025](025-file-upload-architecture.md) | File upload architecture — two-step flow, synchronous extraction, session-level injection |
+| [026](026-documenter-typst-subsystem.md) | Documenter Typst subsystem for PDF formatting |
+| [027](027-azure-devops-mcp-architecture.md) | Azure DevOps MCP Server Architecture |
+| [028](028-documentation-portal-architecture.md) | Documentation Portal Architecture |
+| [029](029-ask-first-fallback-pattern.md) | Ask-first fallback pattern for runtime model management |
+| [030](030-sticky-fallback.md) | Sticky LLM fallback per session |
+| [031](031-hybrid-diagramming-strategy.md) | Hybrid ArchiMate + Mermaid diagramming strategy |
