@@ -90,10 +90,6 @@ RUN curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o /u
     && chmod +x /usr/local/bin/kubectl \
     && kubectl version --client --short 2>/dev/null || kubectl version --client
 
-# Kubeconfig directory for the developer user (mounted by the deployment).
-RUN mkdir -p /home/developer/.kube \
-    && chown developer:developer /home/developer/.kube
-
 # ===========================================================================
 # Layer 1b — Browser desktop: XFCE + TigerVNC + noVNC (HTTP-only GUI)
 # ===========================================================================
@@ -171,6 +167,8 @@ RUN npm install -g @anthropic-ai/claude-code \
 # (backed by a PVC in k8s) and is owned by developer.
 RUN groupadd -g 1000 developer \
     && useradd -m -u 1000 -g developer -s /bin/bash developer \
+    && mkdir -p /home/developer/.kube \
+    && chown developer:developer /home/developer/.kube \
     && mkdir -p /workspace \
     && chown developer:developer /workspace
 
