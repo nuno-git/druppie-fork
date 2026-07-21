@@ -366,7 +366,8 @@ class ModelManagementService:
         import httpx
 
         url = os.getenv("MODEL_ROUTER_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
-        status_url = url.rstrip("/v1").rstrip("/") + "/status"
+        base = url.removesuffix("/v1").removesuffix("/")
+        status_url = base + "/status"
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(status_url)
@@ -388,7 +389,8 @@ class ModelManagementService:
         import httpx
 
         url = os.getenv("MODEL_ROUTER_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
-        logs_url = url.rstrip("/v1").rstrip("/") + f"/logs?tail={tail}"
+        base = url.removesuffix("/v1").removesuffix("/")
+        logs_url = base + f"/logs?tail={tail}"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(logs_url)
@@ -403,7 +405,8 @@ class ModelManagementService:
         import httpx
 
         url = os.getenv("MODEL_ROUTER_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
-        load_url = url.rstrip("/v1").rstrip("/") + "/admin/load-model"
+        base = url.removesuffix("/v1").removesuffix("/")
+        load_url = base + "/admin/load-model"
         try:
             async with httpx.AsyncClient(timeout=1200.0) as client:
                 resp = await client.post(
