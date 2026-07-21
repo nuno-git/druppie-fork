@@ -114,6 +114,9 @@ spec:
             # (/proxy/5173); its API calls go to /proxy/8000 on the same origin.
             - name: VITE_API_URL
               value: /proxy/8000
+            # Read-only kubeconfig for kubectl access inside the workspace.
+            - name: KUBECONFIG
+              value: /root/.kube/config
             # KEYCLOAK_SERVER_URL / KEYCLOAK_ISSUER_URL / KEYCLOAK_REALM /
             # MCP_*_URL / GITEA_* come from <instance>-config via envFrom below
             # (identical wiring to the baked backend).
@@ -155,6 +158,11 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            # Read-only kubeconfig from Vault (synced by ExternalSecret).
+            - name: kubeconfig
+              mountPath: /root/.kube/config
+              subPath: kubeconfig
+              readOnly: true
             {{- $needDocker := or (has "coding" $.Values.devWorkspace.embedModules) (has "docker" $.Values.devWorkspace.embedModules) }}
             {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
             # module-coding / module-docker talk to the host Docker daemon.
@@ -214,6 +222,11 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        # Read-only kubeconfig synced from Vault via ExternalSecret.
+        - name: kubeconfig
+          secret:
+            secretName: {{ include "druppie.fullname" . }}-kubeconfig
+            optional: true
         {{- $needDocker := or (has "coding" .Values.devWorkspace.embedModules) (has "docker" .Values.devWorkspace.embedModules) }}
         {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
         # Host Docker socket for embedded module-coding / module-docker.
