@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agent_test, agents, approvals, cache, chat, datasources, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, model_management, modules, projects, questions, sandbox, session_events, sessions, tool_output, workspace
+from druppie.api.routes import agent_test, agents, approvals, cache, chat, datasources, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, model_management, modules, projects, questions, sandbox, session_events, sessions, tool_output, users, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
