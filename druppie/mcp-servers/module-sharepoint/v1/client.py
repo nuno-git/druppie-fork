@@ -9,6 +9,7 @@ stored or written to disk.
 """
 
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
@@ -50,6 +51,23 @@ class SharePointClient:
         }
         result = await self._get("sites", user_token, params=params)
         return result.get("value", [])
+
+    async def get_site_by_url(self, url: str, user_token: str) -> dict:
+        """Resolve a SharePoint site URL to its Graph site object.
+
+        Uses GET /sites/{hostname}:/{server-relative-path} which works with
+        Files.Read.All (no Sites.Read.All needed).
+        """
+        parsed = urlparse(url.strip().rstrip("/"))
+        hostname = parsed.hostname
+        site_path = parsed.path.strip("/")
+        if not hostname:
+            raise ValueError(f"Cannot parse hostname from URL: {url}")
+        if site_path:
+            path = f"sites/{hostname}:/{site_path}"
+        else:
+            path = f"sites/{hostname}"
+        return await self._get(path, user_token)
 
     async def list_folder(
         self,

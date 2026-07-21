@@ -7,6 +7,8 @@ take a site_id parameter so the agent can discover sites and navigate them.
 import logging
 import os
 
+import httpx
+
 from .client import SharePointClient
 
 logger = logging.getLogger("sharepoint-mcp")
@@ -48,8 +50,32 @@ class SharePointModule:
                 "sites": result,
                 "count": len(result),
             }
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 403:
+                return {
+                    "success": False,
+                    "error": "Insufficient permissions to search sites (Sites.Read.All required). "
+                             "Use the resolve_site_url tool with a SharePoint URL instead.",
+                }
+            logger.warning("list_sites failed: %s", exc)
+            return {"success": False, "error": str(exc)}
         except Exception as exc:
             logger.warning("list_sites failed: %s", exc)
+            return {"success": False, "error": str(exc)}
+
+    async def resolve_site_url(self, url: str, user_token: str) -> dict:
+        """Resolve a SharePoint site URL to its site ID and metadata."""
+        try:
+            site = await self._client.get_site_by_url(url, user_token)
+            return {
+                "success": True,
+                "id": site["id"],
+                "name": site.get("displayName", ""),
+                "web_url": site.get("webUrl", ""),
+                "description": site.get("description", ""),
+            }
+        except Exception as exc:
+            logger.warning("resolve_site_url(%s) failed: %s", url, exc)
             return {"success": False, "error": str(exc)}
 
     async def list_files(

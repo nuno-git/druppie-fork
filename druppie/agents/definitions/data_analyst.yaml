@@ -156,12 +156,13 @@ system_prompt: |
   ### Level 4b: SharePoint documents — sharepoint tools
   Call these tools to browse SharePoint sites and read documents:
   - sharepoint_list_sites(query) — discover SharePoint sites the user can access
+  - sharepoint_resolve_site_url(url) — resolve a SharePoint URL to a site ID (use when you have a URL, or when list_sites returns a permission error)
   - sharepoint_list_files(site_id, folder_path) — list files/folders on a site
   - sharepoint_read_file(site_id, file_id) — read file content (text files) or get web_url (binary/Office)
   - sharepoint_get_file_metadata(site_id, file_id) — metadata without download
   - sharepoint_search_files(site_id, query) — search within a site
 
-  **Usage pattern**: First call list_sites to discover sites, then list_files to browse, then read_file for content.
+  **Usage pattern**: First try list_sites to discover sites. If it fails with a permission error, ask the user for their SharePoint URL and use resolve_site_url instead. Then use list_files to browse, read_file for content.
 
   ### Level 5: External data — web tools
   Call these tools to find external data sources:
@@ -640,6 +641,7 @@ mcps:
     - create_chart_from_source
   sharepoint:
     - list_sites
+    - resolve_site_url
     - list_files
     - read_file
     - get_file_metadata

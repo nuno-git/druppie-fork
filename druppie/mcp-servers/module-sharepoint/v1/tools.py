@@ -55,6 +55,30 @@ async def list_sites(
 
 
 @mcp.tool()
+async def resolve_site_url(
+    url: str,
+    user_token: str | None = None,
+) -> dict:
+    """Resolve a SharePoint site URL to its site ID.
+
+    Use this when you have a SharePoint URL (e.g. from the user) and need
+    the site ID for other tools. Works with Files.Read.All permission.
+
+    Args:
+        url: Full SharePoint site URL, e.g.
+             "https://contoso.sharepoint.com/sites/TeamSite"
+        user_token: Entra ID access token (injected automatically, do not
+                    provide).
+
+    Returns:
+        Dict with site id, name, web_url, and description.
+    """
+    if not user_token:
+        return {"success": False, "error": "Entra ID authentication required"}
+    return await module.resolve_site_url(url, user_token)
+
+
+@mcp.tool()
 async def list_files(
     site_id: str,
     folder_path: str | None = None,
