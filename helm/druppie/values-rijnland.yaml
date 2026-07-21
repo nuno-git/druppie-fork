@@ -62,7 +62,8 @@ init:
 # Longhorn volumes are CSI (network-accessible), so pods on any node can mount them —
 # no node pinning needed.
 backend:
-  # In-cluster LLMKube/vLLM endpoint (cluster DNS, not the external ingress).
+  # In-cluster LLMKube/vLLM endpoint — points to the model router, which
+  # handles all models and auto-switches between modes (qwen / deepseek).
   # The LLM provider is still zai by default; llmkube is just selectable.
   llmkube:
-    baseUrl: http://qwen.llm.svc.cluster.local:8000/v1
+    baseUrl: http://model-server.llm.svc.cluster.local:8001/v1

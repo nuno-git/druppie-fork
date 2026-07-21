@@ -178,11 +178,10 @@ backend:
     model: Qwen/Qwen3-32B
     baseUrl: https://api.deepinfra.com/v1
   # LLMKube / in-cluster vLLM (OpenAI-compatible, no API key required).
-  # Default baseUrl is the external ingress; in-cluster deployments override
-  # this to the cluster-DNS URL in values-rijnland.yaml.
+  # Points to the model router which handles all models and auto-switches modes.
   llmkube:
-    model: Qwen/Qwen3.6-27B
-    baseUrl: https://llm.rijnland.dev/v1
+    model: qwen3.6-27b
+    baseUrl: http://model-server.llm.svc.cluster.local:8001/v1
   foundry:
     model: GPT-5-MINI
     apiUrl: ''
