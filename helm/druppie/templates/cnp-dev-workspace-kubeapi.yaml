@@ -1,0 +1,30 @@
+{{- if .Values.devWorkspace.enabled }}
+# CiliumNetworkPolicy: allow the dev-workspace pod to reach the Kubernetes API
+# server for kubectl access from the workspace terminal.
+#
+# The app-net NetworkPolicy blocks egress to private IPs (10/8), but the kube
+# API Service VIP is DNATed to control-plane node IPs, so a plain ipBlock won't
+# match. Cilium's kube-apiserver entity tracks the real API endpoints reliably.
+# Same pattern as cnp-backend-kubeapi in branch-env-deployer-rbac.yaml.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-workspace-kubeapi
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dev-workspace
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+{{- end }}
