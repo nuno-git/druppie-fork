@@ -57,11 +57,17 @@ class InjectionRule:
         from_path: Context path to resolve (e.g., "project.repo_name")
         hidden: Whether to hide this param from LLM schema
         tools: List of tool names this rule applies to (None = all tools)
+        optional: When True, inject None instead of raising an error when
+                  the value resolves to None. This allows the downstream
+                  tool/adapter to decide whether the value is actually
+                  required (e.g., Entra token is optional for key-based
+                  data sources but required for OBO sources).
     """
     param: str
     from_path: str
     hidden: bool = True
     tools: list[str] | None = None
+    optional: bool = False
 
     def applies_to_tool(self, tool_name: str) -> bool:
         """Check if this rule applies to a specific tool."""
@@ -222,6 +228,11 @@ class MCPConfig:
 
         return (requires, required_role)
 
+    def get_entra_scope(self, server: str) -> str | None:
+        """Get Entra token scope for an MCP server, or None if not configured."""
+        mcp = self.config.get("mcps", {}).get(server, {})
+        return mcp.get("entra_scope")
+
     def get_server_type(self, server: str) -> str:
         """Get MCP server type (core, module, both).
 
@@ -255,6 +266,7 @@ class MCPConfig:
                     from_path=rule_config.get("from", ""),
                     hidden=rule_config.get("hidden", True),
                     tools=rule_config.get("tools"),
+                    optional=rule_config.get("optional", False),
                 )
             else:
                 # Simple format: param_name: context.path

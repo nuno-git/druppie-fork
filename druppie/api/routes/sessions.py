@@ -21,6 +21,7 @@ from uuid import UUID
 import structlog
 
 from druppie.api.deps import (
+    get_bearer_token,
     get_current_user,
     get_user_roles,
     get_session_service,
@@ -579,6 +580,128 @@ async def resume_session(
         "success": True,
         "session_id": str(session_id),
         "message": "Session resuming",
+    }
+
+
+# =============================================================================
+# ENTRA ID AUTHORIZATION
+# =============================================================================
+
+
+async def _run_entra_auth_background(session_id: UUID, user_kc_token: str) -> None:
+    """Resume workflow after Entra auth in background."""
+
+    async def task(ctx):
+        await ctx.orchestrator.resume_after_entra_auth(
+            session_id=session_id,
+            user_kc_token=user_kc_token,
+        )
+
+    await run_session_task(session_id, task, "resume_after_entra_auth")
+
+
+@router.post("/sessions/{session_id}/authorize-entra")
+async def authorize_entra(
+    session_id: UUID,
+    service: SessionService = Depends(get_session_service),
+    user: dict = Depends(get_current_user),
+    bearer_token: str = Depends(get_bearer_token),
+):
+    """Provide Entra ID authorization for a paused session.
+
+    Called automatically by the frontend when it detects a session in
+    waiting_entra_auth status. The backend uses the caller's KC token
+    to retrieve an Entra ID token via the Keycloak broker endpoint.
+
+    Security: Only the session owner can authorize (no admin override).
+    This prevents a different user's Entra token from being used.
+    """
+    user_id = UUID(user["sub"])
+
+    # H1: Enforce session owner — no admin override
+    detail = service.get_detail(
+        session_id=session_id,
+        user_id=user_id,
+        user_roles=get_user_roles(user),
+    )
+    if str(detail.user_id) != str(user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the session owner can authorize Entra ID access",
+        )
+
+    # Verify session is in the right state
+    if detail.status != "paused_entra_auth":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Session is not waiting for Entra authorization (status: {detail.status})",
+        )
+
+    logger.info(
+        "authorize_entra_requested",
+        session_id=str(session_id),
+        user_id=str(user_id),
+    )
+
+    # Pre-check: verify the Keycloak broker can return an Entra token.
+    # If the user's KC session didn't go through the Entra broker (e.g.
+    # after a session refresh), the stored token won't be available and
+    # the user must re-authenticate via Entra.
+    from druppie.core.entra_token import get_entra_token
+
+    token_result = await get_entra_token(bearer_token)
+    if token_result.get("needs_reauth"):
+        return {
+            "success": False,
+            "needs_reauth": True,
+            "message": token_result.get("error", "Please sign in with Microsoft again."),
+        }
+
+    # Fetch user avatar from Graph API (fire-and-forget, non-blocking)
+    graph_token = token_result.get("access_token")
+    if graph_token:
+        import asyncio
+        from druppie.services.avatar_service import fetch_and_cache_avatar
+        from druppie.db.database import SessionLocal
+
+        async def _bg_avatar(uid, token):
+            db = SessionLocal()
+            try:
+                await fetch_and_cache_avatar(db, uid, token)
+            finally:
+                db.close()
+
+        asyncio.create_task(_bg_avatar(str(user_id), graph_token))
+
+    # Transition session to active
+    try:
+        service.lock_for_resume(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    try:
+        create_session_task(
+            session_id,
+            _run_entra_auth_background(
+                session_id=session_id,
+                user_kc_token=bearer_token,
+            ),
+            name=f"entra-auth-{session_id}",
+            skip_lock=True,
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
+    except Exception:
+        service.mark_failed(session_id, "Failed to start Entra auth background task")
+        raise
+
+    return {
+        "success": True,
+        "session_id": str(session_id),
+        "message": "Entra ID authorization in progress",
     }
 
 

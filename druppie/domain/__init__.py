@@ -56,6 +56,9 @@ from .evaluation import (
 # Documentation models
 from .documentation import DocumentationEntry
 
+# Document formatter models
+from .document_formatter import DocumentMetadata
+
 # Common models
 from .common import (
     AgentRunStatus,
@@ -160,6 +163,8 @@ __all__ = [
     "UserInfo",
     # Documentation
     "DocumentationEntry",
+    # Document formatter
+    "DocumentMetadata",
     # Agent definition
     "AgentDefinition",
     "ApprovalOverride",

@@ -11,6 +11,11 @@ Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
 
+import base64
+import json
+import os
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -49,6 +54,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked",
                     },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
+                    },
                 },
                 "required": ["question"],
             },
@@ -74,6 +84,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "context": {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
                     },
                 },
                 "required": ["question", "choices"],
@@ -106,6 +121,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "context": {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked.",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
                     },
                 },
                 "required": ["expert_role", "question"],
@@ -141,6 +161,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked.",
                     },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
+                    },
                 },
                 "required": ["expert_role", "question", "choices"],
             },
@@ -171,13 +196,18 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "create_message",
-            "description": "Create a visible message in the chat timeline for the user. Use this to provide a human-friendly summary of what was accomplished.",
+            "description": "Create a visible message in the chat timeline for the user. Use this to provide a human-friendly summary of what was accomplished. Optionally attach file IDs so the user can download them.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "content": {
                         "type": "string",
                         "description": "The message content to display to the user",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of attachment IDs to include with the message so the user can download them",
                     },
                 },
                 "required": ["content"],
@@ -255,6 +285,97 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["skill_name"],
+            },
+        },
+    },
+    "make_pdf_document": {
+        "type": "function",
+        "function": {
+            "name": "make_pdf_document",
+            "description": (
+                "Compile a native Typst source file (.typ) into a professionally formatted PDF "
+                "using the Rijnland corporate identity template. "
+                "The agent must first write the .typ file to the workspace, "
+                "then call this tool with the workspace-relative path. "
+                "The resulting PDF is attached to the chat and a download link is returned."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "typ_path": {
+                        "type": "string",
+                        "description": "Workspace-relative path to the .typ source file (e.g. 'docs/functional-design.typ')",
+                    },
+                    "output_pdf_name": {
+                        "type": "string",
+                        "description": "Optional name for the output PDF file. Defaults to '{document_type}-{project_name}.pdf'",
+                    },
+                },
+                "required": ["typ_path"],
+            },
+        },
+    },
+    "verify_typst": {
+        "type": "function",
+        "function": {
+            "name": "verify_typst",
+            "description": (
+                "Run a syntax-only check on a Typst source file before committing it. "
+                "Does not produce a PDF. Use this to catch syntax errors in .typ files "
+                "before pushing to Gitea."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "typ_path": {
+                        "type": "string",
+                        "description": "Workspace-relative path to the .typ file to validate (e.g. 'docs/document.typ')",
+                    },
+                },
+                "required": ["typ_path"],
+            },
+        },
+    },
+    "execute_coding_task": {
+        "type": "function",
+        "function": {
+            "name": "execute_coding_task",
+            "description": (
+                "Execute a coding task in an isolated sandbox. "
+                "IMPORTANT: Each call spawns a FRESH container that clones the project repo from git. "
+                "The sandbox is DESTROYED after the task completes. "
+                "Any work NOT committed and pushed within the sandbox is LOST. "
+                "There is NO persistent workspace between calls — each call starts from the latest git state. "
+                "The sandbox agent will automatically commit and push its work. "
+                "To build on previous work, simply call again — the new sandbox clones the repo with all previous pushes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": (
+                            "The complete task prompt for the sandbox coding agent. "
+                            "This is the ONLY instruction it receives, so be self-contained: "
+                            "describe what to implement, reference files to read for context "
+                            "(e.g. SPEC.md, test files), and include any patterns to follow."
+                        ),
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": "Which sandbox agent to use",
+                    },
+                    "repo_target": {
+                        "type": "string",
+                        "enum": ["project", "druppie_core"],
+                        "description": (
+                            "Which repo the sandbox works on. "
+                            "'project' (default) = session's Gitea project repo. "
+                            "'druppie_core' = Druppie's own GitHub repo (dual-repo: core + project context)."
+                        ),
+                    },
+                },
+                "required": ["task"],
             },
         },
     },
@@ -796,6 +917,7 @@ async def create_message(
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    attachment_ids: list[str] | None = None,
 ) -> dict:
     """Create a visible message in the chat timeline.
 
@@ -807,9 +929,10 @@ async def create_message(
         session_id: Session UUID
         agent_run_id: Agent run UUID for tracking
         execution_repo: Execution repository
+        attachment_ids: Optional list of attachment IDs to link to the message
 
     Returns:
-        Success status
+        Success status with message_id and optional attachment_count
     """
     display_content = content
     try:
@@ -837,28 +960,78 @@ async def create_message(
     seq = execution_repo.get_next_sequence_number(session_id)
 
     message = execution_repo.create_message(
+    caller_agent_id = "summarizer"
+    try:
+        caller_run = execution_repo.get_by_id(agent_run_id)
+        if caller_run and caller_run.agent_id:
+            caller_agent_id = caller_run.agent_id
+    except Exception:
+        logger.debug("caller_agent_id_lookup_failed", agent_run_id=str(agent_run_id))
+
+    message_id = execution_repo.create_message(
         session_id=session_id,
         role="assistant",
         content=display_content,
         content_english=content if display_content != content else None,
         agent_run_id=agent_run_id,
-        agent_id="summarizer",
+        agent_id=caller_agent_id,
         sequence_number=seq,
     )
     execution_repo.flush()
 
-    # Broadcast so the frontend receives the assistant message live
-    from druppie.core.session_event_manager import get_event_manager
-    await get_event_manager().broadcast_message_created(session_id, message)
+    linked_count = 0
+    if attachment_ids:
+        raw_ids = [
+            aid for aid in attachment_ids
+            if aid and isinstance(aid, str) and aid.lower() not in ("null", "none", "")
+        ]
+        if raw_ids:
+            logger.info(
+                "create_message_attachments_received",
+                session_id=str(session_id),
+                raw_count=len(attachment_ids),
+                valid_count=len(raw_ids),
+            )
+            try:
+                from druppie.repositories import AttachmentRepository
+                att_repo = AttachmentRepository(execution_repo.db)
+                att_ids = [UUID(aid) for aid in raw_ids]
+                att_repo.link_to_message(
+                    attachment_ids=att_ids,
+                    message_id=message_id,
+                    session_id=session_id,
+                )
+                linked_count = len(att_ids)
+                execution_repo.flush()
+            except Exception as e:
+                logger.error(
+                    "create_message_attachment_link_failed",
+                    session_id=str(session_id),
+                    message_id=str(message_id),
+                    error=str(e),
+                    exc_info=True,
+                )
+        else:
+            logger.warning(
+                "create_message_no_valid_attachment_ids",
+                session_id=str(session_id),
+                message_id=str(message_id),
+                received=attachment_ids,
+            )
 
     logger.info(
         "create_message",
         session_id=str(session_id),
         agent_run_id=str(agent_run_id),
         content_preview=display_content[:100] if display_content else "",
+        linked_attachments=linked_count,
     )
 
-    return {"status": "created", "message": "Message added to timeline"}
+    result: dict = {"status": "created", "message": "Message added to timeline"}
+    if linked_count:
+        result["attachment_count"] = linked_count
+        result["message_id"] = str(message_id)
+    return result
 
 
 # =============================================================================
@@ -1132,6 +1305,176 @@ async def invoke_skill(
 
 
 # =============================================================================
+# SANDBOX CODING TASK IMPLEMENTATION
+# =============================================================================
+
+async def execute_sandbox_coding_task(
+    args: dict,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Create a sandbox session, send the prompt, register ownership, return immediately.
+
+    Does NOT poll for completion. The control plane will send a webhook
+    to /api/sandbox-sessions/{sandbox_session_id}/complete when done.
+
+    Returns:
+        Dict with status="waiting_sandbox" and sandbox_session_id on success.
+        The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
+    """
+    import json as _json
+    from druppie.opencode import create_and_start_sandbox, SandboxCreateError
+
+    task = args.get("task", "")
+    from druppie.core.config import DEFAULT_SANDBOX_AGENT
+    raw_agent = args.get("agent")
+    raw_repo_target = args.get("repo_target")
+
+    if not task:
+        return {"success": False, "error": "task is required"}
+
+    # Load caller's sandbox_constraints (if any) so defaults can prefer an
+    # allowed value rather than falling through to "project" / DEFAULT_SANDBOX_AGENT
+    # and hitting the validation below.
+    from druppie.agents.runtime import Agent as AgentLoader
+    definition = None
+    constraints = None
+    try:
+        agent_run = execution_repo.get_by_id(agent_run_id)
+        if agent_run and agent_run.agent_id:
+            definition = AgentLoader._load_definition(agent_run.agent_id)
+            if definition and definition.sandbox_constraints:
+                constraints = definition.sandbox_constraints
+    except Exception:
+        logger.debug("sandbox_constraints_load_failed", agent_run_id=str(agent_run_id))
+
+    if raw_agent is not None:
+        agent = raw_agent
+    elif constraints and constraints.allowed_agents and DEFAULT_SANDBOX_AGENT not in constraints.allowed_agents:
+        agent = constraints.allowed_agents[0]
+    else:
+        agent = DEFAULT_SANDBOX_AGENT
+
+    if raw_repo_target is not None:
+        repo_target = raw_repo_target
+    elif constraints and constraints.allowed_repo_targets and "project" not in constraints.allowed_repo_targets:
+        repo_target = constraints.allowed_repo_targets[0]
+    else:
+        repo_target = "project"
+
+    # Enforce per-agent sandbox constraints (e.g. architect can only use explore/druppie_core)
+    if constraints:
+        if constraints.allowed_agents is not None and agent not in constraints.allowed_agents:
+            return {
+                "success": False,
+                "error": (
+                    f"Agent '{definition.id}' is only allowed to use sandbox agents: "
+                    f"{constraints.allowed_agents}. Got: '{agent}'"
+                ),
+            }
+        if constraints.allowed_repo_targets is not None and repo_target not in constraints.allowed_repo_targets:
+            return {
+                "success": False,
+                "error": (
+                    f"Agent '{definition.id}' is only allowed to use repo targets: "
+                    f"{constraints.allowed_repo_targets}. Got: '{repo_target}'"
+                ),
+            }
+
+    model_config = resolve_sandbox_models(agent)
+    model = model_config.primary_model
+
+    # Get project context from the session via repositories
+    from druppie.repositories import SessionRepository, ProjectRepository
+    db = execution_repo.db
+    session_repo = SessionRepository(db)
+    session = session_repo.get_by_id(session_id)
+    if not session:
+        return {"success": False, "error": f"Session {session_id} not found"}
+
+    if not session.user_id:
+        return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
+
+    # Validate repo_target value
+    if repo_target not in VALID_REPO_TARGETS:
+        return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
+
+    from druppie.opencode.repo_context import resolve_repo_context
+    try:
+        repo_ctx = resolve_repo_context(repo_target, session_id, db)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    repo_owner = repo_ctx.repo_owner
+    repo_name = repo_ctx.repo_name
+    git_provider = repo_ctx.git_provider
+    context_repo_owner = repo_ctx.context_repo_owner
+    context_repo_name = repo_ctx.context_repo_name
+    context_git_provider = repo_ctx.context_git_provider
+
+    # Append mandatory push instruction to the task prompt.
+    # The sandbox agent (OpenCode) must push after committing — the deployer
+    # pulls from the remote and unpushed commits are invisible.
+    task += (
+        "\n\n## MANDATORY: Git push after commit"
+        "\nAfter committing your changes, you MUST push to the remote."
+        "\n"
+        "\nFirst, configure git credentials (the git proxy handles auth server-side,"
+        "\nso these are just placeholders to prevent interactive prompts):"
+        "\n```bash"
+        "\ngit config --global credential.helper '!f() { echo username=x; echo password=x; }; f'"
+        "\n```"
+        "\n"
+        "\nThen push:"
+        "\n```bash"
+        "\ngit push origin HEAD"
+        "\n```"
+        "\nVerify the push succeeded by running: git log --oneline origin/HEAD..HEAD"
+        "\n(should show nothing). Do NOT complete the task until push succeeds."
+    )
+
+    try:
+        result = await create_and_start_sandbox(
+            task_prompt=task,
+            model=model,
+            agent_name=agent,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            user_id=session.user_id,
+            session_id=session_id,
+            model_chain=_json.dumps(get_agent_chain(agent)),
+            model_chain_index=0,
+            title=f"Druppie sandbox: {task[:80]}",
+            source="api",
+            author_id="druppie-agent",
+            db=db,
+            git_provider=git_provider,
+            context_repo_owner=context_repo_owner,
+            context_repo_name=context_repo_name,
+            context_git_provider=context_git_provider,
+            repo_target=repo_target,
+        )
+
+        logger.info(
+            "execute_coding_task: prompt sent, pausing for webhook",
+            sandbox_session_id=result["sandbox_session_id"],
+            message_id=result["message_id"],
+        )
+
+        return {
+            "success": True,
+            "status": "waiting_sandbox",
+            "sandbox_session_id": result["sandbox_session_id"],
+            "message_id": result["message_id"],
+        }
+
+    except SandboxCreateError as e:
+        logger.error("execute_coding_task: failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
 # TEST REPORT TOOL IMPLEMENTATION
 # =============================================================================
 
@@ -1231,6 +1574,285 @@ async def read_attachment(
     }
 
 
+async def _resolve_typ_file(
+    typ_path: str,
+    session,
+    executor,
+) -> tuple[Path | None, str | None]:
+    """Resolve a .typ file for builtin tools.
+
+    Checks the local workspace first, runs git pull next, and finally
+    falls back to a direct Gitea API read — the canonical source of truth.
+
+    When falling back to Gitea, also fetches image dependencies
+    (SVG/PNG/JPG files referenced via #image() in the Typst source or
+    exported from ArchiMate models in docs/diagrams/) so that PDF
+    compilation can include them.
+
+    Returns (typ_file, error_message).  typ_file is None when resolution fails.
+    """
+    import subprocess
+
+    from druppie.core.gitea import get_gitea_client
+    from druppie.core.workspace import workspace_path_for_session
+    from druppie.repositories import ProjectRepository
+
+    workspace_path = workspace_path_for_session(session)
+    typ_file = workspace_path / typ_path
+
+    if not typ_file.exists() and (workspace_path / ".git").exists():
+        try:
+            subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=str(workspace_path),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except Exception:
+            logger.warning("_resolve_typ_file_git_pull_failed", session_id=str(session.id), workspace=str(workspace_path))
+            pass
+
+    if not typ_file.exists():
+        project_repo = ProjectRepository(executor.db)
+        project = project_repo.get_by_id(session.project_id)
+        if project and project.repo_name and project.repo_owner:
+            gitea = get_gitea_client()
+            branches = ["main", f"session-{str(session.id)[:8]}"]
+            file_content = None
+            successful_branch = None
+            for branch in branches:
+                try:
+                    file_result = await gitea.get_file(
+                        repo=project.repo_name,
+                        path=typ_path,
+                        branch=branch,
+                        owner=project.repo_owner,
+                    )
+                    if file_result.get("success") and file_result.get("content"):
+                        file_content = file_result["content"]
+                        successful_branch = branch
+                        break
+                except Exception as exc:
+                    logger.warning(
+                        "_resolve_typ_file_gitea_branch_lookup_failed",
+                        session_id=str(session.id),
+                        branch=branch,
+                        typ_path=typ_path,
+                        error=str(exc),
+                    )
+                    continue
+
+            if file_content is not None:
+                fallback_tmp = Path("/app") / "tmp" / "gitea-fallback"
+                fallback_tmp.mkdir(parents=True, exist_ok=True)
+                temp_dir = fallback_tmp / str(session.id)
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                temp_typ = temp_dir / Path(typ_path).name
+                temp_typ.parent.mkdir(parents=True, exist_ok=True)
+                temp_typ.write_text(file_content, encoding="utf-8")
+
+                image_refs: set[str] = set()
+
+                for match in re.finditer(r'[#\s]*image\s*\(', file_content):
+                    start = match.end()
+                    rest = file_content[start:start + 500]
+                    quoted = re.search(r'''["']([^"']+)["']''', rest)
+                    if quoted:
+                        img_path = quoted.group(1).strip()
+                        if img_path.startswith(("http://", "https://", "/")):
+                            continue
+                        image_refs.add(img_path)
+
+                if successful_branch:
+                    try:
+                        listed = await gitea.list_files(
+                            repo=project.repo_name,
+                            path="docs/diagrams",
+                            branch=successful_branch,
+                            owner=project.repo_owner,
+                        )
+                        if listed.get("success") and listed.get("files"):
+                            for f in listed["files"]:
+                                if f.get("path", "").endswith(".svg"):
+                                    image_refs.add(f["path"])
+                    except Exception as exc:
+                        logger.warning(
+                            "_resolve_typ_file_diagram_list_failed",
+                            session_id=str(session.id),
+                            branch=successful_branch,
+                            error=str(exc),
+                        )
+
+                typ_parent = Path(typ_path).parent
+                for img_ref in image_refs:
+                    if img_ref.startswith("docs/"):
+                        gitea_img_path = img_ref
+                    else:
+                        gitea_img_path = str(typ_parent / img_ref) if typ_parent != Path(".") else img_ref
+
+                    try:
+                        img_res = await gitea.get_file(
+                            repo=project.repo_name,
+                            path=gitea_img_path,
+                            branch=successful_branch,
+                            owner=project.repo_owner,
+                        )
+                        if img_res.get("success") and img_res.get("data", {}).get("content"):
+                            raw_b64 = img_res["data"]["content"]
+                            try:
+                                img_bytes = base64.b64decode(raw_b64)
+                                local_img = temp_dir / img_ref
+                                local_img.parent.mkdir(parents=True, exist_ok=True)
+                                local_img.write_bytes(img_bytes)
+                            except (ValueError, OSError) as exc:
+                                logger.warning(
+                                    "_resolve_typ_file_image_decode_failed",
+                                    session_id=str(session.id),
+                                    img_ref=img_ref,
+                                    error=str(exc),
+                                )
+                                continue
+                    except Exception as exc:
+                        logger.warning(
+                            "_resolve_typ_file_image_download_failed",
+                            session_id=str(session.id),
+                            img_ref=img_ref,
+                            error=str(exc),
+                        )
+                        continue
+
+                return temp_typ, None
+            else:
+                return None, f"Typst source file not found in Gitea or workspace: {typ_path}"
+        else:
+            return None, f"Typst source file not found: {typ_path}"
+
+    if not typ_file.exists():
+        return None, f"Typst source file not found: {typ_path}"
+
+    return typ_file, None
+
+
+async def make_pdf_document(
+    typ_path: str,
+    output_pdf_name: str | None,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Compile a native Typst source file into a PDF via render cache.
+
+    Caches renders keyed by the source file's Git blob SHA so identical
+    revisions are served instantly without recompiling.
+    """
+    from druppie.repositories import SessionRepository
+    from druppie.services.pdf_render_service import PdfRenderService
+
+    db = execution_repo.db
+    session_repo = SessionRepository(db)
+    session = session_repo.get_by_id(session_id)
+    if not session:
+        return {"success": False, "error": f"Session {session_id} not found"}
+
+    if not session.project_id:
+        return {"success": False, "error": "Session has no project"}
+
+    from druppie.repositories import ProjectRepository
+    project_repo = ProjectRepository(execution_repo.db)
+    project = project_repo.get_by_id(session.project_id)
+    if not project or not project.repo_name or not project.repo_owner:
+        return {"success": False, "error": "Project has no Gitea repository configured"}
+
+    branches = ["main", f"session-{str(session.id)[:8]}"]
+    service = PdfRenderService(db=db)
+    pdf_bytes, storage_path, error = await service.get_or_create_pdf(
+        project_id=session.project_id,
+        repo_name=project.repo_name,
+        repo_owner=project.repo_owner,
+        typ_path=typ_path,
+        branches=branches,
+        output_pdf_name=output_pdf_name,
+    )
+    if error:
+        return {"success": False, "error": error}
+
+    pdf_name = output_pdf_name or f"{Path(typ_path).stem}.pdf"
+    pdf_name = pdf_name.replace(" ", "_").replace("/", "_")
+
+    attachment_id = None
+    attachment_error = None
+    try:
+        from druppie.repositories import AttachmentRepository
+
+        att_repo = AttachmentRepository(db)
+        attachment = att_repo.create(
+            original_filename=pdf_name,
+            content_type="application/pdf",
+            file_size=len(pdf_bytes),
+            storage_path=storage_path,
+            session_id=session_id,
+            owner_user_id=session.user_id,
+        )
+        db.flush()
+        attachment_id = str(attachment.id)
+    except Exception as e:
+        attachment_error = str(e)
+        logger.error(
+            "pdf_attachment_storage_failed",
+            session_id=str(session_id),
+            pdf_name=pdf_name,
+            error=attachment_error,
+            exc_info=True,
+        )
+
+    if not attachment_id:
+        return {
+            "success": False,
+            "error": f"PDF was generated but could not be made downloadable: {attachment_error or 'unknown attachment storage error'}. PDF path: {pdf_name}",
+            "pdf_path": pdf_name,
+            "pdf_size": len(pdf_bytes),
+        }
+
+    return {
+        "success": True,
+        "pdf_path": pdf_name,
+        "pdf_size": len(pdf_bytes),
+        "message": f"PDF generated: {pdf_name} ({len(pdf_bytes)} bytes)",
+        "attachment_id": attachment_id,
+    }
+
+
+async def verify_typst(
+    typ_path: str,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Run a syntax-only check on a .typ file. Does not produce a PDF."""
+    from druppie.repositories import SessionRepository
+
+    db = execution_repo.db
+    session_repo = SessionRepository(db)
+    session = session_repo.get_by_id(session_id)
+    if not session:
+        return {"success": False, "error": f"Session {session_id} not found"}
+
+    typ_file, error = await _resolve_typ_file(typ_path, session, execution_repo)
+    if error:
+        return {"success": False, "error": error}
+
+    from druppie.services.document_formatter_service import DocumentFormatterService
+
+    service = DocumentFormatterService()
+    is_valid, error_msg = service.verify_typ(typ_file)
+
+    if is_valid:
+        return {"success": True, "message": f"{typ_path} is syntactically valid."}
+    else:
+        return {"success": False, "error": f"Syntax check failed for {typ_path}:\n{error_msg}"}
+
+
 # =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
@@ -1280,6 +1902,7 @@ async def execute_builtin(
             session_id=session_id,
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
+            attachment_ids=args.get("attachment_ids"),
         )
     elif tool_name == "set_intent":
         return await set_intent(
@@ -1293,6 +1916,28 @@ async def execute_builtin(
     elif tool_name == "invoke_skill":
         return await invoke_skill(
             skill_name=args.get("skill_name", ""),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
+    elif tool_name == "make_pdf_document":
+        return await make_pdf_document(
+            typ_path=args.get("typ_path", ""),
+            output_pdf_name=args.get("output_pdf_name"),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
+    elif tool_name == "verify_typst":
+        return await verify_typst(
+            typ_path=args.get("typ_path", ""),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
+    elif tool_name == "execute_coding_task":
+        return await execute_sandbox_coding_task(
+            args=args,
             session_id=session_id,
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
@@ -1337,6 +1982,9 @@ def is_builtin_tool(tool_name: str) -> bool:
         "set_intent",
         "create_message",
         "invoke_skill",
+        "make_pdf_document",
+        "verify_typst",
+        "execute_coding_task",
         "test_report",
         "read_attachment",
     )

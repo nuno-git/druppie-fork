@@ -40,6 +40,9 @@ croniter>=2.0.0
 pypdf>=4.0.0
 pymupdf>=1.24.0
 
+# Document formatting (Typst integration)
+typst>=0.5.0
+
 # Logging
 structlog>=24.1.0
 

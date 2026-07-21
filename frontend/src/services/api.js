@@ -5,11 +5,13 @@
  * Sessions replace Plans, and endpoints use the new API structure.
  */
 
-import { getToken } from './keycloak'
+import { getToken, ensureValidToken, redirectToLogin } from './keycloak'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const request = async (endpoint, options = {}) => {
+  await ensureValidToken(30)
+
   const token = getToken()
 
   const isFormData = options.body instanceof FormData
@@ -34,6 +36,15 @@ const request = async (endpoint, options = {}) => {
       ...options,
       headers,
     })
+
+    if (response.status === 401 && !options.__retried) {
+      const refreshed = await ensureValidToken(60)
+      if (refreshed) {
+        return request(endpoint, { ...options, __retried: true })
+      }
+      redirectToLogin()
+      throw new Error('Session expired — please log in again')
+    }
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
@@ -97,9 +108,40 @@ export const uploadAttachment = async (file, sessionId = null) => {
 }
 
 export const getAttachmentUrl = (attachmentId) => {
+  return `${API_URL}/api/attachments/${attachmentId}`
+}
+
+export const downloadAttachment = async (attachmentId) => {
   const token = getToken()
-  const params = token ? `?token=${encodeURIComponent(token)}` : ''
-  return `${API_URL}/api/attachments/${attachmentId}${params}`
+  const response = await fetch(`${API_URL}/api/attachments/${attachmentId}`, {
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+  })
+  if (!response.ok) throw new Error(`Failed to fetch attachment: ${response.status}`)
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = attachmentId
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
+}
+
+export const getAvatarUrl = async () => {
+  const token = getToken()
+  if (!token) return null
+  try {
+    const response = await fetch(`${API_URL}/api/users/me/avatar`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+      cache: 'no-store',
+    })
+    if (!response.ok) return null
+    const blob = await response.blob()
+    return URL.createObjectURL(blob)
+  } catch {
+    return null
+  }
 }
 
 export const getSandboxEvents = async (sessionId, messageId) => {
@@ -153,6 +195,11 @@ export const resumeSession = (sessionId, contexts = null) => {
 
 export const getResumableRuns = (sessionId) =>
   request(`/api/sessions/${sessionId}/resumable`)
+
+export const authorizeEntra = (sessionId) =>
+  request(`/api/sessions/${sessionId}/authorize-entra`, { method: 'POST' })
+
+export const getDataSources = () => request('/api/datasources')
 
 export const deleteSessions = (sessionIds) =>
   request('/api/sessions', {
