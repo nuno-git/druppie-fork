@@ -150,7 +150,7 @@ def main():
         # view nodes stay at (0,0) and the SVG renderer correctly defers them
         # to the browser. Simulate ELK's output by assigning positions, so the
         # persist() SVG-push branch is genuinely exercised.
-        doc = registry._docs[("sess-1", "docs/architecture.archimate")]
+        doc = registry._docs[("sess-1", "alice", "proj", "docs/architecture.archimate")]
         gx = 40
         for node in doc.root.findall("am:views/am:diagrams/am:view/am:node", writer.NS):
             node.set("x", str(gx))
@@ -175,6 +175,50 @@ def main():
 def test_all_write_tools_gitea():
     """Pytest entry point — drives every write tool over the Gitea flow."""
     main()
+
+
+def test_buffer_is_scoped_per_repo():
+    """Same session_id + model_path on two different repos must not cross.
+
+    Regression guard for the buffer-key scoping: the registry keys buffers by
+    (session_id, owner, repo_name, model_path), so a session touching two repos
+    with the identical default model_path never serves or persists the wrong
+    repo's model.
+    """
+    store = FakeStore()
+    registry = writer.WriteSessionRegistry(MODELS_DIR, store=store)
+    writer._REGISTRY = registry
+    write_tools.get_registry = lambda: registry
+    mcp = FakeMCP()
+    write_tools.register_write_tools(mcp, module_id="archimate", module_version="1.0.0")
+    T = mcp.tools
+    mp = "docs/architecture.archimate"
+
+    async def run():
+        # Build an element in repo A, then in repo B — same session, same path.
+        ra = await T["create_element"](
+            session_id="s", repo_owner="alice", repo_name="pA",
+            element_type="ApplicationComponent", name="OnlyInA")
+        assert ra["success"], ra
+        rb = await T["create_element"](
+            session_id="s", repo_owner="bob", repo_name="pB",
+            element_type="ApplicationComponent", name="OnlyInB")
+        assert rb["success"], rb
+
+        # Two distinct buffers exist, one per repo.
+        keys = set(registry._docs)
+        assert ("s", "alice", "pA", mp) in keys, keys
+        assert ("s", "bob", "pB", mp) in keys, keys
+
+        doc_a = registry._docs[("s", "alice", "pA", mp)]
+        doc_b = registry._docs[("s", "bob", "pB", mp)]
+        names_a = {writer._find_text(e, "name") for e in doc_a.root.findall("am:elements/am:element", writer.NS)}
+        names_b = {writer._find_text(e, "name") for e in doc_b.root.findall("am:elements/am:element", writer.NS)}
+        assert "OnlyInA" in names_a and "OnlyInB" not in names_a, names_a
+        assert "OnlyInB" in names_b and "OnlyInA" not in names_b, names_b
+
+    asyncio.run(run())
+    print("buffer scoped per repo OK")
 
 
 if __name__ == "__main__":

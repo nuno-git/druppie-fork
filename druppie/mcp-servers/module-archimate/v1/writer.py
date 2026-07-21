@@ -1084,11 +1084,22 @@ class WriteSessionRegistry:
 
         self.models_dir = Path(models_dir)
         self.store = store or GiteaFileStore()
-        self._docs: dict[tuple[str, str], ArchiMateDocument] = {}
+        # Buffers are keyed by (session_id, owner, repo_name, model_path) so a
+        # session that ever touches two repos with the same model_path (both
+        # default to docs/architecture.archimate) never crosses their buffers
+        # or blob shas — the wrong repo's model would otherwise be served and
+        # pushed back with a stale sha.
+        self._docs: dict[tuple[str, str, str, str], ArchiMateDocument] = {}
         # Gitea blob sha per buffered doc, so save() can update in place
         # instead of failing on "file already exists".
-        self._sha: dict[tuple[str, str], str | None] = {}
+        self._sha: dict[tuple[str, str, str, str], str | None] = {}
         self._wilma: ArchiMateDocument | None = None
+
+    @staticmethod
+    def _buffer_key(
+        session_id: str, owner: str, repo_name: str, model_path: str
+    ) -> tuple[str, str, str, str]:
+        return (session_id, owner, repo_name, model_path)
 
     # --- Document access (Gitea-backed) ---------------------------------
 
@@ -1122,11 +1133,11 @@ class WriteSessionRegistry:
 
         from .gitea_io import GiteaError
 
-        key = (session_id, model_path)
+        owner = repo_owner or self.store.org
+        key = self._buffer_key(session_id, owner, repo_name, model_path)
         if key in self._docs:
             return self._docs[key]
 
-        owner = repo_owner or self.store.org
         try:
             content, sha = await self.store.get_file(
                 owner=owner, repo=repo_name, path=model_path, ref=branch
@@ -1164,14 +1175,14 @@ class WriteSessionRegistry:
         from .gitea_io import GiteaError
         from .svg_export import render_all_views
 
-        key = (session_id, model_path)
+        owner = repo_owner or self.store.org
+        key = self._buffer_key(session_id, owner, repo_name, model_path)
         doc = self._docs.get(key)
         if doc is None:
             raise ArchiMateWriteError(
                 f"No buffered model for session '{session_id}' / '{model_path}'. "
                 f"Build the plate before calling save_model."
             )
-        owner = repo_owner or self.store.org
         if not doc.dirty:
             return {"path": model_path, "written": False, "reason": "no_changes",
                     "svg_exports": []}
@@ -1216,8 +1227,13 @@ class WriteSessionRegistry:
         return {"path": model_path, "written": True, "svg_exports": svg_exports}
 
     def discard(self, session_id: str, model_path: str) -> None:
-        self._docs.pop((session_id, model_path), None)
-        self._sha.pop((session_id, model_path), None)
+        # Drops the buffer for this model across whatever repo it was fetched
+        # from — the key now also carries owner/repo_name, so match on the
+        # session + model_path ends of the tuple.
+        for key in list(self._docs):
+            if key[0] == session_id and key[3] == model_path:
+                self._docs.pop(key, None)
+                self._sha.pop(key, None)
 
     def discard_session(self, session_id: str) -> None:
         for key in list(self._docs):
