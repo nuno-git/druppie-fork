@@ -1,6 +1,6 @@
 ---
 id: "002"
-title: "Kubernetes migratie architectuur"
+title: "Kubernetes migration architecture"
 status: accepted
 date: 2026-06-09
 deciders:
@@ -11,136 +11,136 @@ linked_prd: null
 linked_research: docs/research/006-kubernetes-strategy.md
 ---
 
-# ADR-001: Kubernetes Migratie Architectuur
+# ADR-001: Kubernetes Migration Architecture
 
-| Veld | Waarde |
+| Field | Value |
 |------|--------|
-| **Status** | Geaccepteerd (geïmplementeerd — zie implementatie status hieronder) |
-| **Datum** | 2026-06-09 (besluit), 2026-06-15 (implementatie status update) |
-| **Auteur** | Druppie Team |
-| **Deciders** | Druppie architectuurteam |
-| **Referentie** | [KUBERNETES-STRATEGY.md](../research/006-kubernetes-strategy.md) |
+| **Status** | Accepted (implemented — see implementation status below) |
+| **Date** | 2026-06-09 (decision), 2026-06-15 (implementation status update) |
+| **Author** | Druppie Team |
+| **Deciders** | Druppie architecture team |
+| **Reference** | [KUBERNETES-STRATEGY.md](../research/006-kubernetes-strategy.md) |
 
-> **Note (huidige staat):** Deze beslissingen reflecteren de live Hetzner K3s deployment. Het as-built systeem is gedocumenteerd in `docs/research/007-kubernetes-as-built-analysis.md`. Een migratie naar een gedeeld lokaal Rancher cluster is gepland. Beslissingen die hieronder gemarkeerd zijn als *superseded pending local-Rancher migratie* worden herzien voor lokale hardware.
+> **Note (current state):** These decisions reflect the live Hetzner K3s deployment. The as-built system is documented in `docs/research/007-kubernetes-as-built-analysis.md`. A migration to a shared local Rancher cluster is planned. Decisions marked below as *superseded pending local-Rancher migration* will be revised for local hardware.
 
 ---
 
-## Beslissingsoverzicht
+## Decision Overview
 
-| # | Beslissing | Keuze | Reden |
+| # | Decision | Choice | Rationale |
 |---|-----------|-------|-------|
-| 4.1 | Hosting | **Hetzner VMs + Ubuntu** | Commodity cloud, geen vendor lock-in, ~€80/mo basis (3 servers + infra + app pool) |
-| 4.2 | Platform | **K3s (3 servers + 2 agent pools)** | CNCF certified, 3 servers voor etcd quorum, vaste infra pool + autoscaled app pool |
-| 4.3 | Database | **CloudNativePG** | CNCF Sandbox, auto-failover <30s, ingebouwde PgBouncer, 1 operator voor 3 instances |
-| 4.4 | Autoscaling | **HPA + KEDA** | HPA voor frontend (CPU), KEDA voor backend (LLM I/O-bound, CPU alleen is te traag) |
-| 4.5 | Networking | **Traefik + cert-manager** | K3s standaard, Middleware CRDs, Let's Encrypt via cert-manager |
-| 4.6 | Secrets | **Sealed Secrets** | Asymmetrisch versleuteld in git, lage complexiteit, geen extra infra |
-| 4.7 | Monitoring | **kube-prometheus-stack** | De-facto standaard, Prometheus + Grafana + Alertmanager in 1 Helm chart |
-| 4.8 | Registry | **Gitea Container Registry** | Al aanwezig in Druppie, OCI-compatible, nul extra infra |
-| 4.9 | Deployment | **PR-based CI/CD op colab-dev** | GitHub Actions: PR merge naar `colab-dev` triggert build → push → deploy |
-| 4.10 | MCP Modules | **Shared volume, vaste replicas** | Worden herbouwd als built-in backend tools, shared volume is tijdelijk en voldoende |
-| 4.11 | High Availability | **PDB + anti-affinity + graceful shutdown** | Backend en frontend beschikbaar houden bij node failures en rolling updates |
-| 4.12 | Cluster Provisioning | **hetzner-k3s CLI** | Ubuntu, 1 YAML config, 2-3 min cluster, alles ingebouwd (CCM, CSI, autoscaler) |
-| 4.13 | Node Autoscaling | **Kubernetes Cluster Autoscaler (Hetzner provider)** | Upstream K8s, auto-provisioneert VMs bij Pending pods, ~60s nieuwe node |
+| 4.1 | Hosting | **Hetzner VMs + Ubuntu** | Commodity cloud, no vendor lock-in, ~€80/mo base (3 servers + infra + app pool) |
+| 4.2 | Platform | **K3s (3 servers + 2 agent pools)** | CNCF certified, 3 servers for etcd quorum, fixed infra pool + autoscaled app pool |
+| 4.3 | Database | **CloudNativePG** | CNCF Sandbox, auto-failover <30s, built-in PgBouncer, 1 operator for 3 instances |
+| 4.4 | Autoscaling | **HPA + KEDA** | HPA for frontend (CPU), KEDA for backend (LLM I/O-bound, CPU alone is too slow) |
+| 4.5 | Networking | **Traefik + cert-manager** | K3s default, Middleware CRDs, Let's Encrypt via cert-manager |
+| 4.6 | Secrets | **Sealed Secrets** | Asymmetrically encrypted in git, low complexity, no extra infra |
+| 4.7 | Monitoring | **kube-prometheus-stack** | De facto standard, Prometheus + Grafana + Alertmanager in 1 Helm chart |
+| 4.8 | Registry | **Gitea Container Registry** | Already present in Druppie, OCI-compatible, zero extra infra |
+| 4.9 | Deployment | **PR-based CI/CD on colab-dev** | GitHub Actions: PR merge to `colab-dev` triggers build → push → deploy |
+| 4.10 | MCP Modules | **Shared volume, fixed replicas** | Being rebuilt as built-in backend tools, shared volume is temporary and sufficient |
+| 4.11 | High Availability | **PDB + anti-affinity + graceful shutdown** | Keep backend and frontend available during node failures and rolling updates |
+| 4.12 | Cluster Provisioning | **hetzner-k3s CLI** | Ubuntu, 1 YAML config, 2-3 min cluster, everything built in (CCM, CSI, autoscaler) |
+| 4.13 | Node Autoscaling | **Kubernetes Cluster Autoscaler (Hetzner provider)** | Upstream K8s, auto-provisions VMs on Pending pods, ~60s for a new node |
 
 ---
 
 ## Context
 
-Druppie draait op Docker Compose: een FastAPI backend, React frontend, 9 MCP microservices, Keycloak, Gitea, 3 PostgreSQL databases, en een sandbox-infrastructuur. De backend draait op 1 hardcoded replica. Er is geen autoscaling, geen database HA, en geen production-ready monitoring.
+Druppie runs on Docker Compose: a FastAPI backend, React frontend, 9 MCP microservices, Keycloak, Gitea, 3 PostgreSQL databases, and a sandbox infrastructure. The backend runs on 1 hardcoded replica. There is no autoscaling, no database HA, and no production-ready monitoring.
 
-De migratie naar Kubernetes lost drie problemen op:
+The migration to Kubernetes solves three problems:
 
-1. **Schaalbaarheid**: Backend en frontend moeten horizontaal schaalbaar zijn voor wisselende belasting
-2. **Betrouwbaarheid**: Single points of failure elimineren (database failover, PDB, anti-affinity)
-3. **Onderhoudbaarheid**: Gecentraliseerde monitoring, declaratieve configuratie, reproduceerbare deployments
+1. **Scalability**: Backend and frontend must be horizontally scalable for varying load
+2. **Reliability**: Eliminate single points of failure (database failover, PDB, anti-affinity)
+3. **Maintainability**: Centralized monitoring, declarative configuration, reproducible deployments
 
-Uitgangspunten: 100% open source, geen vendor lock-in, portable Helm chart.
+Guiding principles: 100% open source, no vendor lock-in, portable Helm chart.
 
-Het spike-onderzoek ([KUBERNETES-STRATEGY.md](../research/006-kubernetes-strategy.md)) bevat de volledige vergelijkingsmatrixen en technische onderbouwing voor alle keuzes hieronder.
+The spike investigation ([KUBERNETES-STRATEGY.md](../research/006-kubernetes-strategy.md)) contains the full comparison matrices and technical justification for all choices below.
 
 ---
 
-## Beslissingen
+## Decisions
 
 ### 4.1 Hosting: Hetzner VMs + Ubuntu — ⚠️ superseded pending local-Rancher migration
 
-**Gekozen:** 3x Hetzner Cloud VM (CPX31: 4 vCPU, 8GB RAM, 160GB NVMe) met Ubuntu als OS.
+**Chosen:** 3x Hetzner Cloud VM (CPX31: 4 vCPU, 8GB RAM, 160GB NVMe) with Ubuntu as the OS.
 
-**Waarom:** Cloud VMs zijn commodity. K3s draait op elke Linux machine. Verhuizen naar een andere provider (OVH, Scaleway, on-prem) betekent nieuwe VMs provisionen + K3s installeren + `helm install`. Geen cloud-specifieke API's, geen proprietary services, geen lock-in.
+**Why:** Cloud VMs are commodity. K3s runs on any Linux machine. Moving to a different provider (OVH, Scaleway, on-prem) means provisioning new VMs + installing K3s + `helm install`. No cloud-specific APIs, no proprietary services, no lock-in.
 
-Ubuntu is de meest geteste OS voor K3s, heeft brede documentatie, en langdurige support releases (LTS).
+Ubuntu is the most tested OS for K3s, has broad documentation, and long-term support releases (LTS).
 
-**Afgewezen:**
-- Bare metal: hoge CAPEX, fysiek begrensd, niet snel schaalbaar
-- Managed Kubernetes (EKS, AKS, GKE): vendor lock-in, proprietary API's
-- On-premises: geen data-residency eis die dit rechtvaardigt
+**Rejected:**
+- Bare metal: high CAPEX, physically constrained, not quickly scalable
+- Managed Kubernetes (EKS, AKS, GKE): vendor lock-in, proprietary APIs
+- On-premises: no data-residency requirement that justifies it
 
-### 4.2 Platform: K3s (3-server HA + twee agent pools)
+### 4.2 Platform: K3s (3-server HA + two agent pools)
 
-**Gekozen:** K3s met een vast cluster van 3 server nodes (embedded etcd HA) plus twee agent pools: een vaste "infra" pool en een autoscaled "app" pool.
+**Chosen:** K3s with a fixed cluster of 3 server nodes (embedded etcd HA) plus two agent pools: a fixed "infra" pool and an autoscaled "app" pool.
 
-**Waarom:** K3s is CNCF-gecertificeerd (volledige Kubernetes API, identieke conformance tests). Eén binary van 70MB met alles erin: API server, scheduler, controller manager, etcd, containerd, Flannel CNI, CoreDNS, Traefik ingress, local-path storage.
+**Why:** K3s is CNCF-certified (full Kubernetes API, identical conformance tests). A single 70MB binary with everything included: API server, scheduler, controller manager, etcd, containerd, Flannel CNI, CoreDNS, Traefik ingress, local-path storage.
 
-**Node architectuur:**
+**Node architecture:**
 
-| Rol | Aantal | Type | Functie | Scaling |
+| Role | Count | Type | Function | Scaling |
 |-----|--------|------|---------|---------|
-| **K3s Server** | **3 (vast)** | CPX31 (4 vCPU, 8GB) | Control plane: API server, scheduler, etcd | Niet autoscalable. 3 = minimum voor etcd quorum (1 mag falen) |
-| **K3s Agent — infra pool** | **1-2 (vast)** | CPX31 (4 vCPU, 8GB) | Keycloak, Gitea, MCP modules, CNPG, monitoring | Niet autoscalable. Stabiele workloads die niet geëvinceerd mogen worden |
-| **K3s Agent — app pool** | **1-10 (autoscaling)** | CPX31 (4 vCPU, 8GB) | Backend, Frontend | Cluster Autoscaler voegt toe/verwijdert op basis van Pending pods |
+| **K3s Server** | **3 (fixed)** | CPX31 (4 vCPU, 8GB) | Control plane: API server, scheduler, etcd | Not autoscalable. 3 = minimum for etcd quorum (1 may fail) |
+| **K3s Agent — infra pool** | **1-2 (fixed)** | CPX31 (4 vCPU, 8GB) | Keycloak, Gitea, MCP modules, CNPG, monitoring | Not autoscalable. Stable workloads that must not be evicted |
+| **K3s Agent — app pool** | **1-10 (autoscaling)** | CPX31 (4 vCPU, 8GB) | Backend, Frontend | Cluster Autoscaler adds/removes based on Pending pods |
 
-**Waarom 3 servers:** Etcd vereist een quorum (meerderheid) voor consistency. Met 3 nodes is het quorum 2 — 1 server mag falen zonder dat het cluster uitvalt. 1 server = geen HA (single point of failure). 5 servers = 2 mogen falen, maar overkill voor Druppie's schaal.
+**Why 3 servers:** Etcd requires a quorum (majority) for consistency. With 3 nodes the quorum is 2 — 1 server may fail without the cluster going down. 1 server = no HA (single point of failure). 5 servers = 2 may fail, but overkill for Druppie's scale.
 
-**Waarom twee agent pools:** Backend en frontend hebben wisselende load en moeten schalen. Keycloak, Gitea, MCP modules en CNPG hebben constante, voorspelbare load en mogen niet verstoord worden door de Cluster Autoscaler. Het scheiden in twee pools voorkomt dat infra services geëvinceerd worden wanneer de autoscaler nodes verwijdert. Dit houdt de setup het dichtst bij de Docker Compose / Kind architectuur waar alles "gewoon draait".
+**Why two agent pools:** Backend and frontend have varying load and must scale. Keycloak, Gitea, MCP modules and CNPG have constant, predictable load and must not be disrupted by the Cluster Autoscaler. Separating them into two pools prevents infra services from being evicted when the autoscaler removes nodes. This keeps the setup closest to the Docker Compose / Kind architecture where everything "just runs".
 
-**Waarom masters geen workloads draaien:** `schedule_workloads_on_masters: false` in hetzner-k3s. De control plane moet geïsoleerd blijven — als workloads alle resources verbruiken, reageert de API server niet meer.
+**Why masters run no workloads:** `schedule_workloads_on_masters: false` in hetzner-k3s. The control plane must remain isolated — if workloads consume all resources, the API server stops responding.
 
 ```
-┌─ 3x K3s Server (vast) ───────────────────────────────┐
+┌─ 3x K3s Server (fixed) ──────────────────────────────┐
 │  etcd quorum + API server + scheduler                 │
-│  Geen workloads (NoSchedule taint)                    │
+│  No workloads (NoSchedule taint)                      │
 └───────────────────────────────────────────────────────┘
 
-┌─ 1-2x Agent: infra pool (vast) ──────────────────────┐
+┌─ 1-2x Agent: infra pool (fixed) ─────────────────────┐
 │  Keycloak (1 pod)    Gitea (1 pod + registry)         │
 │  MCP modules (9 pods, shared volume)                  │
 │  CloudNativePG (3 DB clusters, 9 pods)                │
 │  Monitoring (Prometheus, Grafana, Alertmanager)        │
 │  Sealed Secrets, cert-manager, KEDA, Cluster Autoscl. │
-│  → Vaste nodes, nooit geëvinceerd                     │
+│  → Fixed nodes, never evicted                         │
 └───────────────────────────────────────────────────────┘
 
 ┌─ 1-10x Agent: app pool (autoscaling) ────────────────┐
 │  Backend (2-10 pods, HPA + KEDA)                      │
 │  Frontend (2-8 pods, HPA)                             │
-│  → Cluster Autoscaler beheert dit pool                │
+│  → Cluster Autoscaler manages this pool               │
 └───────────────────────────────────────────────────────┘
 ```
 
-**Afgewezen:**
-- RKE2: meer resources, complexer, pas nuttig bij multi-cluster management
-- OpenShift/OKD: ~8GB+ RAM footprint, afwijkende standaarden (Routes, SCC), Dockerfile aanpassingen nodig
-- Vanilla kubeadm: veel handmatig werk, geen ingebouwde tooling
-- Kind: alleen voor development/CI, geen persistent storage, geen HA
+**Rejected:**
+- RKE2: more resources, more complex, only useful for multi-cluster management
+- OpenShift/OKD: ~8GB+ RAM footprint, divergent standards (Routes, SCC), Dockerfile changes required
+- Vanilla kubeadm: a lot of manual work, no built-in tooling
+- Kind: development/CI only, no persistent storage, no HA
 
-**Development/CI:** Kind blijft in gebruik voor lokale development en CI pipelines.
+**Development/CI:** Kind remains in use for local development and CI pipelines.
 
 ### 4.3 Database: CloudNativePG
 
-**Gekozen:** CloudNativePG operator (v1.29.1+) met 3 database clusters: `druppie-db`, `keycloak-db`, `gitea-db`.
+**Chosen:** CloudNativePG operator (v1.29.1+) with 3 database clusters: `druppie-db`, `keycloak-db`, `gitea-db`.
 
-> **Implementatie status (juni 2026):** ✅ Voltooid met afwijkingen:
-> - **instances=1** per cluster (ADR stelt 3 voor). Reden: kostenbesparing op CPX32 nodes. Upgrade naar `instances: 3` is een one-line values change wanneer een tweede infra node beschikbaar is.
-> - **PgBouncer Pooler** (2 instances, transaction-mode) toegevoegd voor druppie-db. Dit was niet in het oorspronkelijke plan maar essentieel gebleken: lost connection pool exhaustion op bij hoge load (125+ rps).
-> - Data succesvol gemigreerd van oude StatefulSet PVCs.
-> - **Nog ontbreken:** HA replicas (instances=3), backups naar S3/MinIO, geautomatiseerde password sync.
+> **Implementation status (June 2026):** ✅ Completed with deviations:
+> - **instances=1** per cluster (ADR proposes 3). Reason: cost savings on CPX32 nodes. Upgrading to `instances: 3` is a one-line values change once a second infra node is available.
+> - **PgBouncer Pooler** (2 instances, transaction-mode) added for druppie-db. This was not in the original plan but proved essential: it resolves connection pool exhaustion under high load (125+ rps).
+> - Data successfully migrated from the old StatefulSet PVCs.
+> - **Still missing:** HA replicas (instances=3), backups to S3/MinIO, automated password sync.
 
-**Waarom:** CloudNativePG is de enige PostgreSQL operator met CNCF Sandbox status. Het beheert de volledige lifecycle: provisioning, streaming replicatie, automatische failover (<30s), continuous backup naar S3/MinIO, point-in-time recovery, zero-downtime rolling updates, en ingebouwde PgBouncer connection pooling.
+**Why:** CloudNativePG is the only PostgreSQL operator with CNCF Sandbox status. It manages the full lifecycle: provisioning, streaming replication, automatic failover (<30s), continuous backup to S3/MinIO, point-in-time recovery, zero-downtime rolling updates, and built-in PgBouncer connection pooling.
 
-Eén operator beheert alle drie de databases als aparte `Cluster` CRDs. Geen extra infrastructuur.
+A single operator manages all three databases as separate `Cluster` CRDs. No extra infrastructure.
 
-**Belangrijk:** Altijd v1.29.1+ gebruiken. Deze release fixt CVE-2026-44477 (CVSS 9.4, Critical) en drie HA failover bugs.
+**Important:** Always use v1.29.1+. This release fixes CVE-2026-44477 (CVSS 9.4, Critical) and three HA failover bugs.
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
@@ -172,33 +172,33 @@ spec:
     enablePodMonitor: true
 ```
 
-**Afgewezen:**
-- CrunchyData PGO: 19 CRDs (vs 6 voor CNPG), complexere configuratie, geen CNCF status
-- Zalando PG Operator: minder actief onderhouden, geen ingebouwde backup
+**Rejected:**
+- CrunchyData PGO: 19 CRDs (vs 6 for CNPG), more complex configuration, no CNCF status
+- Zalando PG Operator: less actively maintained, no built-in backup
 - Managed database (cloud): vendor lock-in
-- Container PostgreSQL: geen HA, geen failover, geen backup (alleen dev)
+- Container PostgreSQL: no HA, no failover, no backup (dev only)
 
 ### 4.4 Autoscaling: HPA + KEDA
 
-**Gekozen:** HPA (CPU-based) voor frontend, KEDA (dual-trigger) voor backend.
+**Chosen:** HPA (CPU-based) for frontend, KEDA (dual-trigger) for backend.
 
-> **Implementatie status (juni 2026):** ✅ Voltooid met belangrijke afwijking:
-> - **Dual triggers** in plaats van Prometheus-only: PostgreSQL query (`agent_runs WHERE status='running'`) **+** CPU utilization 55%. Beide nodig: PG trigger vangt LLM I/O-bound werk op, CPU trigger vangt read-heavy GET load op.
-> - **minReplicas: 3** (proactieve baseline, niet 2 zoals ADR).
+> **Implementation status (June 2026):** ✅ Completed with an important deviation:
+> - **Dual triggers** instead of Prometheus-only: PostgreSQL query (`agent_runs WHERE status='running'`) **+** CPU utilization 55%. Both needed: the PG trigger catches LLM I/O-bound work, the CPU trigger catches read-heavy GET load.
+> - **minReplicas: 3** (proactive baseline, not 2 as in the ADR).
 > - **Aggressive scale-up:** +4 pods/30s, `stabilizationWindowSeconds: 0`.
-> - `metricType` op trigger niveau (KEDA v2.20 API — NIET in metadata).
-> - **Load test bewezen:** 125 rps → p95=508ms, 1→6 pods, 100% success rate.
+> - `metricType` at the trigger level (KEDA v2.20 API — NOT in metadata).
+> - **Load test proven:** 125 rps → p95=508ms, 1→6 pods, 100% success rate.
 
-**Waarom HPA voor beide services:** Frontend is pure static file serving, CPU is een betrouwbare metric. Backend krijgt HPA als basislaag.
+**Why HPA for both services:** The frontend is pure static file serving, CPU is a reliable metric. The backend gets HPA as a base layer.
 
-**Waarom KEDA extra voor de backend:** LLM calls zijn I/O-bound (wachten op externe API responses), niet CPU-bound. CPU-utilisatie blijft laag terwijl de wachtrij volloopt. KEDA schaalt op `druppie_pending_agent_runs` (een Prometheus metric gebaseerd op een database query), wat de daadwerkelijke workload reflecteert in plaats van CPU-gebruik.
+**Why KEDA additionally for the backend:** LLM calls are I/O-bound (waiting on external API responses), not CPU-bound. CPU utilization stays low while the queue fills up. KEDA scales on `druppie_pending_agent_runs` (a Prometheus metric based on a database query), which reflects the actual workload instead of CPU usage.
 
 | Service | Min replicas | Max replicas | Scaling trigger |
 |---------|-------------|-------------|-----------------|
-| Frontend | 2 | 8 | HPA op CPU (70%) |
-| Backend | 2 | 10 | HPA op CPU (70%) + KEDA op queue depth (>5 pending) |
+| Frontend | 2 | 8 | HPA on CPU (70%) |
+| Backend | 2 | 10 | HPA on CPU (70%) + KEDA on queue depth (>5 pending) |
 
-**HPA configuratie (backend):**
+**HPA configuration (backend):**
 
 ```yaml
 apiVersion: autoscaling/v2
@@ -234,7 +234,7 @@ spec:
           periodSeconds: 60
 ```
 
-**KEDA configuratie (backend):**
+**KEDA configuration (backend):**
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -264,90 +264,90 @@ spec:
               periodSeconds: 60
 ```
 
-De `behavior` sectie voorkomt oscillatie: bij AI workloads ontstaan korte spikes, en zonder stabilization window schalen pods constant op en af.
+The `behavior` section prevents oscillation: AI workloads produce short spikes, and without a stabilization window pods would constantly scale up and down.
 
-**Afgewezen:**
-- Alleen HPA op CPU: te traag voor I/O-bound LLM workloads
-- VPA in auto-mode: herstart pods, onacceptabel voor langlopende sessies (alleen recommendation mode)
-- Scale-to-zero: niet gewenst bij een governance platform dat altijd beschikbaar moet zijn
+**Rejected:**
+- HPA on CPU only: too slow for I/O-bound LLM workloads
+- VPA in auto-mode: restarts pods, unacceptable for long-running sessions (recommendation mode only)
+- Scale-to-zero: not desirable for a governance platform that must always be available
 
 ### 4.5 Networking: Traefik + cert-manager
 
-**Gekozen:** Traefik (K3s standaard ingress controller) + cert-manager voor TLS. DNS wijst direct naar het IP van de infra node.
+**Chosen:** Traefik (K3s default ingress controller) + cert-manager for TLS. DNS points directly to the IP of the infra node.
 
-**Waarom:** K3s installeert Traefik automatisch. Geen extra configuratie nodig. Traefik biedt Middleware CRDs voor rate limiting en headers (schoner dan NGINX annotations), een dashboard voor real-time traffic monitoring, en IngressRoute CRDs voor complexe routing.
+**Why:** K3s installs Traefik automatically. No extra configuration needed. Traefik offers Middleware CRDs for rate limiting and headers (cleaner than NGINX annotations), a dashboard for real-time traffic monitoring, and IngressRoute CRDs for complex routing.
 
-De infra node is een vaste node die altijd beschikbaar is. DNS records (druppie.rijnland.dev, auth.druppie.rijnland.dev, git.druppie.rijnland.dev) wijzen naar het publieke IP van de infra node. Traefik draait op de infra node en routeert verkeer naar de juiste pods via Kubernetes Ingress resources. Dit bespaart de kosten van een aparte load balancer (~€6/mo).
+The infra node is a fixed node that is always available. DNS records (druppie.rijnland.dev, auth.druppie.rijnland.dev, git.druppie.rijnland.dev) point to the public IP of the infra node. Traefik runs on the infra node and routes traffic to the correct pods via Kubernetes Ingress resources. This saves the cost of a separate load balancer (~€6/mo).
 
-**Let op:** Als de infra node onverhoopt uitvalt, is de site onbereikbaar. Dit is acceptabel voor Phase 1 — de infra node draait stabiele workloads met voorspelbare belasting. Voor Phase 2 kan een failover IP of tweede infra node worden toegevoegd.
+**Note:** If the infra node unexpectedly goes down, the site becomes unreachable. This is acceptable for Phase 1 — the infra node runs stable workloads with predictable load. For Phase 2, a failover IP or a second infra node can be added.
 
-cert-manager + Let's Encrypt verzorgt automatische TLS certificaten. Geen handmatig certificaatbeheer.
+cert-manager + Let's Encrypt handles automatic TLS certificates. No manual certificate management.
 
-**Afgewezen:**
-- Hetzner Load Balancer: extra €6/mo, niet nodig bij 1 vaste infra node die alle ingress verkeer afhandelt
-- NGINX Ingress: geen toegevoegde waarde boven Traefik, annotations worden rommelig bij complexe configuratie
-- Cilium Ingress: te zwaar voor huidige behoeften, hogere leercurve
-- HAProxy: overkill voor deze schaal
+**Rejected:**
+- Hetzner Load Balancer: extra €6/mo, not needed with 1 fixed infra node handling all ingress traffic
+- NGINX Ingress: no added value over Traefik, annotations become messy with complex configuration
+- Cilium Ingress: too heavy for current needs, steeper learning curve
+- HAProxy: overkill for this scale
 
-### 4.6 Secrets: Gitignored Values Overlay (beslissing overschreven)
+### 4.6 Secrets: Gitignored Values Overlay (decision overridden)
 
-**Gekozen:** Gitignored `values-hetzner.secrets.yaml` overlay. **Oorspronkelijke keuze was Sealed Secrets — overschreven tijdens implementatie.**
+**Chosen:** Gitignored `values-hetzner.secrets.yaml` overlay. **The original choice was Sealed Secrets — overridden during implementation.**
 
-> **Implementatie status (juni 2026):** ✅ De gitignored overlay wordt geaccepteerd als definitieve oplossing. Sealed Secrets is uitgesteld naar Phase 2 (indien ooit nodig).
+> **Implementation status (June 2026):** ✅ The gitignored overlay is accepted as the definitive solution. Sealed Secrets is deferred to Phase 2 (if ever needed).
 
-**Waarom afgeweken van Sealed Secrets:** Bij implementatie bleek dat de gitignored overlay simpeler, veiliger (secrets staan letterlijk niet in de repo), en voldoende is voor een klein team. Sealed Secrets voegt een operator, key backup procedures, en encrypted secrets in git toe — complexiteit zonder duidelijke meerwaarde voor deze use case.
+**Why we deviated from Sealed Secrets:** During implementation the gitignored overlay proved simpler, safer (secrets are literally not in the repo), and sufficient for a small team. Sealed Secrets adds an operator, key backup procedures, and encrypted secrets in git — complexity without clear added value for this use case.
 
-**Huidige aanpak:** Secrets in `values-hetzner.secrets.yaml` (gitignored), toegepast via `helm upgrade -f values-hetzner.secrets.yaml`. Backup offline in password manager.
+**Current approach:** Secrets in `values-hetzner.secrets.yaml` (gitignored), applied via `helm upgrade -f values-hetzner.secrets.yaml`. Backup kept offline in a password manager.
 
 ### 4.7 Monitoring: kube-prometheus-stack
 
-**Gekozen:** kube-prometheus-stack (Prometheus + Grafana + Alertmanager).
+**Chosen:** kube-prometheus-stack (Prometheus + Grafana + Alertmanager).
 
-**Waarom:** De de-facto standaard voor Kubernetes monitoring. Eén `helm install` levert: Prometheus (metrics), Grafana (dashboards), Alertmanager (notificaties), Node-exporter (host metrics), en kube-state-metrics (K8s object metrics).
+**Why:** The de facto standard for Kubernetes monitoring. A single `helm install` delivers: Prometheus (metrics), Grafana (dashboards), Alertmanager (notifications), Node-exporter (host metrics), and kube-state-metrics (K8s object metrics).
 
-CloudNativePG exporteert automatisch PostgreSQL metrics via PodMonitor. KEDA, Traefik, en Keycloak hebben native Prometheus endpoints. Alles centraliseert in Grafana.
+CloudNativePG automatically exports PostgreSQL metrics via PodMonitor. KEDA, Traefik, and Keycloak have native Prometheus endpoints. Everything centralizes in Grafana.
 
-**Afgewezen:**
-- Victoria Metrics: efficiënter, maar een extra abstraction layer die we niet nodig hebben
+**Rejected:**
+- Victoria Metrics: more efficient, but an extra abstraction layer we don't need
 - Managed monitoring (cloud): vendor lock-in
-- Zelfbouw Prometheus stack: teveel configuratiewerk
+- Home-built Prometheus stack: too much configuration work
 
 ### 4.8 Container Registry: Gitea Built-in Registry
 
-**Gekozen:** Gitea Container Registry (al aanwezig in Druppie).
+**Chosen:** Gitea Container Registry (already present in Druppie).
 
-**Waarom:** Gitea heeft een ingebouwde OCI-compatible container registry. Nul extra infrastructuur. Images pushen naar dezelfde Gitea instance die al git repos host. Harbor toevoegen als er behoefte komt aan vulnerability scanning of image signing.
+**Why:** Gitea has a built-in OCI-compatible container registry. Zero extra infrastructure. Push images to the same Gitea instance that already hosts git repos. Add Harbor if a need arises for vulnerability scanning or image signing.
 
-**Afgewezen:**
-- Harbor: nuttige features (Trivy scanning, Cosign signing) maar extra infra en operationeel overhead die we nu niet nodig hebben
-- Docker Distribution: te basic, geen UI
-- GitHub GHCR: niet self-hosted
-- Zot: onvoldoende community adoptie
+**Rejected:**
+- Harbor: useful features (Trivy scanning, Cosign signing) but extra infra and operational overhead we don't need right now
+- Docker Distribution: too basic, no UI
+- GitHub GHCR: not self-hosted
+- Zot: insufficient community adoption
 
-### 4.9 Deployment: PR-based CI/CD op `colab-dev`
+### 4.9 Deployment: PR-based CI/CD on `colab-dev`
 
-**Gekozen:** PR-based CI/CD met GitHub Actions. De default branch is `colab-dev` (niet `main`). Pipeline triggert op merge naar `colab-dev` (of een configureerbare branch via workflow variable).
+**Chosen:** PR-based CI/CD with GitHub Actions. The default branch is `colab-dev` (not `main`). The pipeline triggers on merge to `colab-dev` (or a configurable branch via a workflow variable).
 
-**Waarom:** Druppie's core code host op GitHub. PR-based deploy betekent: elke change gaat via PR review → CI build → automatic deploy na merge. Dit geeft code review als quality gate en een audit trail van elke productie-release.
+**Why:** Druppie's core code is hosted on GitHub. PR-based deploy means: every change goes through PR review → CI build → automatic deploy after merge. This provides code review as a quality gate and an audit trail of every production release.
 
 **Pipeline flow:**
 
 ```
 PR open → CI: lint + test + build (preview)
-PR merge naar colab-dev → CI: build images → push naar Gitea registry → helm upgrade op K3s
+PR merge to colab-dev → CI: build images → push to Gitea registry → helm upgrade on K3s
 ```
 
 ```yaml
 # .github/workflows/deploy.yml
 on:
   push:
-    branches: [colab-dev]   # Configureerbaar: ook andere branches mogelijk
+    branches: [colab-dev]   # Configurable: other branches are also possible
   pull_request:
-    branches: [colab-dev]   # Preview builds op PRs
+    branches: [colab-dev]   # Preview builds on PRs
 
 jobs:
   deploy:
-    if: github.event_name == 'push'  # Alleen deployen op merge
+    if: github.event_name == 'push'  # Only deploy on merge
     steps:
       - name: Build & push images
         run: |
@@ -363,36 +363,36 @@ jobs:
             --wait --timeout 600s
 ```
 
-**Branch:** `colab-dev` is de default branch. Deploy target is configureerbaar via de workflow `branches` config. `main` is deprecated en wordt verwijderd.
+**Branch:** `colab-dev` is the default branch. The deploy target is configurable via the workflow `branches` config. `main` is deprecated and will be removed.
 
-**Afgewezen:**
-- ArgoCD: GitOps met drift detection, maar complexer en vereist een extra server in het cluster. Wordt toegevoegd in Phase 2 als er meerdere omgevingen zijn en drift detection nodig wordt.
-- FluxCD: vergelijkbaar met ArgoCD maar zonder web dashboard
-- Handmatige `helm upgrade`: geen audit trail, geen quality gate
+**Rejected:**
+- ArgoCD: GitOps with drift detection, but more complex and requires an extra server in the cluster. Will be added in Phase 2 when there are multiple environments and drift detection becomes necessary.
+- FluxCD: comparable to ArgoCD but without a web dashboard
+- Manual `helm upgrade`: no audit trail, no quality gate
 
-### 4.10 MCP Modules: Shared Volume, Geen Scaling
+### 4.10 MCP Modules: Shared Volume, No Scaling
 
-**Gekozen:** MCP modules draaien met vaste replicas (1-2 per module) en delen een PVC via de K3s local-path provisioner. Geen onafhankelijke scaling, geen RWX storage driver.
+**Chosen:** MCP modules run with fixed replicas (1-2 per module) and share a PVC via the K3s local-path provisioner. No independent scaling, no RWX storage driver.
 
-**Waarom deze keuze gerechtvaardigd is:** MCP modules worden in een latere fase herbouwd als built-in backend tools. Ze verdwijnen als losse services en worden onderdeel van de backend applicatie zelf. Dat elimineert de shared volume noodzaak volledig. De investering in onafhankelijke module scaling (Longhorn RWX, per-module HPA, service mesh) is weggegooid geld omdat de architectuur fundamenteel verandert.
+**Why this choice is justified:** MCP modules will be rebuilt in a later phase as built-in backend tools. They disappear as standalone services and become part of the backend application itself. That fully eliminates the need for the shared volume. The investment in independent module scaling (Longhorn RWX, per-module HPA, service mesh) is wasted money because the architecture fundamentally changes.
 
-Tot die tijd voldoet een simpele shared PVC. De modules hebben lage en voorspelbare belasting. Ze schalen mee met het cluster (meer nodes = meer beschikbaarheid), niet onafhankelijk.
+Until then, a simple shared PVC suffices. The modules have low and predictable load. They scale along with the cluster (more nodes = more availability), not independently.
 
-**Afgewezen:**
-- Longhorn RWX volumes: alleen nuttig als modules onafhankelijk schalen, wat niet gaat gebeuren
-- Sidecar pattern: elke backend replica draait alle modules, te veel resource overhead
-- Per-session microservices: te complex voor een tijdelijke oplossing
+**Rejected:**
+- Longhorn RWX volumes: only useful if modules scale independently, which will not happen
+- Sidecar pattern: every backend replica runs all modules, too much resource overhead
+- Per-session microservices: too complex for a temporary solution
 
 ### 4.11 High Availability: PDB + Anti-affinity + Graceful Shutdown
 
-**Gekozen:** PodDisruptionBudgets, pod anti-affinity, en graceful shutdown voor backend en frontend (app pool). Keycloak, Gitea, MCP modules en CNPG draaien op de vaste infra pool en hoeven geen eigen PDB — de infra nodes worden niet geëvinceerd.
+**Chosen:** PodDisruptionBudgets, pod anti-affinity, and graceful shutdown for backend and frontend (app pool). Keycloak, Gitea, MCP modules and CNPG run on the fixed infra pool and need no PDB of their own — the infra nodes are not evicted.
 
-> **Implementatie status (juni 2026):** ✅ Voltooid met afwijking per omgeving:
-> - **`values-prod.yaml` (multi-node):** PDB + anti-affinity **ingeschakeld** (`highAvailability.pdb.enabled: true`, `highAvailability.antiAffinity.enabled: true`). Dit is de configuratie die deze beslissing implementeert.
-> - **`values-hetzner.yaml` (huidige single-node deployment):** PDB + anti-affinity **uitgeschakeld**. Reden: bij één schedulbare node kan anti-affinity replicas niet over nodes spreiden en zou een PDB met `minAvailable: 1` node drains blokkeren. Dezelfde kostenafweging als CNPG `instances: 1` (§4.3). Wordt automatisch effectief zodra een tweede app-pool node beschikbaar is — een one-line values change.
-> - Graceful shutdown (`terminationGracePeriodSeconds`) en de advisory-lock leader election werken in beide omgevingen.
+> **Implementation status (June 2026):** ✅ Completed with a per-environment deviation:
+> - **`values-prod.yaml` (multi-node):** PDB + anti-affinity **enabled** (`highAvailability.pdb.enabled: true`, `highAvailability.antiAffinity.enabled: true`). This is the configuration that implements this decision.
+> - **`values-hetzner.yaml` (current single-node deployment):** PDB + anti-affinity **disabled**. Reason: with a single schedulable node, anti-affinity cannot spread replicas across nodes and a PDB with `minAvailable: 1` would block node drains. The same cost trade-off as CNPG `instances: 1` (§4.3). Becomes automatically effective as soon as a second app-pool node is available — a one-line values change.
+> - Graceful shutdown (`terminationGracePeriodSeconds`) and the advisory-lock leader election work in both environments.
 
-**PDB** garandeert dat Kubernetes nooit alle pods tegelijk weghaalt tijdens onderhoud:
+**PDB** guarantees that Kubernetes never removes all pods at once during maintenance:
 
 ```yaml
 apiVersion: policy/v1
@@ -406,7 +406,7 @@ spec:
       app: druppie-backend
 ```
 
-**Anti-affinity** spreidt pods over verschillende nodes, zodat één node failure niet alle replicas raakt:
+**Anti-affinity** spreads pods across different nodes, so a single node failure does not affect all replicas:
 
 ```yaml
 affinity:
@@ -420,45 +420,45 @@ affinity:
           topologyKey: kubernetes.io/hostname
 ```
 
-**Graceful shutdown:** Backend pods moeten lopende LLM calls afronden voor ze stoppen. `terminationGracePeriodSeconds: 60` met SIGTERM handling in FastAPI die nieuwe requests weigert maar actieve afrondt.
+**Graceful shutdown:** Backend pods must finish in-flight LLM calls before they stop. `terminationGracePeriodSeconds: 60` with SIGTERM handling in FastAPI that refuses new requests but completes active ones.
 
-**Backend multi-replica:** De backend is stateless. Session task concurrency wordt bewaakt via `SELECT ... FOR UPDATE` op de session row in PostgreSQL (vervangt de vroegere in-memory dict). De `reconstruct_from_db()` functie rebuildt agent state vanuit de database. Bij multi-replica werkt de webhook handler als volgt: update het ToolCall record in de DB, waarna elke backend replica de agent kan oppakken en doorgaan. Database-driven resume, geen nieuwe infrastructuur nodig.
+**Backend multi-replica:** The backend is stateless. Session task concurrency is guarded via `SELECT ... FOR UPDATE` on the session row in PostgreSQL (replacing the former in-memory dict). The `reconstruct_from_db()` function rebuilds agent state from the database. In a multi-replica setup the webhook handler works as follows: update the ToolCall record in the DB, after which any backend replica can pick up the agent and continue. Database-driven resume, no new infrastructure needed.
 
-Singleton achtergrondtaken (JobScheduler, sandbox watchdog) gebruiken PostgreSQL advisory locks (`pg_try_advisory_lock`) voor leader election. Alleen de replica die de lock verwerpt start de taak; andere replica's slaan hem over. De lock is verbindingsscoped — als de leader pod sterft, wordt de verbinding verbroken en komt de lock vrij, zodat een andere replica deze bij de volgende herstart kan opeisen. Geen extra infrastructuur nodig.
+Singleton background tasks (JobScheduler, sandbox watchdog) use PostgreSQL advisory locks (`pg_try_advisory_lock`) for leader election. Only the replica that acquires the lock starts the task; other replicas skip it. The lock is connection-scoped — if the leader pod dies, the connection is broken and the lock is released, so another replica can claim it on the next restart. No extra infrastructure needed.
 
 ### 4.12 Cluster Provisioning: hetzner-k3s — ⚠️ superseded pending local-Rancher migration
 
-**Gekozen:** `hetzner-k3s` CLI tool (vitobotta/hetzner-k3s, MIT licentie, 3.5k+ GitHub stars).
+**Chosen:** `hetzner-k3s` CLI tool (vitobotta/hetzner-k3s, MIT license, 3.5k+ GitHub stars).
 
-**Waarom:** Eén YAML configuratie file definieert het hele cluster: 3 master nodes (embedded etcd HA), worker pools met autoscaling, networking, firewall. De tool installeert automatisch: K3s, Hetzner CCM, CSI driver, System Upgrade Controller, en Cluster Autoscaler. Cluster klaar in 2-3 minuten. Ubuntu als OS (default).
+**Why:** A single YAML configuration file defines the entire cluster: 3 master nodes (embedded etcd HA), worker pools with autoscaling, networking, firewall. The tool automatically installs: K3s, Hetzner CCM, CSI driver, System Upgrade Controller, and Cluster Autoscaler. Cluster ready in 2-3 minutes. Ubuntu as the OS (default).
 
-**K3s architectuur — Servers vs Agents:**
+**K3s architecture — Servers vs Agents:**
 
-K3s kent twee nodetypes. **Servers** draaien de control plane (API server, scheduler, controller manager) plus embedded etcd voor cluster state. **Agents** draaien alleen de kubelet en voeren pods uit — geen control plane, geen etcd. Voor HA draaien 3 servers met embedded etcd (1 mag falen, quorum blijft intact). Alle workloads draaien op agents; servers zijn puur control plane (`schedule_workloads_on_masters: false`). De Cluster Autoscaler beheert uitsluitend agent nodes — servers zijn vast.
+K3s has two node types. **Servers** run the control plane (API server, scheduler, controller manager) plus embedded etcd for cluster state. **Agents** run only the kubelet and execute pods — no control plane, no etcd. For HA, 3 servers run with embedded etcd (1 may fail, quorum stays intact). All workloads run on agents; servers are pure control plane (`schedule_workloads_on_masters: false`). The Cluster Autoscaler manages agent nodes exclusively — servers are fixed.
 
 ```yaml
-# cluster.yaml — complete cluster definitie
+# cluster.yaml — complete cluster definition
 hetzner_token: <token>
 cluster_name: druppie
 k3s_version: v1.32.3+k3s1
 
-schedule_workloads_on_masters: false   # Masters = puur control plane
+schedule_workloads_on_masters: false   # Masters = pure control plane
 
 masters_pool:                          # K3s SERVERS — control plane + etcd
   instance_type: cpx31                 # 3 servers = HA (etcd quorum)
-  instance_count: 3                    # Vast, niet autoscalable
+  instance_count: 3                    # Fixed, not autoscalable
   location: fsn1
 
 worker_node_pools:
-- name: infra                          # INFRA POOL — vast
+- name: infra                          # INFRA POOL — fixed
   instance_type: cpx31
-  instance_count: 1                    # 1-2 vaste nodes
+  instance_count: 1                    # 1-2 fixed nodes
   location: fsn1
   autoscaling:
-    enabled: false                     # Niet autoscalable
+    enabled: false                     # Not autoscalable
   labels:
     pool: infra                        # Keycloak, Gitea, MCP, CNPG, monitoring
-  taints: []                           # Geen taint — schedulable voor infra workloads
+  taints: []                           # No taint — schedulable for infra workloads
 
 - name: app                            # APP POOL — autoscaling
   instance_type: cpx31
@@ -467,71 +467,71 @@ worker_node_pools:
   autoscaling:
     enabled: true
     min_instances: 1
-    max_instances: 10                  # Cluster Autoscaler beheert
+    max_instances: 10                  # Managed by Cluster Autoscaler
   labels:
     pool: app                          # Backend, Frontend
-  taints: []                           # Geen taint — schedulable voor app workloads
+  taints: []                           # No taint — schedulable for app workloads
 ```
 
-**Afgewezen:**
-- kube-hetzner (Terraform): MicroOS i.p.v. Ubuntu, Terraform leercurve, meer complexiteit
-- Custom Terraform: meer werk, zelf alles configureren
-- Handmatige setup: niet reproduceerbaar, geen IaC
+**Rejected:**
+- kube-hetzner (Terraform): MicroOS instead of Ubuntu, Terraform learning curve, more complexity
+- Custom Terraform: more work, configure everything yourself
+- Manual setup: not reproducible, no IaC
 
 ### 4.13 Node Autoscaling: Cluster Autoscaler (Hetzner) — ⚠️ superseded pending local-Rancher migration
 
-**Gekozen:** Officiële Kubernetes Cluster Autoscaler met ingebouwde Hetzner Cloud provider (`--cloud-provider=hetzner`).
+**Chosen:** Official Kubernetes Cluster Autoscaler with the built-in Hetzner Cloud provider (`--cloud-provider=hetzner`).
 
-**Waarom:** HPA/KEDA schalen pods, maar als alle nodes vol zitten, blijven pods Pending. De Cluster Autoscaler detecteert Pending pods, provisioneert automatisch nieuwe Hetzner VMs via de Cloud API, en laat ze joinen via cloud-init. Bij onderbelasting worden nodes automatisch verwijderd.
+**Why:** HPA/KEDA scale pods, but if all nodes are full, pods stay Pending. The Cluster Autoscaler detects Pending pods, automatically provisions new Hetzner VMs via the Cloud API, and lets them join via cloud-init. Under low load, nodes are automatically removed.
 
-**Twee-tier autoscaling architectuur:**
+**Two-tier autoscaling architecture:**
 
-| Tier | Wat | Tool | Trigger | Snelheid |
+| Tier | What | Tool | Trigger | Speed |
 |------|-----|------|---------|----------|
-| **1. Pod scaling** | Pods toevoegen/verwijderen | HPA + KEDA | CPU usage, queue depth | Seconden |
-| **2. Node scaling** | VMs toevoegen/verwijderen | Cluster Autoscaler | Pending pods (geen capaciteit) | ~60 seconden |
+| **1. Pod scaling** | Add/remove pods | HPA + KEDA | CPU usage, queue depth | Seconds |
+| **2. Node scaling** | Add/remove VMs | Cluster Autoscaler | Pending pods (no capacity) | ~60 seconds |
 
 Flow:
 ```
 Load spike
-  → HPA: meer pods nodig
-    → Nodes vol? Pods blijven Pending
-      → Cluster Autoscaler: nieuwe VM via Hetzner API
+  → HPA: more pods needed
+    → Nodes full? Pods stay Pending
+      → Cluster Autoscaler: new VM via Hetzner API
         → Cloud-init: K3s agent install + join
-          → Node ready → Pending pods ingepland
+          → Node ready → Pending pods scheduled
 ```
 
-**Afgewezen:**
-- Karpenter: geen Hetzner provider beschikbaar, niet op de roadmap
-- Handmatig VMs toevoegen: niet automatisch, trage reactietijd
-- Terraform-gestuurde scaling: state drift conflict met Cluster Autoscaler
+**Rejected:**
+- Karpenter: no Hetzner provider available, not on the roadmap
+- Manually adding VMs: not automatic, slow response time
+- Terraform-driven scaling: state drift conflicts with the Cluster Autoscaler
 
 ---
 
-## Out of Scope (Niet in Phase 1)
+## Out of Scope (Not in Phase 1)
 
-| Onderwerp | Waarom niet nu | Wanneer |
+| Topic | Why not now | When |
 |-----------|----------------|---------|
-| **Sandbox migratie** (Docker → K8s) | Docker socket dependency vereist significante refactor. Sandbox blijft op Docker tot Agent Sandbox operator stabiel is (v1alpha1 risico). | Phase 2 |
-| **MCP module autoscaling** | Modules worden herbouwd als built-in backend tools. Onafhankelijke scaling is weggegooide investering. | Vervalt |
-| **ArgoCD** | Push-based CI/CD is voldoende voor één omgeving. ArgoCD wordt nuttig bij meerdere environments en drift detection. | Phase 2 |
-| **Agent Sandbox operator** | v1alpha1 API kan significant veranderen. Eerst de SDK evalueren op Kind. | Phase 2 |
-| **Longhorn** | Niet nodig zolang modules geen onafhankelijke RWX volumes nodig hebben. Local-path provisioner volstaat. | Phase 2 (indien nodig) |
-| **gVisor / Kata Containers** | Sandbox runtime isolatie. Pas relevant als sandboxes naar K8s migreren. | Phase 2 |
-| **Event-driven backend** (message queue) | Backend draait Phase 1 met 2-10 replicas en database-driven resume. Message queue (Redis Streams/NATS) wordt toegevoegd als de belasting het rechtvaardigt. | Phase 2 |
-| **Network Policies** | Per-namespace isolatie. Nuttig, maar niet blocking voor Phase 1. | Phase 2 |
-| **Harbor registry** | Vulnerability scanning en image signing. Gitea registry volstaat. | Phase 2 |
-| **Distributed tracing** (Jaeger/Tempo) | Nuttig bij 20+ services met complexe request flows. Nog niet nodig. | Phase 3 |
-| **Database partitioning** | Pas relevant bij >100k tool_calls/llm_calls records. | Phase 3 |
+| **Sandbox migration** (Docker → K8s) | The Docker socket dependency requires a significant refactor. The sandbox stays on Docker until the Agent Sandbox operator is stable (v1alpha1 risk). | Phase 2 |
+| **MCP module autoscaling** | Modules are being rebuilt as built-in backend tools. Independent scaling is a wasted investment. | Dropped |
+| **ArgoCD** | Push-based CI/CD is sufficient for a single environment. ArgoCD becomes useful with multiple environments and drift detection. | Phase 2 |
+| **Agent Sandbox operator** | The v1alpha1 API may change significantly. Evaluate the SDK on Kind first. | Phase 2 |
+| **Longhorn** | Not needed as long as modules require no independent RWX volumes. The local-path provisioner suffices. | Phase 2 (if needed) |
+| **gVisor / Kata Containers** | Sandbox runtime isolation. Only relevant once sandboxes migrate to K8s. | Phase 2 |
+| **Event-driven backend** (message queue) | The backend runs Phase 1 with 2-10 replicas and database-driven resume. A message queue (Redis Streams/NATS) is added when the load justifies it. | Phase 2 |
+| **Network Policies** | Per-namespace isolation. Useful, but not blocking for Phase 1. | Phase 2 |
+| **Harbor registry** | Vulnerability scanning and image signing. The Gitea registry suffices. | Phase 2 |
+| **Distributed tracing** (Jaeger/Tempo) | Useful with 20+ services and complex request flows. Not needed yet. | Phase 3 |
+| **Database partitioning** | Only relevant with >100k tool_calls/llm_calls records. | Phase 3 |
 
 ---
 
-## Doelarchitectuur
+## Target Architecture
 
 ```mermaid
 flowchart TB
     subgraph Internet["Internet"]
-        USER["Gebruiker"]
+        USER["User"]
     end
 
     subgraph GitHub["GitHub (Core Code)"]
@@ -549,14 +549,14 @@ flowchart TB
         subgraph K3sCluster["K3s Cluster"]
             direction TB
 
-            subgraph MasterNodes["🖥️ K3s Servers — Control Plane (3 vast, etcd HA)"]
+            subgraph MasterNodes["🖥️ K3s Servers — Control Plane (3 fixed, etcd HA)"]
                 direction LR
                 M1["server-1<br/>etcd + API"]
                 M2["server-2<br/>etcd + API"]
                 M3["server-3<br/>etcd + API"]
             end
 
-            subgraph InfraPool["📦 Infra Pool — K3s Agents (1-2 vast)"]
+            subgraph InfraPool["📦 Infra Pool — K3s Agents (1-2 fixed)"]
                 direction TB
 
                 subgraph IngressLayer["Ingress"]
@@ -609,7 +609,7 @@ flowchart TB
                     CA["Cluster<br/>Autoscaler"]
                 end
 
-                INFRA_LABEL["✅ Vast — nooit geëvinceerd door autoscaler"]
+                INFRA_LABEL["✅ Fixed — never evicted by the autoscaler"]
             end
 
             subgraph AppPool["🚀 App Pool — K3s Agents (1-10 autoscaling)"]
@@ -633,10 +633,10 @@ flowchart TB
                     ANBE["backend<br/>pod"]
                 end
 
-                PODSCALE["⬆ POD SCALING (Tier 1)<br/>HPA: CPU 70% · KEDA: queue > 5<br/>Nieuwe pods op bestaande nodes"]
+                PODSCALE["⬆ POD SCALING (Tier 1)<br/>HPA: CPU 70% · KEDA: queue > 5<br/>New pods on existing nodes"]
             end
 
-            NODESCALE["⬆ NODE SCALING (Tier 2)<br/>Cluster Autoscaler → Hetzner API: nieuwe VM → cloud-init join<br/>~60 seconden"]
+            NODESCALE["⬆ NODE SCALING (Tier 2)<br/>Cluster Autoscaler → Hetzner API: new VM → cloud-init join<br/>~60 seconds"]
         end
     end
 
@@ -665,10 +665,10 @@ flowchart TB
 
     %% Pod scaling (Tier 1)
     KEDAO -.->|"KEDA trigger"| PODSCALE
-    PODSCALE -.->|"meer pods"| AppPool
+    PODSCALE -.->|"more pods"| AppPool
 
     %% Node scaling (Tier 2)
-    PODSCALE -.->|"nodes vol?"| CA
+    PODSCALE -.->|"nodes full?"| CA
     CA -.->|"create VM"| HAPI
     HAPI -.->|"new agent"| NODESCALE
     NODESCALE -.-> AppPool
@@ -704,97 +704,97 @@ flowchart TB
 
 ---
 
-## Fasering
+## Phasing
 
 ### Week 1-2: Cluster Setup
 
-- hetzner-k3s CLI installeren, cluster.yaml configureren, cluster aanmaken (2-3 min)
+- Install the hetzner-k3s CLI, configure cluster.yaml, create the cluster (2-3 min)
 - Cluster provisioning via hetzner-k3s (3 masters + 1-10 autoscaled workers, Ubuntu)
-- Traefik ingress verifiëren (K3s standaard)
-- kube-prometheus-stack deployen
+- Verify Traefik ingress (K3s default)
+- Deploy kube-prometheus-stack
 
 ### Week 3-4: Database + Storage
 
-- CloudNativePG operator installeren (v1.29.1+)
-- 3 database clusters aanmaken: druppie-db, keycloak-db, gitea-db
-- Failover scenario testen op staging
-- Backup naar S3/MinIO configureren en verifiëren
+- Install the CloudNativePG operator (v1.29.1+)
+- Create 3 database clusters: druppie-db, keycloak-db, gitea-db
+- Test the failover scenario on staging
+- Configure and verify backup to S3/MinIO
 
-### Week 5-6: Applicatie Deploy
+### Week 5-6: Application Deploy
 
-- Helm chart aanpassen voor K3s: `values-prod.yaml`, Traefik config, resource limits
-- Gitea Container Registry configureren
-- CI/CD pipeline: GitHub Actions bouwt images, pusht naar Gitea registry, `helm upgrade`
-- Sealed Secrets installeren, alle secrets versleutelen
-- cert-manager + Let's Encrypt voor TLS
+- Adapt the Helm chart for K3s: `values-prod.yaml`, Traefik config, resource limits
+- Configure the Gitea Container Registry
+- CI/CD pipeline: GitHub Actions builds images, pushes to the Gitea registry, `helm upgrade`
+- Install Sealed Secrets, encrypt all secrets
+- cert-manager + Let's Encrypt for TLS
 
 ### Week 7-8: Autoscaling + HA
 
-- HPA toevoegen voor frontend (2-8 replicas) en backend (2-10 replicas)
-- KEDA operator installeren, ScaledObject voor backend (Prometheus trigger)
-- PDB's configureren voor backend en frontend
-- Pod anti-affinity toevoegen
-- Graceful shutdown in FastAPI implementeren
-- Load testing en tuning
+- Add HPA for frontend (2-8 replicas) and backend (2-10 replicas)
+- Install the KEDA operator, ScaledObject for the backend (Prometheus trigger)
+- Configure PDBs for backend and frontend
+- Add pod anti-affinity
+- Implement graceful shutdown in FastAPI
+- Load testing and tuning
 
 ---
 
-## Risico's en Mitigaties
+## Risks and Mitigations
 
-| Risico | Impact | Kans | Mitigatie |
+| Risk | Impact | Likelihood | Mitigation |
 |--------|--------|------|-----------|
-| Backend multi-replica race conditions bij webhooks | Data inconsistentie | ~~Medium~~ Laag | Opgelost: session task concurrency via `SELECT FOR UPDATE` op DB. Singleton taken via PostgreSQL advisory lock leader election. Testen met 3+ replicas op staging. |
-| CloudNativePG operationele kennis ontbreekt | DB issues in productie | ~~Medium~~ Laag | ✅ Geïmplementeerd: CNPG draait, PgBouncer actief, data gemigreerd. HA (instances=3) is volgende stap bij tweede infra node. |
-| KEDA scaling te agressief of te traag | Oscillatie of vertraging | Laag | Stabilization windows configureren (300s scale-down, 60s scale-up). Tunen op basis van load tests. |
-| Sealed Secrets key verloren | Alle secrets ontoegankelijk | Medium | Private key backup procedure documenteren én testen. Key opslaan in offline vault. |
-| 3 nodes onvoldoende voor piekbelasting | Performance degradatie | Laag | K3s agent join is triviaal. Nieuwe VM toevoegen bij noodzaak. CPX31 → CPX41 upgrade is 1 klik in Hetzner console. |
-| CloudNativePG CVE-2026-44477 | Superuser privilege escalation | Laag | Altijd v1.29.1+. Pin operator versie in Helm values. |
-| hetzner-k3s single maintainer dependency | Tool wordt niet meer onderhouden | Laag | Actieve community (3.5k+ stars, laatste update juni 2026). Fallback: eigen Terraform module. Het cluster zelf is standaard K3s — de tool is alleen voor provisioning, niet runtime afhankelijk. |
+| Backend multi-replica race conditions on webhooks | Data inconsistency | ~~Medium~~ Low | Resolved: session task concurrency via `SELECT FOR UPDATE` on the DB. Singleton tasks via PostgreSQL advisory lock leader election. Test with 3+ replicas on staging. |
+| Lack of CloudNativePG operational knowledge | DB issues in production | ~~Medium~~ Low | ✅ Implemented: CNPG is running, PgBouncer active, data migrated. HA (instances=3) is the next step with a second infra node. |
+| KEDA scaling too aggressive or too slow | Oscillation or delay | Low | Configure stabilization windows (300s scale-down, 60s scale-up). Tune based on load tests. |
+| Sealed Secrets key lost | All secrets inaccessible | Medium | Document and test the private key backup procedure. Store the key in an offline vault. |
+| 3 nodes insufficient for peak load | Performance degradation | Low | K3s agent join is trivial. Add a new VM when necessary. CPX31 → CPX41 upgrade is 1 click in the Hetzner console. |
+| CloudNativePG CVE-2026-44477 | Superuser privilege escalation | Low | Always v1.29.1+. Pin the operator version in Helm values. |
+| hetzner-k3s single maintainer dependency | Tool no longer maintained | Low | Active community (3.5k+ stars, last update June 2026). Fallback: own Terraform module. The cluster itself is standard K3s — the tool is only for provisioning, not a runtime dependency. |
 
 ---
 
-## Kostenschatting
+## Cost Estimate
 
-Gebaseerd op Hetzner publieke prijzen (juni 2026).
+Based on Hetzner public pricing (June 2026).
 
-| Component | Specificatie | Kosten/maand |
+| Component | Specification | Cost/month |
 |-----------|-------------|--------------|
 | K3s servers (3x) | CPX31 (4 vCPU, 8GB RAM, 160GB NVMe) | 3 × €13 = ~€39 |
-| Infra agents (1-2x, vast) | CPX31 — Keycloak, Gitea, MCP, CNPG, monitoring | 1-2 × €13 = ~€13-26 |
-| App agents (1-10x, autoscaling) | CPX31 — Backend, Frontend | 1 × €13 = ~€13 (idle), schaalt mee met load |
+| Infra agents (1-2x, fixed) | CPX31 — Keycloak, Gitea, MCP, CNPG, monitoring | 1-2 × €13 = ~€13-26 |
+| App agents (1-10x, autoscaling) | CPX31 — Backend, Frontend | 1 × €13 = ~€13 (idle), scales with load |
 | Extra storage | 200GB block storage (DB data, backups) | ~€10 |
 | Backup storage | 100GB (DB backups, MinIO/S3) | ~€5 |
-| **Totaal Phase 1 (basis)** | 3 servers + 1 infra + 1 app | **~€80/maand** |
-| **Totaal bij belasting** | 3 servers + 2 infra + 3-5 app | **~€119-159/maand** |
+| **Total Phase 1 (base)** | 3 servers + 1 infra + 1 app | **~€80/month** |
+| **Total under load** | 3 servers + 2 infra + 3-5 app | **~€119-159/month** |
 
-Bij schaalvergroting (meer nodes of grotere VMs): CPX41 (8 vCPU, 16GB RAM) is ~€24/mo per node. Dedicated servers (AX42: 8 vCPU, 64GB RAM) zijn ~€49/mo per node.
+When scaling up (more nodes or larger VMs): CPX41 (8 vCPU, 16GB RAM) is ~€24/mo per node. Dedicated servers (AX42: 8 vCPU, 64GB RAM) are ~€49/mo per node.
 
 ---
 
-## Consequenties
+## Consequences
 
-### Wat dit mogelijk maakt
+### What this enables
 
-- Horizontaal schalen van backend en frontend op basis van werkelijke belasting (KEDA + HPA)
-- Automatisch node-level schalen: Cluster Autoscaler provisioneert nieuwe Hetzner VMs bij Pending pods (~60s), en verwijdert ze bij onderbelasting
-- Database hoge beschikbaarheid met automatische failover (<30s)
-- Gecentraliseerde monitoring en alerting via Prometheus + Grafana
-- TLS voor alle endpoints via cert-manager + Let's Encrypt
-- Versleutelde secrets in git via Sealed Secrets
-- Reproduceerbare deployments via Helm + CI/CD
-- Cluster provisioning in 2-3 minuten vanuit 1 YAML file (Infrastructure as Code)
-- Cluster uitbreiden door een VM toe te voegen (K3s agent join, 1 commando)
+- Horizontal scaling of backend and frontend based on actual load (KEDA + HPA)
+- Automatic node-level scaling: the Cluster Autoscaler provisions new Hetzner VMs on Pending pods (~60s), and removes them under low load
+- Database high availability with automatic failover (<30s)
+- Centralized monitoring and alerting via Prometheus + Grafana
+- TLS for all endpoints via cert-manager + Let's Encrypt
+- Encrypted secrets in git via Sealed Secrets
+- Reproducible deployments via Helm + CI/CD
+- Cluster provisioning in 2-3 minutes from 1 YAML file (Infrastructure as Code)
+- Cluster expansion by adding a VM (K3s agent join, 1 command)
 
-### Wat dit beperkt
+### What this constrains
 
-- Sandbox blijft op Docker Compose. De Docker socket dependency is niet opgelost in Phase 1. Sandbox migratie volgt in Phase 2, afhankelijk van Agent Sandbox operator volwassenheid.
-- MCP modules schalen niet onafhankelijk. Dit is bewust: modules worden herbouwd als built-in backend tools, waarna de shared PVC vervalt.
-- Geen drift detection. Push-based CI/CD betekent dat handmatige cluster wijzigingen onopgemerkt blijven. ArgoCD (Phase 2) lost dit op.
-- Backend is stateless. Session task concurrency via database-level `SELECT FOR UPDATE`. Singleton achtergrondtaken (JobScheduler, sandbox watchdog) via PostgreSQL advisory lock leader election. Een message queue (Redis Streams/NATS) volgt in Phase 2 voor event-driven architectuur als de belasting het rechtvaardigt.
-- Geen sandbox runtime isolatie (gVisor/Kata). Pas relevant als sandboxes naar K8s migreren.
-- **CNPG draait met instances=1** (geen HA). Single-instance per database op de infra node. Auto-failover (<30s) is beschikbaar via `instances: 3` maar vereist een tweede infra node. PgBouncer (2 instances) geeft connection-level beschikbaarheid.
-- **DB pool sizing is kritiek.** Load testing bewees: `pool_size=20` per worker × 4 workers × 5 pods = 1000 connections vs PostgreSQL max 100 = crash. Oplossing: `pool_size=5` + PgBouncer transaction-mode multiplexing. 2 workers per pod is optimaal (niet 10).
+- The sandbox stays on Docker Compose. The Docker socket dependency is not resolved in Phase 1. Sandbox migration follows in Phase 2, depending on Agent Sandbox operator maturity.
+- MCP modules do not scale independently. This is deliberate: modules are being rebuilt as built-in backend tools, after which the shared PVC is dropped.
+- No drift detection. Push-based CI/CD means manual cluster changes go unnoticed. ArgoCD (Phase 2) solves this.
+- The backend is stateless. Session task concurrency via database-level `SELECT FOR UPDATE`. Singleton background tasks (JobScheduler, sandbox watchdog) via PostgreSQL advisory lock leader election. A message queue (Redis Streams/NATS) follows in Phase 2 for an event-driven architecture if the load justifies it.
+- No sandbox runtime isolation (gVisor/Kata). Only relevant once sandboxes migrate to K8s.
+- **CNPG runs with instances=1** (no HA). Single-instance per database on the infra node. Auto-failover (<30s) is available via `instances: 3` but requires a second infra node. PgBouncer (2 instances) provides connection-level availability.
+- **DB pool sizing is critical.** Load testing proved: `pool_size=20` per worker × 4 workers × 5 pods = 1000 connections vs PostgreSQL max 100 = crash. Solution: `pool_size=5` + PgBouncer transaction-mode multiplexing. 2 workers per pod is optimal (not 10).
 
-### Migratiepad
+### Migration path
 
-Druppie blijft draaien op Docker Compose tijdens de migratie. De K3s cluster wordt parallel opgebouwd. Switchover gebeurt in één stap: DNS pointing van de Docker Compose host naar het publieke IP van de infra node. Terugdraaien is een DNS revert.
+Druppie keeps running on Docker Compose during the migration. The K3s cluster is built up in parallel. Switchover happens in a single step: pointing DNS from the Docker Compose host to the public IP of the infra node. Rolling back is a DNS revert.
