@@ -169,7 +169,20 @@ export const getSessions = (page = 1, limit = 20) =>
   request(`/api/sessions?page=${page}&limit=${limit}`)
 
 // Get complete session with ALL data (messages, llm_calls, events, approvals, etc.)
-export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
+// Options:
+//   sinceSequence: number - only return entries with sequence_number > this value
+//   exclude: string[] - list of fields to exclude from response (e.g. ['llm_raw', 'tool_results'])
+export const getSession = (sessionId, options = {}) => {
+  const params = new URLSearchParams()
+  if (options.sinceSequence !== undefined && options.sinceSequence !== null) {
+    params.append('since_sequence', options.sinceSequence)
+  }
+  if (options.exclude && options.exclude.length > 0) {
+    params.append('exclude', options.exclude.join(','))
+  }
+  const qs = params.toString()
+  return request(`/api/sessions/${sessionId}${qs ? '?' + qs : ''}`)
+}
 
 export const resumeSession = (sessionId, contexts = null) => {
   const body = {}

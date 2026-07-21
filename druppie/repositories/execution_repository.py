@@ -19,6 +19,7 @@ from druppie.db.models import (
 )
 from druppie.domain.agent_run import AgentRunSummary
 from druppie.domain.common import AgentRunStatus, SessionStatus, TokenUsage
+from druppie.domain.session import Message as DomainMessage
 from druppie.repositories.base import BaseRepository
 
 
@@ -646,7 +647,7 @@ class ExecutionRepository(BaseRepository):
         agent_run_id: UUID | None = None,
         agent_id: str | None = None,
         sequence_number: int = 0,
-    ) -> UUID:
+    ) -> DomainMessage:
         """Create a message record.
 
         Args:
@@ -659,7 +660,7 @@ class ExecutionRepository(BaseRepository):
             sequence_number: Sequence number within session
 
         Returns:
-            Message ID
+            Domain Message model with full fields for WebSocket broadcast.
         """
         message = Message(
             session_id=session_id,
@@ -672,7 +673,16 @@ class ExecutionRepository(BaseRepository):
         )
         self.db.add(message)
         self.db.flush()
-        return message.id
+        return DomainMessage(
+            id=message.id,
+            role=message.role,
+            content=message.content,
+            agent_id=message.agent_id,
+            agent_run_id=message.agent_run_id,
+            sequence_number=message.sequence_number,
+            created_at=message.created_at or datetime.now(timezone.utc),
+            attachments=[],
+        )
 
     def get_message_count(self, session_id: UUID) -> int:
         """Get total message count for a session (for sequence numbering)."""
