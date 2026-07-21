@@ -96,20 +96,37 @@ kubectl -n druppie apply -f /tmp/test-pod.yaml
 ## CI/CD Pipeline
 
 ### How it works
-1. Push to `main` or `colab-dev` on `ai/druppie`
+1. Push to **any branch** on `ai/druppie` triggers `.gitea/workflows/build.yaml`
 2. Gitea Actions runner (DinD pod in `gitea-runner` namespace) builds all Docker images
-3. Images tagged `{branch}-{timestamp}-{sha}` and pushed to Harbor (`harbor.rijnland.dev/druppie/`)
-4. CI clones `ai/k8s`, updates `imageTag` in the appropriate HelmRelease, pushes
+3. Images tagged `{branch_slug}-{timestamp}-{sha}` and pushed to Harbor (`harbor.rijnland.dev/druppie/`)
+4. CI clones `ai/k8s`, uses `yq` to patch `imageTag` in the appropriate HelmRelease, pushes to main
 5. FluxCD detects the tag change → Helm upgrade → pods restart
+
+**No Flux Image Automation** — CI directly patches the YAML. Concurrent pushes
+are handled with a retry + rebase loop (5 attempts).
+
+### Images built per push
+backend, frontend, init (if exists), layout-service, sandbox-k8s (if exists),
+14 MCP modules (if Dockerfile exists), and dev-workspace (conditional).
+
+### Dev-workspace smart caching
+The dev-workspace image is only rebuilt when workspace files change
+(`Dockerfile.dev-workspace`, entrypoint script, desktop index). On main/colab-dev
+it always builds. On feature branches, if unchanged, CI re-tags existing `:latest`
+under the new tag — the workspace pod is **not restarted** on code-only pushes.
 
 ### Layer caching
 Docker layer cache persists on a 50Gi Longhorn PVC (`dind-storage`) in the DinD sidecar. Cold build ~23 min, cached build ~30 sec. The `CACHEBUST` ARG in Dockerfiles ensures code layers are rebuilt on new commits (dependencies stay cached).
 
-### Branch → Namespace mapping
-| Branch | HelmRelease | Namespace | Domain |
-|--------|-------------|-----------|--------|
-| `main` | `druppie/helmrelease.yaml` | `druppie` | `druppie.rijnland.dev` |
-| `colab-dev` | `druppie-colab-dev/helmrelease.yaml` | `druppie-colab-dev` | `colab-dev-druppie.rijnland.dev` |
+### Branch → HelmRelease mapping
+| Branch | HelmRelease path | Namespace | Domain |
+|--------|-----------------|-----------|--------|
+| `main` | `clusters/ka-k8s-ai/apps/druppie/helmrelease.yaml` | `druppie` | `druppie.rijnland.dev` |
+| `colab-dev` | `clusters/ka-k8s-ai/apps/druppie-colab-dev/helmrelease.yaml` | `druppie-colab-dev` | `colab-dev-druppie.rijnland.dev` |
+| `feature/*` | `clusters/branch-envs/druppie-{slug}/helmrelease.yaml` | `druppie-{slug}` | `druppie-{slug}.rijnland.dev` |
+
+Feature branch HelmReleases only exist if a branch environment was deployed
+(via the Druppie UI). If no env exists, CI skips the tag update.
 
 ### Triggering a build manually
 ```bash
@@ -150,10 +167,9 @@ kubectl rollout restart -n druppie-colab-dev deploy/druppie-colab-dev-backend
 
 ## Local Development
 
-There is **no docker-compose workflow anymore** — development happens in a
-Kubernetes dev workspace (a branch namespace that *is* the hot-reloading
-environment). See `dev-workspace-hotreload-plan.md` and
-`scripts/deploy-branch-env.sh`.
+There is **no docker-compose workflow** — development happens in a Kubernetes
+branch environment (a namespace that *is* the hot-reloading workspace).
+See `k8s/docs/feature-branch-preview-environments.md`.
 
 ### Backend (Python/FastAPI)
 ```bash
