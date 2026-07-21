@@ -165,3 +165,16 @@ async def get_local_model_logs(
     user: dict = Depends(require_admin),
 ):
     return await service.get_local_logs(tail=tail)
+
+
+class LoadModelRequest(BaseModel):
+    model: str
+
+
+@router.post("/admin/models/load")
+async def load_model(
+    body: LoadModelRequest,
+    service: ModelManagementService = Depends(get_model_management_service),
+    user: dict = Depends(require_admin),
+):
+    return await service.load_model(body.model)

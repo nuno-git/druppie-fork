@@ -377,8 +377,7 @@ class ModelManagementService:
             return {
                 "current_mode": None,
                 "switching": None,
-                "inflight": 0,
-                "active_services": [],
+                "active_models": [],
                 "available_models": [],
                 "services": {},
                 "error": str(e),
@@ -398,3 +397,24 @@ class ModelManagementService:
         except Exception as e:
             logger.warning("local_logs_fetch_failed", error=str(e))
             return {"services": {}, "error": str(e)}
+
+    async def load_model(self, model_id: str) -> dict:
+        """Tell the in-cluster router to load a specific model."""
+        import httpx
+
+        url = os.getenv("LLMKUBE_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
+        load_url = url.rstrip("/v1").rstrip("/") + "/admin/load-model"
+        try:
+            async with httpx.AsyncClient(timeout=1200.0) as client:
+                resp = await client.post(
+                    load_url,
+                    json={"model": model_id},
+                    timeout=httpx.Timeout(1200.0),
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.TimeoutException:
+            return {"status": "error", "error": "Model loading timed out"}
+        except Exception as e:
+            logger.warning("load_model_failed", model=model_id, error=str(e))
+            return {"status": "error", "error": str(e)}

@@ -73,10 +73,10 @@ class LocalServiceStatus(BaseModel):
 class LocalModelStatus(BaseModel):
     current_mode: str | None = None
     switching: str | None = None
-    inflight: int = 0
-    active_services: list[str] = []
+    active_models: list[str] = []
     available_models: list[str] = []
     services: dict[str, LocalServiceStatus] = {}
+    loading_progress: dict | None = None
 
 
 class LocalServiceLogs(BaseModel):

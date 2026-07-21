@@ -8,7 +8,7 @@ import {
 import {
   getModelManagement, setAgentModelOverride, removeAgentModelOverride,
   setTranslationModelOverride, removeTranslationModelOverride, validateProvider,
-  getLocalModelStatus, getLocalModelLogs,
+  getLocalModelStatus, getLocalModelLogs, loadModel,
 } from '../services/api'
 import PageHeader from '../components/shared/PageHeader'
 import VersionBadge from '../components/shared/VersionBadge'
@@ -319,6 +319,9 @@ const MODEL_LABELS = {
 
 const LocalModelsSection = () => {
   const [showLogs, setShowLogs] = useState({})
+  const [loadingModel, setLoadingModel] = useState(null)
+  const [loadResult, setLoadResult] = useState(null)
+  const queryClient = useQueryClient()
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['local-model-status'],
     queryFn: getLocalModelStatus,
@@ -334,6 +337,7 @@ const LocalModelsSection = () => {
   const services = status?.services || {}
   const switching = status?.switching
   const currentMode = status?.current_mode
+  const activeModels = status?.active_models || []
   const availableModels = status?.available_models || []
 
   const modelToService = {
@@ -343,6 +347,20 @@ const LocalModelsSection = () => {
   }
 
   const getServiceForModel = (modelId) => modelToService[modelId] || modelId
+
+  const handleLoadModel = async (modelId) => {
+    setLoadingModel(modelId)
+    setLoadResult(null)
+    try {
+      const result = await loadModel(modelId)
+      setLoadResult({ model: modelId, success: true, data: result })
+      queryClient.invalidateQueries({ queryKey: ['local-model-status'] })
+    } catch (e) {
+      setLoadResult({ model: modelId, success: false, error: e.message })
+    } finally {
+      setLoadingModel(null)
+    }
+  }
 
   return (
     <SectionCard title="Local GPU Models" icon={Server}>
@@ -360,6 +378,9 @@ const LocalModelsSection = () => {
             <CheckCircle className="w-4 h-4 text-green-500" />
             <span className="text-sm text-green-700">
               Active: <strong className="capitalize">{currentMode}</strong> mode
+              <span className="text-green-500 font-normal ml-1">
+                ({activeModels.map(m => MODEL_LABELS[m] || m).join(', ')})
+              </span>
             </span>
           </div>
         ) : (
@@ -368,12 +389,64 @@ const LocalModelsSection = () => {
             <span className="text-sm text-gray-500">Idle — no model loaded</span>
           </div>
         )}
-        {status?.inflight > 0 && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-            <Activity className="w-3 h-3" /> {status.inflight} in-flight
-          </span>
-        )}
       </div>
+
+      {/* Load model buttons */}
+      {!switching && (
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <span className="text-xs text-gray-400 font-medium mr-1">Load:</span>
+          {availableModels.map(modelId => {
+            const isActive = activeModels.includes(modelId)
+            const isLoading = loadingModel === modelId
+            return (
+              <button
+                key={modelId}
+                onClick={() => handleLoadModel(modelId)}
+                disabled={isActive || isLoading || !!loadingModel}
+                className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-colors ${
+                  isActive
+                    ? 'bg-green-100 border-green-300 text-green-700 cursor-default'
+                    : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                }`}
+              >
+                {isLoading ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : isActive ? (
+                  <CheckCircle className="w-3 h-3" />
+                ) : (
+                  <Zap className="w-3 h-3" />
+                )}
+                {MODEL_LABELS[modelId] || modelId}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Load result */}
+      {loadResult && (
+        <div className={`mb-4 px-3 py-2 rounded-lg text-xs ${
+          loadResult.success
+            ? 'bg-green-50 border border-green-200 text-green-700'
+            : 'bg-red-50 border border-red-200 text-red-700'
+        }`}>
+          {loadResult.success ? (
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>
+                <strong>{MODEL_LABELS[loadResult.model] || loadResult.model}</strong> loaded in{' '}
+                <strong>{loadResult.data?.elapsed_seconds || '?'}s</strong>
+                — mode: <strong>{loadResult.data?.mode}</strong>
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>Failed to load: {loadResult.error}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Model grid */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
