@@ -52,8 +52,6 @@ The templates:
 - **Check A — mandatory-docs gate.** If your PR changes feature code (anything under `druppie/` or `frontend/src/`) but adds no doc, it flags the PR — unless you mark it `docs-exempt` (see below). Editing only a `TEMPLATE.md`, `CAS.md`, or `*.schema.json` does **not** count as a doc.
 - **Check B — validity.** Every existing templated doc must be valid: correct frontmatter/schema, `id` matching the filename, resolvable `linked_*` / `@prd` / `@adr` links (existing files, no URLs), consistent `superseded_by`, and a fresh `docs/adrs/CAS.md`.
 
-> **Warn-mode for now.** Both checks currently run with `continue-on-error`, so they appear as **annotations on the PR but do not block the merge** while existing docs are migrated. They become blocking later. (A third step — the validator's own regression tests — *is* already blocking.)
-
 **Catch it before you push:**
 
 - Local check: `docker compose --profile docs-validator run --rm docs-validator` (runs Check B).
