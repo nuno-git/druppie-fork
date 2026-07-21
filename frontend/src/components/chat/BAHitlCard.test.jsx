@@ -91,10 +91,16 @@ describe('BAHitlCard', () => {
     })
   })
 
-  it('submits Ready with no feedback', async () => {
+  it('requires a confirm step before submitting Ready', async () => {
     const user = userEvent.setup()
     renderWithClient(<BAHitlCard sessionId={SESSION_ID} session={baseSession} />)
+
+    expect(screen.queryByRole('button', { name: /confirm ready/i })).toBeNull()
+
     await user.click(screen.getByRole('button', { name: /ready/i }))
+    expect(screen.getByRole('button', { name: /confirm ready/i })).toBeDefined()
+
+    await user.click(screen.getByRole('button', { name: /confirm ready/i }))
     await waitFor(() => {
       expect(submitBaHitl).toHaveBeenCalledWith(SESSION_ID, { decision: 'ready' })
     })
