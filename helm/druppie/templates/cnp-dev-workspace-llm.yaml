@@ -1,0 +1,30 @@
+{{- if .Values.devWorkspace.enabled }}
+# CiliumNetworkPolicy: allow the dev-workspace pod to reach the in-cluster LLM
+# inference services (namespace: llm) for local model serving via opencode.
+#
+# The app-net NetworkPolicy blocks egress to private IPs (10/8), but the LLM
+# services are ClusterIP in the llm namespace. Without this exception opencode
+# cannot reach the Waterschap LLM endpoints from the workspace terminal.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-workspace-llm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dev-workspace
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: llm
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "8001"
+              protocol: TCP
+{{- end }}

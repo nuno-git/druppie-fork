@@ -365,8 +365,9 @@ class ModelManagementService:
         """Fetch live status from the in-cluster model router."""
         import httpx
 
-        url = os.getenv("LLMKUBE_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
-        status_url = url.rstrip("/v1").rstrip("/") + "/status"
+        url = os.getenv("MODEL_ROUTER_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
+        base = url.removesuffix("/v1").removesuffix("/")
+        status_url = base + "/status"
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(status_url)
@@ -377,8 +378,7 @@ class ModelManagementService:
             return {
                 "current_mode": None,
                 "switching": None,
-                "inflight": 0,
-                "active_services": [],
+                "active_models": [],
                 "available_models": [],
                 "services": {},
                 "error": str(e),
@@ -388,8 +388,9 @@ class ModelManagementService:
         """Fetch recent pod logs from the model router."""
         import httpx
 
-        url = os.getenv("LLMKUBE_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
-        logs_url = url.rstrip("/v1").rstrip("/") + f"/logs?tail={tail}"
+        url = os.getenv("MODEL_ROUTER_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
+        base = url.removesuffix("/v1").removesuffix("/")
+        logs_url = base + f"/logs?tail={tail}"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(logs_url)
@@ -398,3 +399,25 @@ class ModelManagementService:
         except Exception as e:
             logger.warning("local_logs_fetch_failed", error=str(e))
             return {"services": {}, "error": str(e)}
+
+    async def load_model(self, model_id: str) -> dict:
+        """Tell the in-cluster router to load a specific model."""
+        import httpx
+
+        url = os.getenv("MODEL_ROUTER_BASE_URL", "http://model-server.llm.svc.cluster.local:8001/v1")
+        base = url.removesuffix("/v1").removesuffix("/")
+        load_url = base + "/admin/load-model"
+        try:
+            async with httpx.AsyncClient(timeout=1200.0) as client:
+                resp = await client.post(
+                    load_url,
+                    json={"model": model_id},
+                    timeout=httpx.Timeout(1200.0),
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.TimeoutException:
+            return {"status": "error", "error": "Model loading timed out"}
+        except Exception as e:
+            logger.warning("load_model_failed", model=model_id, error=str(e))
+            return {"status": "error", "error": str(e)}

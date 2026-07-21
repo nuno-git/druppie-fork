@@ -555,6 +555,66 @@ if [ -n "${FOUNDRY_API_KEY:-}" ]; then
     } >> "${OPENCODE_ENV_FILE}"
 fi
 
+# opencode: configure Waterschap LLM provider (cluster-internal model-server).
+# The model-server routes to all deployed models (qwen, deepseek) via a single
+# OpenAI-compatible endpoint. This lets opencode use local LLMs without
+# external API keys.
+install -d -m 755 "${HOME}/.config/opencode"
+cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "llm/qwen3.6-27b",
+  "compaction": { "auto": true },
+  "provider": {
+    "llm": {
+      "name": "Waterschap LLM (cluster-internal)",
+      "api": "openai",
+      "options": {
+        "baseURL": "http://model-server.llm.svc.cluster.local:8001/v1",
+        "apiKey": "sk-no-auth"
+      },
+      "models": {
+        "qwen3.6-27b": {
+          "name": "Qwen 3.6 27B (NVFP4)",
+          "id": "qwen3.6-27b",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": { "context": 262144, "output": 32768 },
+          "options": {
+            "temperature": 0.1,
+            "top_p": 0.95,
+            "extraBody": {
+              "top_k": 20,
+              "presence_penalty": 0.0,
+              "repetition_penalty": 1.0,
+              "chat_template_kwargs": { "enable_thinking": true }
+            }
+          }
+        },
+        "qwen3.6-35b-a3b": {
+          "name": "Qwen 3.6 35B A3B (NVFP4)",
+          "id": "qwen3.6-35b-a3b",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": { "context": 262144, "output": 32768 },
+          "options": {
+            "temperature": 0.1,
+            "top_p": 0.95,
+            "extraBody": {
+              "top_k": 20,
+              "presence_penalty": 0.0,
+              "repetition_penalty": 1.0,
+              "chat_template_kwargs": { "enable_thinking": true }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+OPENCODE_CFG
+log "opencode: Waterschap LLM provider configured (qwen3.6-27b, qwen3.6-35b-a3b)"
+
 seed_workspace
 
 # Keep the workspace's own runtime artifacts out of the Source Control pane:

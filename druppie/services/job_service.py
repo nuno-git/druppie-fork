@@ -11,7 +11,7 @@ import structlog
 import yaml
 from croniter import croniter
 
-from ..core.background_tasks import create_tracked_task, run_session_task
+from ..core.background_tasks import create_session_task, run_session_task
 from ..domain.common import AgentRunStatus, JobRunStatus, SessionStatus
 from ..domain.job import JobDefinitionDetail, JobDefinitionList, JobRunDetail, JobRunList
 from ..repositories import ExecutionRepository, JobRepository, SessionRepository
@@ -447,7 +447,8 @@ class JobService:
                 )
                 job_repo.commit()
 
-        create_tracked_task(
+        create_session_task(
+            session_id,
             run_session_task(session_id, _execute, "job_execution"),
             name=f"job_execution-{session_id}",
             skip_lock=True,
@@ -619,7 +620,8 @@ class JobScheduler:
                 )
                 job_repo.commit()
 
-        create_tracked_task(
+        create_session_task(
+            session_id,
             run_session_task(session_id, _execute, "job_execution"),
             name=f"job_execution-{session_id}",
             skip_lock=True,
