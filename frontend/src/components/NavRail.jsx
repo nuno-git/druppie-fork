@@ -31,7 +31,7 @@ import {
 
 import { useAuth } from '../App'
 import { login, logout } from '../services/keycloak'
-import { getTasks, getPendingQuestions } from '../services/api'
+import { getTasks, getAvatarUrl, getPendingQuestions } from '../services/api'
 
 // --- NavRail Item with tooltip ---
 
@@ -83,7 +83,24 @@ const NavRailItem = ({ to, icon: Icon, label, badge, active, accent }) => {
 const UserMenu = ({ user, authenticated }) => {
   const [open, setOpen] = useState(false)
   const [showTooltip, setShowTooltip] = useState(false)
+  const [avatarUrl, setAvatarUrl] = useState(null)
   const ref = useRef(null)
+
+  useEffect(() => {
+    if (!authenticated) { setAvatarUrl(null); return }
+    let revoke = null
+    let cancelled = false
+    getAvatarUrl().then(url => {
+      if (cancelled) return
+      if (url) {
+        setAvatarUrl(url)
+        revoke = url
+      } else {
+        setAvatarUrl(null)
+      }
+    })
+    return () => { cancelled = true; setAvatarUrl(null); if (revoke) URL.revokeObjectURL(revoke) }
+  }, [authenticated, user?.id])
 
   useEffect(() => {
     if (!open) return
@@ -122,13 +139,16 @@ const UserMenu = ({ user, authenticated }) => {
         onClick={() => { setOpen(!open); setShowTooltip(false) }}
         onMouseEnter={() => !open && setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
-        className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold transition-colors ${
+        className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold transition-colors overflow-hidden ${
           open
-            ? 'bg-blue-500 text-white ring-2 ring-blue-400'
-            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-        }`}
+            ? 'ring-2 ring-blue-400'
+            : 'hover:ring-2 hover:ring-gray-500'
+        } ${avatarUrl ? '' : open ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
       >
-        {initial}
+        {avatarUrl
+          ? <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+          : initial
+        }
       </button>
       {showTooltip && !open && (
         <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap z-50 pointer-events-none shadow-lg">

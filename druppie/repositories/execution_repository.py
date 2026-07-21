@@ -383,6 +383,15 @@ class ExecutionRepository(BaseRepository):
             .first()
         )
 
+    def get_waiting_tool_call(self, session_id: UUID, status: str) -> ToolCall | None:
+        """Get a tool call with a specific waiting status for a session."""
+        return (
+            self.db.query(ToolCall)
+            .filter(ToolCall.session_id == session_id, ToolCall.status == status)
+            .order_by(ToolCall.created_at.desc())
+            .first()
+        )
+
     def update_tool_call_arguments(self, tool_call_id: UUID, arguments: dict) -> None:
         """Update tool call arguments (e.g. to add translated design content)."""
         self.db.query(ToolCall).filter(ToolCall.id == tool_call_id).update(

@@ -41,12 +41,14 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
             source_type="azure-datalake",
             name=self.config.get("name", self.account_name),
             auth_type="public" if self.is_public else "key",
+            detail=f"{self.account_name}.dfs.core.windows.net",
         )
 
     async def list_available_data(
         self,
         path: str = "",
         recursive: bool = False,
+        user_token: str | None = None,
     ) -> dict:
         """List containers and files in the Data Lake."""
         try:
@@ -97,7 +99,7 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def get_schema(self, data_id: str) -> dict:
+    async def get_schema(self, data_id: str, user_token: str | None = None) -> dict:
         """Get schema for a Parquet or CSV file."""
         try:
             container, file_path = self._parse_path(data_id)
@@ -158,6 +160,7 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
         filter_expr: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        user_token: str | None = None,
     ) -> dict:
         """Read data from a CSV or Parquet file."""
         try:
@@ -306,6 +309,7 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
         self,
         data_id: str,
         destination_path: str,
+        user_token: str | None = None,
     ) -> dict:
         """Download a file from Data Lake."""
         try:

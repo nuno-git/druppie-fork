@@ -8,11 +8,12 @@ import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, M
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, getResumableRuns, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput, getSandboxEvents, getAttachmentUrl } from '../../services/api'
-import { getUserInfo } from '../../services/keycloak'
+import { getSession, sendChat, cancelChat, resumeSession, authorizeEntra, getResumableRuns, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput, getSandboxEvents, downloadAttachment } from '../../services/api'
+import { getUserInfo, getKeycloak } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
+import DataSourcesMenu from './DataSourcesMenu'
 import DownloadMenu from './DownloadMenu'
 import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '../../utils/downloadDesign'
 import HITLQuestionMessage from './HITLQuestionMessage'
@@ -165,7 +166,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        window.open(getAttachmentUrl(att.id), '_blank')
+                        downloadAttachment(att.id)
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -341,7 +342,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
       : !!isOwner)
 
   const rawChoices = tc.arguments?.choices || tc.arguments?.options || []
-  const choices = rawChoices
+  const choices = (Array.isArray(rawChoices) ? rawChoices : [])
     .map(c => (typeof c === 'string' ? c : c.text || c.label || String(c)))
     .filter(c => !/^other\b/i.test(c.trim()))
 
@@ -391,6 +392,29 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
         isAnswering={answerMut.isPending}
         answered={isAnswered || showAsReadOnly}
       />
+      {/* Show download chips for any attachments linked to this HITL question */}
+      {tc.attachments?.length > 0 && (
+        <div className="ml-8 mt-2 flex flex-wrap gap-1.5">
+          {tc.attachments.map((att) => {
+            const Icon = att.content_type === 'application/pdf' ? FileType : FileText
+            return (
+              <button
+                key={att.id}
+                type="button"
+                onClick={() => {
+                  if (window.confirm(`Download "${att.original_filename}"?`)) {
+                    window.open(getAttachmentUrl(att.id), '_blank')
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                <Icon className={`w-3.5 h-3.5 ${att.content_type === 'application/pdf' ? 'text-red-400' : 'text-blue-400'}`} />
+                <span className="truncate max-w-[180px]">{att.original_filename}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
       {showAsReadOnly && (
         <div className="ml-8 mt-1 text-xs text-gray-500 italic">
           {isExpertTool
@@ -414,7 +438,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
                       type="button"
                       onClick={() => {
                         if (window.confirm(`Download "${att.original_filename}"?`)) {
-                          window.open(getAttachmentUrl(att.id), '_blank')
+                          downloadAttachment(att.id)
                         }
                       }}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -813,7 +837,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
             </div>
           )
         }
-      return null
+        return null
       })}
       {surfacedFiles.length > 0 && (
         <SurfacedFileCard files={surfacedFiles} />
@@ -856,7 +880,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        window.open(getAttachmentUrl(att.id), '_blank')
+                        downloadAttachment(att.id)
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -954,7 +978,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
 // AgentRunStatus values that indicate the agent has started processing (not pending)
 // Note: 'paused_user' was removed as it doesn't exist; 'paused_crashed' added
-const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_entra_auth', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
 
 const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)
@@ -1004,6 +1028,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (isResuming()) return 500
       if (status === 'paused_crashed') return 1000
       if (status === 'paused_sandbox') return 1000
+      if (status === 'paused_entra_auth') return 500
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl' || status === 'paused_ba_hitl' || status === 'paused_architect_hitl') {
         return 500
       }
@@ -1063,6 +1088,32 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     }
   }, [data?.status, queryClient])
 
+  // Auto-submit Entra ID authorization when session is waiting
+  const entraAuthSentRef = useRef(false)
+  useEffect(() => {
+    if (data?.status !== 'paused_entra_auth') {
+      entraAuthSentRef.current = false
+      return
+    }
+    if (entraAuthSentRef.current) return
+    entraAuthSentRef.current = true
+    authorizeEntra(sessionId)
+      .then((result) => {
+        if (result?.needs_reauth) {
+          const kc = getKeycloak()
+          if (kc) {
+            kc.login({ idpHint: 'entra-id', redirectUri: window.location.origin + window.location.pathname })
+          }
+          return
+        }
+        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      })
+      .catch((err) => {
+        console.error('Entra auth failed:', err)
+        entraAuthSentRef.current = false
+      })
+  }, [data?.status, sessionId, queryClient])
+
   useEffect(() => {
     const currentLength = data?.timeline?.length || 0
     if (currentLength > prevLengthRef.current) {
@@ -1104,15 +1155,22 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
   const isBusy = continueMutation.isPending || isAnswering
 
-  // Clear optimistic message once server data catches up (new timeline entries)
+  // Clear optimistic message once server data catches up
   useEffect(() => {
     if (pendingMessage === null) return
     const len = data?.timeline?.length || 0
+    // New timeline entry appeared (regular follow-up messages)
     if (pendingSetAtLength.current !== null && len > pendingSetAtLength.current) {
       setPendingMessage(null)
       setIsAnswering(false)
+      return
     }
-  }, [data?.timeline?.length, pendingMessage])
+    // HITL answer: timeline length stays the same but question is no longer pending
+    if (pendingSetAtLength.current !== null && !findPendingQuestion(data?.timeline)) {
+      setPendingMessage(null)
+      setIsAnswering(false)
+    }
+  }, [data?.timeline, pendingMessage])
 
   // Safety: clear pending message after 30s in case data never arrives
   useEffect(() => {
@@ -1228,6 +1286,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       const attIds = attachments.map((a) => a.id)
       answerQuestion(pendingQuestion.tc.question_id, answer, null, attIds)
         .then(() => {
+          setPendingMessage(null)
           setIsAnswering(false)
           markResuming()
           queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
@@ -1261,6 +1320,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_crashed: 'bg-red-500',
         paused_hitl: 'bg-amber-500 animate-pulse',
         paused_tool: 'bg-amber-500 animate-pulse',
+        paused_entra_auth: 'bg-blue-500 animate-pulse',
         paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
@@ -1305,6 +1365,13 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Stopping…
+              </span>
+            )}
+            {/* Entra auth indicator */}
+            {data.status === 'paused_entra_auth' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Authorizing Azure access…
               </span>
             )}
             {/* Sandbox running indicator */}
@@ -1373,6 +1440,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 {data.project.name}
               </a>
             )}
+            <DataSourcesMenu />
             <DownloadMenu
               loading={transcriptPdfLoading}
               onDownloadMd={() => {
@@ -1694,10 +1762,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       )}
 
       {/* Floating input bar — hidden in inspect mode, during sandbox, HITL
-          review states, terminated sessions, and for non-owner experts (they
-          can only view the session here; they answer their expert questions
-          on the /questions page). */}
-      {canControlSession && !['failed', 'paused_sandbox', 'paused_ba_hitl', 'paused_architect_hitl', 'terminated'].includes(data.status) && viewMode !== 'inspect' && (
+          review states, terminated sessions, entra auth, and for non-owner
+          experts (they can only view the session here; they answer their
+          expert questions on the /questions page). */}
+      {canControlSession && !['failed', 'paused_sandbox', 'paused_ba_hitl', 'paused_architect_hitl', 'terminated', 'paused_entra_auth'].includes(data.status) && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">

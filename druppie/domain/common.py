@@ -16,6 +16,7 @@ class SessionStatus(str, Enum):
     ACTIVE = "active"
     PAUSED_APPROVAL = "paused_approval"  # Waiting for tool approval
     PAUSED_HITL = "paused_hitl"          # Waiting for user answer
+    PAUSED_ENTRA_AUTH = "paused_entra_auth"  # Waiting for Entra ID token
     PAUSED_SANDBOX = "paused_sandbox"    # Waiting for sandbox completion
     PAUSED = "paused"                    # User-initiated pause (Stop button)
     PAUSED_CRASHED = "paused_crashed"    # System crashed during execution
@@ -32,6 +33,7 @@ class AgentRunStatus(str, Enum):
     RUNNING = "running"
     PAUSED_TOOL = "paused_tool"  # Waiting for tool approval
     PAUSED_HITL = "paused_hitl"  # Waiting for user answer
+    PAUSED_ENTRA_AUTH = "paused_entra_auth"  # Waiting for Entra ID token
     PAUSED_SANDBOX = "paused_sandbox"  # Waiting for sandbox completion
     PAUSED_USER = "paused_user"  # User-initiated pause (via Stop button)
     COMPLETED = "completed"
@@ -44,6 +46,7 @@ class ToolCallStatus(str, Enum):
     PENDING = "pending"  # Not yet executed
     WAITING_APPROVAL = "waiting_approval"  # Needs approval before execution
     WAITING_ANSWER = "waiting_answer"  # HITL tool waiting for user answer
+    WAITING_ENTRA_AUTH = "waiting_entra_auth"  # Waiting for Entra ID token
     WAITING_SANDBOX = "waiting_sandbox"  # Waiting for sandbox completion
     EXECUTING = "executing"  # Currently running
     COMPLETED = "completed"

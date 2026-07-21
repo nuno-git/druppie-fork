@@ -331,7 +331,7 @@ class DruppieToolProvider:
         # so no connection is held by this provider across the MCP await.
         status = await self._tool_executor.execute(tool_call_id)
 
-        if status in ("waiting_approval", "waiting_answer", "waiting_sandbox"):
+        if status in ("waiting_approval", "waiting_answer", "waiting_sandbox", "waiting_entra_auth"):
             return {"success": True, "_pending": True, "reason": status.lower()}
 
         # Read-back in a fresh short-lived session; extract plain data only.
