@@ -421,6 +421,10 @@ start_desktop() {
         warn "Xvnc not in this image — desktop disabled (rebuild dev-workspace)"
         return 0
     fi
+    if ! command -v dbus-run-session >/dev/null 2>&1; then
+        warn "dbus-run-session not in this image — desktop disabled (rebuild dev-workspace)"
+        return 0
+    fi
 
     log "starting desktop (XFCE over noVNC) — open /proxy/6080/ on the workspace host"
     # 127.0.0.1 only and -SecurityTypes None: the ONLY way in is code-server's
@@ -430,13 +434,32 @@ start_desktop() {
         >"${LOGS}/xvnc.log" 2>&1 &
     PIDS="${PIDS} $!"
 
+    # Wait for the X server socket before starting clients, so the first XFCE
+    # iteration doesn't fail with "xrdb: Can't open display ':1'".
+    for _ in $(seq 1 50); do
+        [ -S /tmp/.X11-unix/X1 ] && break
+        sleep 0.1
+    done
+
+    # XDG_RUNTIME_DIR (/run/user/<uid>) is required by D-Bus and xfconfd; the
+    # container starts without it, so create it once here.
+    local uid; uid="$(id -u)"
+    export XDG_RUNTIME_DIR="/run/user/${uid}"
+    mkdir -p "${XDG_RUNTIME_DIR}" && chmod 700 "${XDG_RUNTIME_DIR}"
+
     # Respawn loop: an XFCE "Log out" (or session crash) restarts the session
-    # instead of tearing down the pod via the wait -n below. The first
-    # iterations fail fast until Xvnc is accepting connections — harmless.
+    # instead of tearing down the pod via the wait -n below.
+    #
+    # dbus-run-session provides a private session bus that stays live for the
+    # full duration of startxfce4. This replaces `dbus-launch
+    # --exit-with-session`, whose bus exits prematurely in a container (no
+    # controlling tty), leaving xfce4-session with a dead
+    # DBUS_SESSION_BUS_ADDRESS — so xfconfd can't be activated and every XFCE
+    # component pops "Unable to connect to settings server".
     (
         export DISPLAY=:1
         while :; do
-            dbus-launch --exit-with-session startxfce4 >>"${LOGS}/xfce.log" 2>&1
+            dbus-run-session -- startxfce4 >>"${LOGS}/xfce.log" 2>&1
             sleep 2
         done
     ) &
