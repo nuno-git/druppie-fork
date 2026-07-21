@@ -421,6 +421,10 @@ start_desktop() {
         warn "Xvnc not in this image — desktop disabled (rebuild dev-workspace)"
         return 0
     fi
+    if ! command -v dbus-run-session >/dev/null 2>&1; then
+        warn "dbus-run-session not in this image — desktop disabled (rebuild dev-workspace)"
+        return 0
+    fi
 
     log "starting desktop (XFCE over noVNC) — open /proxy/6080/ on the workspace host"
     # 127.0.0.1 only and -SecurityTypes None: the ONLY way in is code-server's
@@ -430,13 +434,32 @@ start_desktop() {
         >"${LOGS}/xvnc.log" 2>&1 &
     PIDS="${PIDS} $!"
 
+    # Wait for the X server socket before starting clients, so the first XFCE
+    # iteration doesn't fail with "xrdb: Can't open display ':1'".
+    for _ in $(seq 1 50); do
+        [ -S /tmp/.X11-unix/X1 ] && break
+        sleep 0.1
+    done
+
+    # XDG_RUNTIME_DIR (/run/user/<uid>) is required by D-Bus and xfconfd; the
+    # container starts without it, so create it once here.
+    local uid; uid="$(id -u)"
+    export XDG_RUNTIME_DIR="/run/user/${uid}"
+    mkdir -p "${XDG_RUNTIME_DIR}" && chmod 700 "${XDG_RUNTIME_DIR}"
+
     # Respawn loop: an XFCE "Log out" (or session crash) restarts the session
-    # instead of tearing down the pod via the wait -n below. The first
-    # iterations fail fast until Xvnc is accepting connections — harmless.
+    # instead of tearing down the pod via the wait -n below.
+    #
+    # dbus-run-session provides a private session bus that stays live for the
+    # full duration of startxfce4. This replaces `dbus-launch
+    # --exit-with-session`, whose bus exits prematurely in a container (no
+    # controlling tty), leaving xfce4-session with a dead
+    # DBUS_SESSION_BUS_ADDRESS — so xfconfd can't be activated and every XFCE
+    # component pops "Unable to connect to settings server".
     (
         export DISPLAY=:1
         while :; do
-            dbus-launch --exit-with-session startxfce4 >>"${LOGS}/xfce.log" 2>&1
+            dbus-run-session -- startxfce4 >>"${LOGS}/xfce.log" 2>&1
             sleep 2
         done
     ) &
@@ -499,19 +522,37 @@ fi
 # backend still reads ZAI_API_KEY / FOUNDRY_API_KEY (LLM_PROVIDER=zai/foundry).
 #   ZAI_API_KEY    -> ZHIPU_API_KEY            (Z.AI + Z.AI Coding Plan share it)
 #   FOUNDRY_API_KEY -> AZURE_API_KEY + AZURE_RESOURCE_NAME   (Azure / Foundry)
+#
+# Also persist the aliases to ~/.bashrc.d/opencode-env so desktop terminals
+# (which are not direct children of this entrypoint) inherit them.
+OPENCODE_BASHRC_D="${HOME}/.bashrc.d"
+install -d -m 755 "${OPENCODE_BASHRC_D}"
+# Ensure .bashrc sources .bashrc.d/ (idempotent — only adds once).
+if ! grep -q 'source.*\.bashrc\.d' "${HOME}/.bashrc" 2>/dev/null; then
+    printf '\nfor f in "${HOME}/.bashrc.d/"*; do [ -r "$f" ] && source "$f"; done\n' >> "${HOME}/.bashrc"
+fi
+OPENCODE_ENV_FILE="${OPENCODE_BASHRC_D}/opencode-env"
+: > "${OPENCODE_ENV_FILE}"  # clear stale entries on restart
+
 if [ -n "${ZAI_API_KEY:-}" ]; then
     export ZHIPU_API_KEY="${ZAI_API_KEY}"
+    printf 'export ZHIPU_API_KEY="%s"\n' "${ZAI_API_KEY}" >> "${OPENCODE_ENV_FILE}"
 fi
 if [ -n "${FOUNDRY_API_KEY:-}" ]; then
     export AZURE_API_KEY="${FOUNDRY_API_KEY}"
     export AZURE_RESOURCE_NAME="${AZURE_RESOURCE_NAME:-${ANTHROPIC_FOUNDRY_RESOURCE:-druppie-resource}}"
-    # opencode serves Claude via its `anthropic` provider, which reads
-    # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL. Point both at the Foundry Azure
-    # AI Services Anthropic endpoint so the same FOUNDRY_API_KEY authenticates
-    # Claude too (matches the backend's litellm azure_ai URL).
     export ANTHROPIC_API_KEY="${FOUNDRY_API_KEY}"
     export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1}"
-    log "opencode: Z.AI/Z.AI Coding Plan + Azure + Anthropic(via Foundry) providers available via env aliases"
+    # The only Claude model deployed on this Foundry resource is claude-opus-4-8.
+    export OPENCODE_DEFAULT_MODEL="${OPENCODE_DEFAULT_MODEL:-anthropic:claude-opus-4-8}"
+    log "opencode: Z.AI/Z.AI Coding Plan + Azure + Anthropic(via Foundry) providers available via env aliases (model: ${OPENCODE_DEFAULT_MODEL})"
+    {
+        printf 'export AZURE_API_KEY="%s"\n' "${FOUNDRY_API_KEY}"
+        printf 'export AZURE_RESOURCE_NAME="%s"\n' "${AZURE_RESOURCE_NAME}"
+        printf 'export ANTHROPIC_API_KEY="%s"\n' "${FOUNDRY_API_KEY}"
+        printf 'export ANTHROPIC_BASE_URL="%s"\n' "${ANTHROPIC_BASE_URL}"
+        printf 'export OPENCODE_DEFAULT_MODEL="%s"\n' "${OPENCODE_DEFAULT_MODEL}"
+    } >> "${OPENCODE_ENV_FILE}"
 fi
 
 seed_workspace
