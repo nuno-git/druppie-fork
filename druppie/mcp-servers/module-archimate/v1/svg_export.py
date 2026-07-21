@@ -652,3 +652,22 @@ def export_all_views(model_root: ET.Element, target_dir: Path) -> list[Path]:
         path.write_text(svg, encoding="utf-8")
         written.append(path)
     return written
+
+
+def render_all_views(model_root: ET.Element) -> dict[str, str]:
+    """Render every positioned view to an SVG string, keyed by safe filename.
+
+    In-memory counterpart of :func:`export_all_views` for the Gitea write
+    flow: instead of writing files to a workspace directory, it returns
+    ``{safe_filename: svg_string}`` so the caller can push each SVG to the
+    repo's ``docs/diagrams/`` via the Gitea API. Unpositioned views are
+    skipped, matching ``export_all_views``.
+    """
+    rendered: dict[str, str] = {}
+    for view in model_root.findall("am:views/am:diagrams/am:view", NS):
+        svg = render_view_svg(model_root, view)
+        if svg is None:
+            continue
+        name = _text_child(view, "name") or _attr(view, "identifier") or "view"
+        rendered[_safe_filename(name)] = svg
+    return rendered

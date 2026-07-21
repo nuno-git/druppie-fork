@@ -289,7 +289,8 @@ def test_composite_builder_reuses_wilma():
     proj = _fresh_doc()
 
     class _FakeRegistry:
-        def get(self, session_id, model_path, create_if_missing=True):
+        async def get(self, session_id, model_path, *, repo_owner="", repo_name="",
+                      branch="main", create_if_missing=True):
             return proj
 
         def wilma(self):
@@ -300,6 +301,8 @@ def test_composite_builder_reuses_wilma():
     try:
         res = asyncio.run(write_tools._build_composite_view(
             session_id="s",
+            repo_owner="o",
+            repo_name="r",
             view_name="Cooperation",
             view_documentation="",
             groups={"Application": [
@@ -384,7 +387,8 @@ def test_composite_builder_autocorrects_so_validate_is_clean():
     proj = _fresh_doc()
 
     class _FakeRegistry:
-        def get(self, session_id, model_path, create_if_missing=True):
+        async def get(self, session_id, model_path, *, repo_owner="", repo_name="",
+                      branch="main", create_if_missing=True):
             return proj
 
         def wilma(self):
@@ -395,6 +399,8 @@ def test_composite_builder_autocorrects_so_validate_is_clean():
     try:
         res = asyncio.run(write_tools._build_composite_view(
             session_id="s",
+            repo_owner="o",
+            repo_name="r",
             view_name="Layered",
             view_documentation="",
             groups={

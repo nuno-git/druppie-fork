@@ -388,6 +388,42 @@ class ArchiMateDocument:
         tree = ET.ElementTree(root)
         return cls(path, tree, fresh=True)
 
+    @classmethod
+    def from_string(
+        cls,
+        xml: str | None,
+        *,
+        model_path: str,
+        model_name: str = "Project Architecture",
+    ) -> "ArchiMateDocument":
+        """Build a document from Open Exchange XML text (or create empty).
+
+        Used by the Gitea-backed registry: the model is fetched as a string
+        from the repo instead of read off a filesystem workspace. An empty
+        or missing file yields a fresh model. ``model_path`` is retained only
+        as the logical repo-relative path for reference/serialisation.
+        """
+        if xml and xml.strip():
+            tree = ET.ElementTree(ET.fromstring(xml))
+            return cls(Path(model_path), tree, fresh=False)
+        return cls._create_empty(Path(model_path), model_name=model_name)
+
+    def serialize(self) -> str:
+        """Return canonical Open Exchange XML (layout applied) as a string.
+
+        The Gitea persistence path uses this instead of :meth:`save`: the
+        module no longer owns a filesystem workspace, so the caller pushes
+        this string to the repo's ``docs/architecture.archimate``. Mirrors
+        :meth:`save`'s serialisation (ELK layout + stable indentation +
+        XML declaration + expanded empty elements) so all render surfaces
+        stay identical.
+        """
+        self._layout_all_views()
+        ET.indent(self.tree, space="  ", level=0)
+        body = ET.tostring(self.root, encoding="unicode", short_empty_elements=False)
+        self.dirty = False
+        return "<?xml version='1.0' encoding='UTF-8'?>\n" + body
+
     # --- Section helpers -------------------------------------------------
 
     def _ensure_section(self, tag: str) -> ET.Element:
@@ -1041,89 +1077,153 @@ class WriteSessionRegistry:
     cross-copies.
     """
 
-    def __init__(self, workspace_root: Path, models_dir: Path):
-        self.workspace_root = Path(workspace_root)
+    def __init__(self, models_dir: Path, store=None):
+        # Imported lazily so ArchiMateDocument (the pure XML editor) can be
+        # loaded standalone in unit tests without pulling in the Gitea layer.
+        from .gitea_io import GiteaFileStore
+
         self.models_dir = Path(models_dir)
+        self.store = store or GiteaFileStore()
         self._docs: dict[tuple[str, str], ArchiMateDocument] = {}
+        # Gitea blob sha per buffered doc, so save() can update in place
+        # instead of failing on "file already exists".
+        self._sha: dict[tuple[str, str], str | None] = {}
         self._wilma: ArchiMateDocument | None = None
 
-    # --- Workspace path resolution --------------------------------------
+    # --- Document access (Gitea-backed) ---------------------------------
 
-    def _resolve_workspace_path(self, session_id: str, model_path: str) -> Path:
-        """Resolve a session-relative model path to an absolute filesystem path.
+    async def get(
+        self,
+        session_id: str,
+        model_path: str,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str = "main",
+        create_if_missing: bool = True,
+        model_name: str = "Project Architecture",
+    ) -> ArchiMateDocument:
+        """Return the buffered model for this session, fetching from Gitea once.
 
-        Matches the coding-MCP convention of placing session work under
-        ``/workspaces/<user>/<project>/<session_id>``. The archimate MCP
-        does not own workspace lifecycle, so it discovers an existing
-        workspace directory rather than creating one.
+        The first access for a (session, model_path) fetches the model file
+        from the project's Gitea repo (or starts empty when absent) and
+        buffers it in memory; subsequent mutating tool calls reuse the buffer
+        so a whole plate accumulates before :meth:`persist` pushes it back.
         """
         if not session_id:
             raise ArchiMateWriteError("session_id is required")
         if not model_path:
             raise ArchiMateWriteError("model_path is required")
-
-        # The coding MCP names workspaces using session_id as the leaf
-        # directory. We scan for any leaf path ending in ``/<session_id>``
-        # under the workspace root.
-        matches = list(self.workspace_root.glob(f"*/*/{session_id}"))
-        if not matches:
-            # Fallback: assume session_id is a flat directory at the root
-            # (useful for tests and standalone runs)
-            flat = self.workspace_root / session_id
-            if flat.exists():
-                matches = [flat]
-        if not matches:
+        if not repo_name:
             raise ArchiMateWriteError(
-                f"No workspace found for session_id '{session_id}'. "
-                f"Expected a directory under {self.workspace_root}."
-            )
-        if len(matches) > 1:
-            logger.warning(
-                "Multiple workspaces match session_id '%s'; using first: %s",
-                session_id,
-                matches[0],
+                "repo_name is required — no project repository is in context "
+                "for this session (is the session attached to a project?)."
             )
 
-        rel = Path(model_path)
-        if rel.is_absolute():
-            raise ArchiMateWriteError("model_path must be workspace-relative")
-        full = (matches[0] / rel).resolve()
-        # Containment check: prevent path traversal
+        from .gitea_io import GiteaError
+
+        key = (session_id, model_path)
+        if key in self._docs:
+            return self._docs[key]
+
+        owner = repo_owner or self.store.org
         try:
-            full.relative_to(matches[0].resolve())
-        except ValueError as e:
+            content, sha = await self.store.get_file(
+                owner=owner, repo=repo_name, path=model_path, ref=branch
+            )
+        except GiteaError as e:
             raise ArchiMateWriteError(
-                f"model_path '{model_path}' escapes workspace root"
+                f"Could not read '{model_path}' from Gitea ({owner}/{repo_name}@{branch}): {e}"
             ) from e
-        return full
 
-    # --- Document access -------------------------------------------------
+        if content is None and not create_if_missing:
+            raise ArchiMateWriteError(f"Model file '{model_path}' does not exist")
 
-    def get(
+        doc = ArchiMateDocument.from_string(
+            content, model_path=model_path, model_name=model_name
+        )
+        self._docs[key] = doc
+        self._sha[key] = sha
+        return doc
+
+    async def persist(
         self,
         session_id: str,
         model_path: str,
         *,
-        create_if_missing: bool = True,
-        model_name: str = "Project Architecture",
-    ) -> ArchiMateDocument:
+        repo_owner: str,
+        repo_name: str,
+        branch: str = "main",
+        commit_message: str | None = None,
+    ) -> dict[str, Any]:
+        """Serialise the buffered model and push it + per-view SVGs to Gitea.
+
+        Returns ``{"path", "written", "svg_exports"}``. Idempotent when the
+        buffer is not dirty (no push, ``written=False``).
+        """
+        from .gitea_io import GiteaError
+        from .svg_export import render_all_views
+
         key = (session_id, model_path)
-        if key in self._docs:
-            return self._docs[key]
-        path = self._resolve_workspace_path(session_id, model_path)
-        if not create_if_missing and not path.exists():
-            raise ArchiMateWriteError(f"Model file '{model_path}' does not exist")
-        doc = ArchiMateDocument.load_or_create(path, model_name=model_name)
-        self._docs[key] = doc
-        return doc
+        doc = self._docs.get(key)
+        if doc is None:
+            raise ArchiMateWriteError(
+                f"No buffered model for session '{session_id}' / '{model_path}'. "
+                f"Build the plate before calling save_model."
+            )
+        owner = repo_owner or self.store.org
+        if not doc.dirty:
+            return {"path": model_path, "written": False, "reason": "no_changes",
+                    "svg_exports": []}
+
+        xml = doc.serialize()  # applies ELK layout; clears dirty
+        message = commit_message or f"chore(archimate): update {model_path}"
+        try:
+            result = await self.store.put_file(
+                owner=owner, repo=repo_name, path=model_path,
+                content=xml, message=message, branch=branch, sha=self._sha.get(key),
+            )
+        except GiteaError as e:
+            doc.dirty = True  # push failed — keep the buffer dirty for retry
+            raise ArchiMateWriteError(
+                f"Failed to write '{model_path}' to Gitea ({owner}/{repo_name}@{branch}): {e}"
+            ) from e
+        new_sha = (result.get("content") or {}).get("sha")
+        if new_sha:
+            self._sha[key] = new_sha
+
+        # Export + push one SVG per positioned view to docs/diagrams/ so the
+        # plates are visible directly in Gitea's file preview (Gitea renders
+        # SVG inline; the ArchiMate XML it does not). Never block the save on
+        # SVG failures.
+        diagrams_dir = str(Path(model_path).parent / "diagrams")
+        svg_exports: list[str] = []
+        for name, svg in render_all_views(doc.root).items():
+            svg_path = f"{diagrams_dir}/{name}.svg"
+            try:
+                _, existing_sha = await self.store.get_file(
+                    owner=owner, repo=repo_name, path=svg_path, ref=branch
+                )
+                await self.store.put_file(
+                    owner=owner, repo=repo_name, path=svg_path,
+                    content=svg, message=f"chore(archimate): render {name}.svg",
+                    branch=branch, sha=existing_sha,
+                )
+                svg_exports.append(svg_path)
+            except GiteaError as exc:  # noqa: PERF203 — one bad SVG must not sink the save
+                logger.warning("SVG push failed for %s: %s", svg_path, exc)
+
+        return {"path": model_path, "written": True, "svg_exports": svg_exports}
 
     def discard(self, session_id: str, model_path: str) -> None:
         self._docs.pop((session_id, model_path), None)
+        self._sha.pop((session_id, model_path), None)
 
     def discard_session(self, session_id: str) -> None:
         for key in list(self._docs):
             if key[0] == session_id:
                 self._docs.pop(key, None)
+                self._sha.pop(key, None)
 
     # --- WILMA access ----------------------------------------------------
 
@@ -1149,9 +1249,8 @@ _REGISTRY: WriteSessionRegistry | None = None
 def get_registry() -> WriteSessionRegistry:
     global _REGISTRY
     if _REGISTRY is None:
-        workspace_root = Path(os.getenv("WORKSPACE_ROOT", "/workspaces"))
         models_dir = Path(os.getenv("MODELS_DIR", "/models"))
-        _REGISTRY = WriteSessionRegistry(workspace_root, models_dir)
+        _REGISTRY = WriteSessionRegistry(models_dir)
     return _REGISTRY
 
 
