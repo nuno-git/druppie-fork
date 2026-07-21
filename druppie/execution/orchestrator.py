@@ -925,6 +925,10 @@ class Orchestrator:
         if agent_id:
             self._on_agent_completed(session_id, agent_run_id, agent_id)
 
+        completed_run = self.execution_repo.get_by_id(agent_run_id)
+        if completed_run and self._evaluate_escalation(session_id, completed_run):
+            return "paused"
+
         return "completed"
 
     async def resume_after_approval(self, session_id: UUID, approval_id: UUID) -> UUID:

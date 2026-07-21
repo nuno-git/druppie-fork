@@ -8,13 +8,34 @@
 
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Loader2, MessageSquarePlus, CheckCircle2, ArrowUpCircle, Ban, ShieldCheck, AlertTriangle } from 'lucide-react'
+import { Loader2, MessageSquarePlus, CheckCircle2, ArrowUpCircle, Ban, ShieldCheck, AlertTriangle, FileText } from 'lucide-react'
 import { submitBaHitl } from '../../services/api'
 import { useAuth } from '../../App'
+import { FilePreviewModal } from './ApprovalCard'
 
 const ROLES_THAT_CAN_ACT = ['business_analyst', 'admin']
 
 const BTN = 'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
+
+const findFdContent = (session) => {
+  if (!session?.timeline) return null
+  for (let i = session.timeline.length - 1; i >= 0; i--) {
+    const ar = session.timeline[i].agent_run
+    if (!ar?.llm_calls) continue
+    for (const llm of ar.llm_calls) {
+      for (const tc of (llm.tool_calls || [])) {
+        const name = tc.tool_name || ''
+        if (name === 'make_design' || name.endsWith(':make_design')) {
+          const args = tc.arguments || {}
+          if (args.path && args.content) {
+            return [{ path: args.path, content: args.content }]
+          }
+        }
+      }
+    }
+  }
+  return null
+}
 
 const BAHitlCard = ({ sessionId, session }) => {
   const queryClient = useQueryClient()
@@ -22,6 +43,10 @@ const BAHitlCard = ({ sessionId, session }) => {
   const [feedback, setFeedback] = useState('')
   const [showIterate, setShowIterate] = useState(false)
   const [confirmTerminate, setConfirmTerminate] = useState(false)
+  const [confirmEscalate, setConfirmEscalate] = useState(false)
+  const [confirmReady, setConfirmReady] = useState(false)
+  const [showFdPreview, setShowFdPreview] = useState(false)
+  const [terminateReason, setTerminateReason] = useState('')
 
   const userRoles = user?.roles || []
   const isOwner = !!session?.user_id && session.user_id === user?.id
@@ -30,6 +55,7 @@ const BAHitlCard = ({ sessionId, session }) => {
   const postHitlRejections = session?.fd_post_hitl_rejection_count ?? 0
   const escalationMode = !!session?.fd_escalation_mode
   const canEscalate = postHitlRejections >= 1
+  const fdFiles = findFdContent(session)
 
   const mutation = useMutation({
     mutationFn: (payload) => submitBaHitl(sessionId, payload),
@@ -37,6 +63,9 @@ const BAHitlCard = ({ sessionId, session }) => {
       setFeedback('')
       setShowIterate(false)
       setConfirmTerminate(false)
+      setConfirmEscalate(false)
+      setConfirmReady(false)
+      setTerminateReason('')
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['escalation-history', sessionId] })
     },
@@ -104,32 +133,116 @@ const BAHitlCard = ({ sessionId, session }) => {
             >
               {pending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Send'}
             </button>
+            <button
+              onClick={() => { setShowIterate(false); setFeedback('') }}
+              disabled={pending}
+              className="flex-shrink-0 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
 
       {confirmTerminate ? (
-        <div className="ml-6 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
-          <span className="text-sm text-red-700">Terminate permanently?</span>
-          <button
-            onClick={() => !pending && mutation.mutate({ decision: 'terminate' })}
+        <div className="ml-6 space-y-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <span className="text-sm text-red-700">Terminate permanently?</span>
+          </div>
+          <textarea
+            value={terminateReason}
+            onChange={(e) => setTerminateReason(e.target.value)}
+            placeholder="Reason for termination (the session owner will see this)…"
+            rows={2}
             disabled={pending}
-            className={`${BTN} bg-red-600 hover:bg-red-700`}
-          >
-            {pending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
-            Confirm terminate
-          </button>
-          <button
-            onClick={() => setConfirmTerminate(false)}
-            disabled={pending}
-            className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 transition-colors"
-          >
-            Cancel
-          </button>
+            className="w-full resize-y border border-red-300 rounded-lg px-3 py-2 bg-white outline-none text-sm leading-6 focus:border-red-400 transition-colors"
+            aria-label="Termination reason"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => !pending && mutation.mutate({ decision: 'terminate', feedback: terminateReason.trim() || undefined })}
+              disabled={pending}
+              className={`${BTN} bg-red-600 hover:bg-red-700`}
+            >
+              {pending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+              Confirm terminate
+            </button>
+            <button
+              onClick={() => { setConfirmTerminate(false); setTerminateReason('') }}
+              disabled={pending}
+              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : confirmEscalate ? (
+        <div className="ml-6 space-y-2">
+          <div className="flex items-center gap-2">
+            <ArrowUpCircle className="w-4 h-4 text-purple-600 flex-shrink-0" />
+            <span className="text-sm text-purple-700">Escalate to a human architect?</span>
+          </div>
+          <p className="text-xs text-purple-600 ml-6">
+            The session will pause for architect review. An architect (architect role) will need to approve or reject the design before the session can continue.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => !pending && mutation.mutate({ decision: 'escalate' })}
+              disabled={pending}
+              className={`${BTN} bg-purple-600 hover:bg-purple-700`}
+            >
+              {pending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpCircle className="w-3.5 h-3.5" />}
+              Confirm escalate
+            </button>
+            <button
+              onClick={() => setConfirmEscalate(false)}
+              disabled={pending}
+              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : confirmReady ? (
+        <div className="ml-6 space-y-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+            <span className="text-sm text-green-700">Mark the FD as ready for the architect?</span>
+          </div>
+          <p className="text-xs text-green-600 ml-6">
+            The architect agent will review the functional design and either approve it (creating a technical design) or give feedback.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => !pending && mutation.mutate({ decision: 'ready' })}
+              disabled={pending}
+              className={`${BTN} bg-green-600 hover:bg-green-700`}
+            >
+              {pending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+              Confirm ready
+            </button>
+            <button
+              onClick={() => setConfirmReady(false)}
+              disabled={pending}
+              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       ) : (
         <div className="ml-6 flex flex-wrap items-center gap-2">
+          {fdFiles && (
+            <button
+              onClick={() => setShowFdPreview(true)}
+              disabled={pending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              View FD
+            </button>
+          )}
           {!showIterate && (
             <button
               onClick={() => setShowIterate(true)}
@@ -140,31 +253,35 @@ const BAHitlCard = ({ sessionId, session }) => {
               Iterate
             </button>
           )}
-          <button
-            onClick={() => !pending && mutation.mutate({ decision: 'ready' })}
-            disabled={pending}
-            className={`${BTN} bg-green-600 hover:bg-green-700`}
-          >
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            Ready
-          </button>
-          <button
-            onClick={() => !pending && canEscalate && mutation.mutate({ decision: 'escalate' })}
-            disabled={pending || !canEscalate}
-            title={canEscalate ? 'Escalate to a human architect' : 'Available after the architect rejects the revised FD once'}
-            className={`${BTN} bg-purple-600 hover:bg-purple-700`}
-          >
-            <ArrowUpCircle className="w-3.5 h-3.5" />
-            Escalate
-          </button>
-          <button
-            onClick={() => setConfirmTerminate(true)}
-            disabled={pending}
-            className={`${BTN} bg-red-600 hover:bg-red-700`}
-          >
-            <Ban className="w-3.5 h-3.5" />
-            Terminate
-          </button>
+          {!showIterate && (
+            <>
+              <button
+                onClick={() => setConfirmReady(true)}
+                disabled={pending}
+                className={`${BTN} bg-green-600 hover:bg-green-700`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Ready
+              </button>
+              <button
+                onClick={() => setConfirmEscalate(true)}
+                disabled={pending || !canEscalate}
+                title={canEscalate ? 'Escalate to a human architect' : 'Available after the architect rejects the revised FD once'}
+                className={`${BTN} bg-purple-600 hover:bg-purple-700`}
+              >
+                <ArrowUpCircle className="w-3.5 h-3.5" />
+                Escalate
+              </button>
+              <button
+                onClick={() => setConfirmTerminate(true)}
+                disabled={pending}
+                className={`${BTN} bg-red-600 hover:bg-red-700`}
+              >
+                <Ban className="w-3.5 h-3.5" />
+                Terminate
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -178,6 +295,10 @@ const BAHitlCard = ({ sessionId, session }) => {
         <p className="ml-6 mt-2 text-xs text-red-600">
           {mutation.error?.message || 'Action failed'}
         </p>
+      )}
+
+      {showFdPreview && fdFiles && (
+        <FilePreviewModal files={fdFiles} onClose={() => setShowFdPreview(false)} />
       )}
     </div>
   )

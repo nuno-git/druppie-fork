@@ -1417,7 +1417,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       {viewMode === 'inspect' ? (
         <DebugEventLog data={data} sessionId={sessionId} sessionStatus={data.status} />
       ) : (
-        <div ref={timelineRef} className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div ref={timelineRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
           {(!data.timeline || data.timeline.length === 0) && !pendingMessage && (
             data.status === 'active' || data.status === 'running' ? (
@@ -1625,6 +1625,40 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               </div>
             )
           })()}
+          {/* FD escalation HITL review surfaces — scroll with the chat */}
+          {viewMode !== 'inspect' && (data.status === 'paused_ba_hitl' || data.status === 'paused_architect_hitl' || data.status === 'terminated') && (
+            <div className="space-y-3 pt-4">
+              {data.status === 'paused_ba_hitl' && (
+                <>
+                  <BAHitlCard sessionId={sessionId} session={data} />
+                  <EscalationHistoryList sessionId={sessionId} />
+                </>
+              )}
+              {data.status === 'paused_architect_hitl' && (
+                <>
+                  <ArchitectHitlCard sessionId={sessionId} session={data} />
+                  <EscalationHistoryList sessionId={sessionId} />
+                </>
+              )}
+              {data.status === 'terminated' && (
+                <>
+                  <div className="flex items-start gap-2.5 border border-gray-300 rounded-2xl shadow-sm px-4 py-3.5 bg-gray-100">
+                    <Ban className="w-5 h-5 text-gray-500 flex-shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-800">Session terminated</p>
+                      <p className="text-sm text-gray-600 mt-0.5">This session has been permanently terminated and cannot be resumed.</p>
+                      {data.error_message && (
+                        <p className="text-sm text-gray-700 mt-1.5 italic border-t border-gray-300 pt-1.5">
+                          Reason: {data.error_message}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <EscalationHistoryList sessionId={sessionId} />
+                </>
+              )}
+            </div>
+          )}
           <div ref={timelineEndRef} />
           </div>
         </div>
@@ -1655,39 +1689,6 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
               <span className="text-sm text-blue-600">Coding agent is running in sandbox…</span>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* FD escalation HITL review surfaces — replace the input bar while a
-          human review is pending. Terminated sessions show a final banner. */}
-      {viewMode !== 'inspect' && (data.status === 'paused_ba_hitl' || data.status === 'paused_architect_hitl' || data.status === 'terminated') && (
-        <div className="px-4 pb-4 pt-2 flex-shrink-0">
-          <div className="max-w-3xl mx-auto space-y-3">
-            {data.status === 'paused_ba_hitl' && (
-              <>
-                <BAHitlCard sessionId={sessionId} session={data} />
-                <EscalationHistoryList sessionId={sessionId} />
-              </>
-            )}
-            {data.status === 'paused_architect_hitl' && (
-              <>
-                <ArchitectHitlCard sessionId={sessionId} session={data} />
-                <EscalationHistoryList sessionId={sessionId} />
-              </>
-            )}
-            {data.status === 'terminated' && (
-              <>
-                <div className="flex items-start gap-2.5 border border-gray-300 rounded-2xl shadow-sm px-4 py-3.5 bg-gray-100">
-                  <Ban className="w-5 h-5 text-gray-500 flex-shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-800">Session terminated</p>
-                    <p className="text-sm text-gray-600 mt-0.5">This session has been permanently terminated and cannot be resumed.</p>
-                  </div>
-                </div>
-                <EscalationHistoryList sessionId={sessionId} />
-              </>
-            )}
           </div>
         </div>
       )}
