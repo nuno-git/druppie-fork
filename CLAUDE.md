@@ -20,21 +20,40 @@ ai/k8s push     → FluxCD detects change → Helm upgrade → pods restart
 
 FluxCD watches `ai/k8s` main branch every 5 min, applies everything under `clusters/ka-k8s-ai/`, and prunes removed objects. The chart source for HelmReleases comes from `ai/druppie` (FluxCD GitRepository `ai-druppie`).
 
-## Pushing to Gitea (Network Relay)
+## Pushing to Gitea
 
-`aigit.waterschap.org` is on the corporate network and **not directly reachable from WSL**. A local HTTP proxy relay bridges the connection.
+`aigit.waterschap.org` is on the corporate network. How you reach it depends on where git runs.
 
-### How it works
+### Windows (native, on the corporate network)
+
+If you run git directly on a corporate Windows machine (Git Bash / PowerShell), `aigit.waterschap.org` is **directly reachable** — no proxy or relay needed. Use git normally:
+
+```bash
+# Fetch everything (both remotes):
+git fetch --all --prune
+
+# Push to aigit:
+git push origin colab-dev   # ai/druppie
+git push origin main        # ai/k8s, rancher-gitops
+```
+
+Credentials are cached by Git Credential Manager / `credential.helper`, so there are no password prompts. No `NO_PROXY` handling and no `env -u NO_PROXY` prefix are required on Windows.
+
+### WSL (via network relay)
+
+`aigit.waterschap.org` is **not directly reachable from WSL**. A local HTTP proxy relay bridges the connection.
+
+#### How it works
 
 ```
 WSL (git push) → 127.0.0.1:8888 (gsa-relay.ps1 on Windows) → corporate network → aigit.waterschap.org
 ```
 
-- **`gsa-relay.ps1`** — PowerShell script at `C:\Users\nscholten\gsa-relay.ps1`, auto-starts on WSL login via `/init`. Listens on `0.0.0.0:8888`.
+- **`gsa-relay.ps1`** — PowerShell script at `C:\Users\<username>\gsa-relay.ps1`, auto-starts on WSL login via `/init`. Listens on `0.0.0.0:8888`.
 - **Git proxy** — `~/.gitconfig` has `[http "https://aigit.waterschap.org/"] proxy = http://127.0.0.1:8888`. **But see the NO_PROXY gotcha below** — you usually must prefix push/curl with `env -u NO_PROXY -u no_proxy`.
 - **Credentials** — OAuth2 token stored in `~/.git-credentials` (`credential.helper = store`). No password prompts.
 
-### NO_PROXY gotcha (relay is up but curl/git bypass it) — READ THIS
+#### NO_PROXY gotcha (relay is up but curl/git bypass it) — READ THIS
 
 The WSL env exports `NO_PROXY` / `no_proxy` **containing `aigit.waterschap.org`**. This tells tools "do not use a proxy for aigit", so even though the relay is running on `127.0.0.1:8888` and gitconfig points at it, `curl` / `git` / `pip` etc. try to reach aigit **directly**, which fails (it is on the corporate network). Symptoms: `curl ... --proxy http://127.0.0.1:8888` returns code `000` / times out; `git push` hangs then fails.
 
@@ -51,7 +70,7 @@ env -u NO_PROXY -u no_proxy git push origin main        # ai/k8s, rancher-gitops
 
 > `ss -tlnp | grep 8888` is **not** a valid relay check — the relay runs on **Windows**, so its port is not listed in WSL's `ss`. Use the curl check above.
 
-### Checking if the relay is up
+#### Checking if the relay is up
 
 ```bash
 # Correct check — unsets NO_PROXY so the request actually traverses the relay:
@@ -60,13 +79,13 @@ env -u NO_PROXY -u no_proxy curl -sk --proxy http://127.0.0.1:8888 https://aigit
 # -> empty / code 000      means relay is DOWN (see below)
 ```
 
-### If the relay is down (git push fails with connection refused/timeout)
+#### If the relay is down (git push fails with connection refused/timeout)
 
 The relay is a Windows-side process. You **cannot start it from WSL**. Ask the user to run it on Windows:
 
 ```powershell
 # On Windows (PowerShell):
-C:\Users\nscholten\gsa-relay.ps1
+C:\Users\<username>\gsa-relay.ps1
 ```
 
 Or simply ask the user: *"The GSA relay on port 8888 isn't running. Can you start `gsa-relay.ps1` on Windows?"*
