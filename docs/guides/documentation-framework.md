@@ -7,6 +7,29 @@ status: draft
 
 This is the practical guide to how we document decisions and specs in this repo. For the decision and rationale see [ADR 001](../adrs/001-adopt-documentation-standard.md).
 
+## Start here (for the team)
+
+**Why we do this.** We write short docs so the decisions and requirements behind our features stay findable and reusable — future-you (and everyone else) shouldn't have to reverse-engineer *why* something is the way it is. Not every change needs docs: only the ones that add or change what the product does or how it was decided.
+
+**Which doc do I write?** Pick based on your situation:
+
+| Your situation | Write a… |
+|----------------|----------|
+| New or changed feature | **PRD** |
+| A decision you want to remember | **ADR** |
+| Weighing options before making a choice | **Research** (optional) |
+| Pinning behaviour down as acceptance criteria | **Spec** |
+| Bugfix, chore, or other small change | usually **nothing** (or mark it `docs-exempt`) |
+
+**Two quick examples:**
+
+- You add a new approval screen → write a **PRD** (and a **Spec** for its acceptance criteria).
+- You choose Postgres instead of Mongo → write an **ADR** (and a **Research** doc if you weighed several options first).
+
+**Skipping docs.** If a change genuinely needs none, mark it `docs-exempt` in any one of three ways: add the **`docs-exempt` label** to the PR, tick a **`- [x] docs-exempt`** checkbox in the PR description, or add a **`docs-exempt: <reason>`** line to the PR description.
+
+**Where the details live.** The rest of this guide covers each type in depth. The starting-point templates are `docs/prds/TEMPLATE.md`, `docs/adrs/TEMPLATE.md`, `docs/research/TEMPLATE.md`, and `testing/specs/features/TEMPLATE.feature`.
+
 ## The four document types
 
 | Type | What it captures | When you write it | Template |
@@ -80,7 +103,7 @@ Docs in `docs/{adrs,prds,research}` and `testing/specs/features` are checked aut
 - **Locally (optional):** `docker compose --profile docs-validator run --rm docs-validator` — or opt in to [lefthook](https://github.com/evilmartians/lefthook) via `./scripts/setup-hooks.sh` (or `lefthook install`) to run it before each commit. The lefthook hook is optional/opt-in local convenience only; CI is the binding gate.
 - **CI (binding):** `.github/workflows/docs.yml` runs on every PR, with two checks:
   - **Validity** — docs that exist must have the required frontmatter/fields, a matching `id`, resolvable `linked_*` / `@prd` / `@adr`, and a fresh `CAS.md`.
-  - **Mandatory-docs** — a PR that changes feature code must include documentation, unless it is marked `docs-exempt`.
+  - **Mandatory-docs** — a PR that changes feature code must include documentation, unless it is marked `docs-exempt`. The mandatory-docs gate treats changes under `druppie/` and `frontend/src/` as code that needs docs; tooling/infra paths are intentionally exempt.
 - **Exempt** a change that genuinely needs no docs via the **`docs-exempt` label** or a **checked `docs-exempt` box** / a **`docs-exempt: <reason>` line** in the PR description.
 
 > These checks currently run in **warn-mode** (they report but do not block) while existing docs are migrated. They become blocking once the baseline is clean and the team agrees.
