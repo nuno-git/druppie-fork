@@ -166,12 +166,21 @@ checkout_branch() {
     log "fetching branch '${branch}' from origin"
     # shellcheck disable=SC2086
     if git -C "${REPO_DIR}" ${git_opts} fetch --depth=1 "${fetch_url}" "${branch}" 2>>"${LOGS}/git.log"; then
-        # reset --hard overwrites the seeded working tree to the branch content
-        # without the "untracked file would be overwritten" errors that plague
-        # `git checkout` when the dir was pre-populated by the seed step.
-        git -C "${REPO_DIR}" reset --hard FETCH_HEAD >>"${LOGS}/git.log" 2>&1
-        git -C "${REPO_DIR}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
-        log "checked out '${branch}' at $(git -C "${REPO_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?')"
+        local local_head remote_head
+        local_head=$(git -C "${REPO_DIR}" rev-parse HEAD 2>/dev/null || echo "")
+        remote_head=$(git -C "${REPO_DIR}" rev-parse FETCH_HEAD 2>/dev/null || echo "")
+        if [ "${local_head}" != "${remote_head}" ]; then
+            # Remote changed (someone else pushed, or branch switched).
+            # Stash local changes, reset, then re-apply to preserve edits.
+            git -C "${REPO_DIR}" stash --include-untracked --quiet >>"${LOGS}/git.log" 2>&1 || true
+            git -C "${REPO_DIR}" reset --hard FETCH_HEAD >>"${LOGS}/git.log" 2>&1
+            git -C "${REPO_DIR}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
+            git -C "${REPO_DIR}" stash pop --quiet >>"${LOGS}/git.log" 2>&1 || true
+            log "checked out '${branch}' at $(git -C "${REPO_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?') (remote changed, local edits preserved)"
+        else
+            git -C "${REPO_DIR}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
+            log "branch '${branch}' already at $(git -C "${REPO_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?') — no reset needed"
+        fi
     else
         warn "git fetch failed (offline or auth/TLS issue) — continuing with the baked snapshot; see ${LOGS}/git.log"
     fi
@@ -500,9 +509,41 @@ log "workspace boot: branch=${DRUPPIE_GIT_BRANCH} repo=${DRUPPIE_REPO_URL}"
 # refuses the repo with "dubious ownership" unless it is marked safe.
 git config --global --add safe.directory "${REPO_DIR}"
 
+# ---------------------------------------------------------------------------
+# Persist user data to PVC so it survives pod restarts.
+# /home/developer/ is ephemeral (container filesystem). Symlink each data
+# directory to /workspace/ so conversations, workspace layout, and desktop
+# state survive restarts.
+# ---------------------------------------------------------------------------
+persist_dir() {
+    # $1 = PVC path, $2 = home path (relative to $HOME)
+    local pvc="${WORKSPACE}/$1" home="$2"
+    mkdir -p "${pvc}"
+    if [ -d "${HOME}/${home}" ] && [ ! -L "${HOME}/${home}" ]; then
+        mv "${HOME}/${home}" "${pvc}" 2>/dev/null || true
+    fi
+    rm -f "${HOME}/${home}"
+    ln -s "${pvc}" "${HOME}/${home}"
+}
+
 # Claude Code: keep login/config on the PVC so it survives pod restarts.
 export CLAUDE_CONFIG_DIR="${WORKSPACE}/.claude"
 mkdir -p "${CLAUDE_CONFIG_DIR}"
+
+# opencode: conversations + config
+persist_dir ".opencode" ".config/opencode"
+
+# code-server: workspace layout, extensions, settings
+persist_dir ".code-server" ".local/share/code-server"
+
+# XFCE: desktop panel config, window positions
+persist_dir ".config-xfce4" ".config/xfce4"
+
+# XFCE session cache
+persist_dir ".cache-sessions" ".cache/sessions"
+
+# Persist CLAUDE_CONFIG_DIR to .bashrc.d so desktop terminals inherit it
+printf 'export CLAUDE_CONFIG_DIR="%s"\n' "${CLAUDE_CONFIG_DIR}" >> "${OPENCODE_ENV_FILE}"
 
 # Claude Code: route through Azure AI Foundry using FOUNDRY_API_KEY (from
 # envFrom). The Azure resource only deploys claude-opus-4-8, so all model
