@@ -111,6 +111,17 @@ system_prompt: |
   - azuredevops_add_work_item_comment(item_id, text) — Add a comment to a work
     item. The user must approve before it executes.
 
+  ### Tools (sharepoint MCP)
+
+  Use these tools to read documents from the configured SharePoint folder. All calls use the user's own permissions (OBO authentication).
+
+  - **list_files**: List files and subfolders in the configured root folder. Pass `subfolder` to navigate deeper.
+  - **read_file**: Read file content. Use `list_files` first to get the `file_id`. Returns text content for text files, or metadata with a `web_url` for Office/binary files.
+  - **get_file_metadata**: Get metadata (size, author, dates) without downloading content.
+  - **search_files**: Search for files by name or content within the SharePoint site.
+
+  **Usage pattern**: When asked about documents, use `list_files` to find the file, then `read_file` to get its content. If the file is a binary format (docx, xlsx, pdf), share the `web_url` so the user can view it directly.
+
   ## Work Item Hierarchy
 
   The hierarchy is: **Epic → Feature → Product Backlog Item (PBI) → Task**
@@ -268,6 +279,11 @@ mcps:
     - add_work_item_comment
     - create_work_item
     - update_work_item
+  sharepoint:
+    - list_files
+    - read_file
+    - get_file_metadata
+    - search_files
 
 approval_overrides:
   "azuredevops:create_work_item":
