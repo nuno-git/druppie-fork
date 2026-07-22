@@ -624,13 +624,14 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
           "tool_call": true,
           "limit": { "context": 262144, "output": 32768 },
           "options": {
-            "temperature": 0.1,
+            "temperature": 0.6,
             "top_p": 0.95,
             "extraBody": {
               "top_k": 20,
+              "min_p": 0.0,
               "presence_penalty": 0.0,
               "repetition_penalty": 1.0,
-              "chat_template_kwargs": { "enable_thinking": true }
+              "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }
             }
           }
         },
@@ -641,13 +642,14 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
           "tool_call": true,
           "limit": { "context": 262144, "output": 32768 },
           "options": {
-            "temperature": 0.1,
+            "temperature": 0.6,
             "top_p": 0.95,
             "extraBody": {
               "top_k": 20,
+              "min_p": 0.0,
               "presence_penalty": 0.0,
               "repetition_penalty": 1.0,
-              "chat_template_kwargs": { "enable_thinking": true }
+              "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }
             }
           }
         }
