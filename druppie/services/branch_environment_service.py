@@ -424,6 +424,24 @@ def build_externalsecrets_yaml(slug: str) -> str:
                 ],
             },
         },
+        # Gitea token for GitOps operations (committing branch-env manifests to ai/k8s).
+        # Same Vault path as the live instances (ci/gitea#token).
+        {
+            "apiVersion": "external-secrets.io/v1",
+            "kind": "ExternalSecret",
+            "metadata": {"name": "druppie-branch-env-git", "namespace": namespace},
+            "spec": {
+                "refreshInterval": "1h",
+                "secretStoreRef": {"name": "vault-ai-team-k8s", "kind": "ClusterSecretStore"},
+                "target": {
+                    "name": "druppie-branch-env-git",
+                    "creationPolicy": "Owner",
+                },
+                "data": [
+                    {"secretKey": "token", "remoteRef": {"key": "ci/gitea", "property": "token"}},
+                ],
+            },
+        },
     )
 
 
