@@ -362,6 +362,8 @@ async def _is_container_running(container_id: str) -> bool:
 
 async def _get_container_death_reason(container_id: str) -> str | None:
     """If a container has exited, return a human-readable reason. None if still running."""
+    if SANDBOX_MODE == "k8s":
+        return "sandbox terminated (k8s mode)"
     rc, stdout, _ = await _docker_run(
         ["docker", "inspect", "--format",
          "{{.State.Running}}|{{.State.OOMKilled}}|{{.State.ExitCode}}|{{.State.Status}}",
@@ -619,7 +621,7 @@ async def _create_sandbox_container(
         if rc == 0:
             await _docker_run(
                 ["git", "-C", tmp_dir, "remote", "set-url", "origin",
-                 f"http://gitea:3000/{owner}/{repo_name}.git"],
+                 f"{GITEA_URL}/{owner}/{repo_name}.git"],
                 timeout=10,
             )
 
@@ -3245,6 +3247,7 @@ async def _internal_revert_to_commit(
         # Force push via bundle mechanism (same as push_changes but force)
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+        resolved_gitea_url = entry.get("gitea_url", GITEA_URL)
 
         force_pushed = False
         if resolved_repo_name and branch != "main" and _is_gitea_configured():
