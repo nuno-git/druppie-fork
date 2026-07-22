@@ -200,7 +200,7 @@ async def _verify_owner_or_admin(
         return
     try:
         inspect_result = await mcp_http.call(
-            server="docker",
+            server="deploy",
             tool="inspect",
             args={"container_name": container_name},
             timeout_seconds=10.0,
@@ -254,7 +254,7 @@ async def list_deployments(
 
     try:
         result = await mcp_http.call(
-            server="docker",
+            server="deploy",
             tool="list_apps",
             args=args,
             timeout_seconds=30.0,
@@ -303,7 +303,7 @@ async def stop_deployment(
     # Stop the container
     try:
         result = await mcp_http.call(
-            server="docker",
+            server="deploy",
             tool="stop",
             args={
                 "container_name": container_name,
@@ -343,7 +343,7 @@ async def get_deployment_logs(
     # Get logs
     try:
         result = await mcp_http.call(
-            server="docker",
+            server="deploy",
             tool="logs",
             args={
                 "container_name": container_name,
@@ -380,7 +380,7 @@ async def inspect_deployment(
 
     try:
         result = await mcp_http.call(
-            server="docker",
+            server="deploy",
             tool="inspect",
             args={"container_name": container_name},
             timeout_seconds=10.0,
@@ -419,25 +419,12 @@ async def start_deployment(
     container_name: str,
     user: dict = Depends(get_current_user),
 ) -> ActionResponse:
-    """Start a stopped deployment."""
-    mcp_http = get_mcp_http()
-    await _verify_owner_or_admin(mcp_http, container_name, user, "start")
-
-    try:
-        result = await mcp_http.call(
-            server="docker",
-            tool="start",
-            args={"container_name": container_name},
-            timeout_seconds=30.0,
-        )
-        return ActionResponse(
-            success=result.get("success", False),
-            container_name=container_name,
-            error=result.get("error"),
-        )
-    except MCPHttpError as e:
-        logger.error("deployment_start_error", container=container_name, error=str(e))
-        return ActionResponse(success=False, container_name=container_name, error=str(e))
+    """Start is not supported in GitOps mode. Use deploy to redeploy."""
+    return ActionResponse(
+        success=False,
+        container_name=container_name,
+        error="'start' is not supported in GitOps mode. Use 'deploy' to redeploy.",
+    )
 
 
 @router.post("/deployments/{container_name}/restart", response_model=ActionResponse)
@@ -445,25 +432,12 @@ async def restart_deployment(
     container_name: str,
     user: dict = Depends(get_current_user),
 ) -> ActionResponse:
-    """Restart a deployment."""
-    mcp_http = get_mcp_http()
-    await _verify_owner_or_admin(mcp_http, container_name, user, "restart")
-
-    try:
-        result = await mcp_http.call(
-            server="docker",
-            tool="restart",
-            args={"container_name": container_name},
-            timeout_seconds=60.0,
-        )
-        return ActionResponse(
-            success=result.get("success", False),
-            container_name=container_name,
-            error=result.get("error"),
-        )
-    except MCPHttpError as e:
-        logger.error("deployment_restart_error", container=container_name, error=str(e))
-        return ActionResponse(success=False, container_name=container_name, error=str(e))
+    """Restart is not supported in GitOps mode. Use deploy to redeploy."""
+    return ActionResponse(
+        success=False,
+        container_name=container_name,
+        error="'restart' is not supported in GitOps mode. Use 'deploy' to redeploy.",
+    )
 
 
 # =============================================================================
@@ -476,88 +450,8 @@ async def list_volumes(
     project_id: str | None = Query(None, description="Filter by druppie.project_id"),
     user: dict = Depends(get_current_user),
 ) -> VolumeListResponse:
-    """List druppie-labeled Docker volumes.
-
-    Non-admins only see volumes for projects they own (checked via any container
-    in that project carrying their druppie.user_id).
-    """
-    mcp_http = get_mcp_http()
-
-    try:
-        # Pull every volume + every druppie container so we can link by
-        # com.docker.compose.project even when the volume itself has no
-        # druppie.* label (older deploy deploys didn't label volumes).
-        vols_task = mcp_http.call(
-            server="docker",
-            tool="list_volumes",
-            args={"druppie_only": False},
-            timeout_seconds=15.0,
-        )
-        containers_task = mcp_http.call(
-            server="docker",
-            tool="list_apps",
-            args={"all": True},
-            timeout_seconds=15.0,
-        )
-        vols_res = await vols_task
-        cont_res = await containers_task
-
-        all_volumes = vols_res.get("volumes", []) if vols_res.get("success") else []
-        all_containers = cont_res.get("containers", []) if cont_res.get("success") else []
-
-        # compose_project -> (druppie project_id, user_id) from containers
-        compose_to_project: dict[str, dict[str, str]] = {}
-        for c in all_containers:
-            labels = c.get("labels", {})
-            cp = labels.get("druppie.compose_project") or labels.get("com.docker.compose.project")
-            pid = labels.get("druppie.project_id")
-            if cp and pid:
-                compose_to_project[cp] = {
-                    "project_id": pid,
-                    "user_id": labels.get("druppie.user_id", ""),
-                }
-
-        enriched: list[dict[str, Any]] = []
-        for v in all_volumes:
-            labels = v.get("labels", {})
-            vol_pid = v.get("project_id") or labels.get("druppie.project_id")
-            vol_cp = v.get("compose_project") or labels.get("com.docker.compose.project")
-            link = compose_to_project.get(vol_cp) if vol_cp else None
-
-            # Keep only volumes that resolve to a druppie project
-            if not vol_pid and not link:
-                continue
-
-            resolved_pid = vol_pid or (link["project_id"] if link else None)
-            resolved_uid = v.get("user_id") or labels.get("druppie.user_id") or (
-                link["user_id"] if link else None
-            )
-
-            if project_id and resolved_pid != project_id:
-                continue
-
-            enriched.append({
-                "name": v["name"],
-                "driver": v.get("driver", "local"),
-                "project_id": resolved_pid,
-                "session_id": v.get("session_id") or labels.get("druppie.session_id"),
-                "compose_project": vol_cp,
-                "labels": labels,
-                "_user_id": resolved_uid,
-            })
-
-        # Non-admins see only volumes tied to projects they own a container in
-        user_roles = get_user_roles(user)
-        if "admin" not in user_roles:
-            user_id = user.get("sub", "")
-            enriched = [e for e in enriched if e.get("_user_id") == user_id]
-
-        items = [VolumeSummary(**{k: v for k, v in e.items() if k != "_user_id"}) for e in enriched]
-        return VolumeListResponse(items=items, count=len(items))
-
-    except MCPHttpError as e:
-        logger.error("volumes_list_error", error=str(e))
-        return VolumeListResponse(items=[], count=0)
+    """Volumes are managed by the app's Helm chart (PVCs). Not listed here."""
+    return VolumeListResponse(items=[], count=0)
 
 
 # =============================================================================
@@ -583,7 +477,7 @@ async def wipe_project(
     # Enumerate containers for the project (all states)
     try:
         list_result = await mcp_http.call(
-            server="docker",
+            server="deploy",
             tool="list_apps",
             args={"all": True, "project_id": project_id},
             timeout_seconds=15.0,
@@ -626,7 +520,7 @@ async def wipe_project(
     for cp in compose_projects:
         try:
             r = await mcp_http.call(
-                server="docker",
+                server="deploy",
                 tool="teardown",
                 args={"compose_project_name": cp, "remove_volumes": True},
                 timeout_seconds=60.0,
@@ -656,8 +550,8 @@ async def wipe_project(
             continue
         try:
             r = await mcp_http.call(
-                server="docker",
-                tool="remove",
+                server="deploy",
+                tool="teardown",
                 args={"container_name": name, "force": True},
                 timeout_seconds=30.0,
             )

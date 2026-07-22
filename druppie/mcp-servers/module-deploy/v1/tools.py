@@ -25,7 +25,9 @@ Use when:
 - Tearing down deployed apps (teardown)
 - Listing deployed apps (list_apps)
 - Reading app logs (logs)
-- Stopping/removing apps (stop, remove)
+- Inspecting app status (inspect)
+- Triggering CI builds (build)
+- Stopping apps (stop)
 
 Don't use when:
 - You need file system operations (use coding module)
@@ -75,48 +77,6 @@ async def build(
             result["project_id"] = project_id
             result["session_id"] = session_id
         return result
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@mcp.tool(
-    name="run",
-    description="Run a container as a Kubernetes Deployment.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def run(
-    image_name: str,
-    container_name: str,
-    container_port: int,
-    project_id: str | None = None,
-    session_id: str | None = None,
-    user_id: str | None = None,
-    git_url: str | None = None,
-    branch: str | None = None,
-    port: int | None = None,
-    port_mapping: str | None = None,
-    env_vars: dict[str, str] | None = None,
-    volumes: list[str] | None = None,
-    command: str | None = None,
-) -> dict:
-    """Run a container as a Kubernetes Deployment."""
-    try:
-        err = _validate_name(container_name, "container_name")
-        if err:
-            return {"success": False, "error": err}
-
-        from .k8s_deploy import k8s_run
-        return await k8s_run(
-            image_name=image_name,
-            container_name=container_name,
-            container_port=container_port,
-            project_id=project_id,
-            session_id=session_id,
-            user_id=user_id,
-            env_vars=env_vars,
-            command=command,
-        )
 
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -202,9 +162,9 @@ async def stop(container_name: str, remove: bool = True) -> dict:
         if err:
             return {"success": False, "error": err}
 
-        from .k8s_deploy import k8s_stop, k8s_remove
+        from .k8s_deploy import k8s_stop, k8s_teardown
         if remove:
-            return await k8s_remove(container_name)
+            return await k8s_teardown(container_name)
         return await k8s_stop(container_name)
 
     except Exception as e:
@@ -235,25 +195,6 @@ async def logs(
 
 
 @mcp.tool(
-    name="remove",
-    description="Teardown: delete the app's ai/k8s manifests.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def remove(container_name: str, force: bool = False) -> dict:
-    """Teardown: delete the app's ai/k8s manifests."""
-    try:
-        err = _validate_name(container_name, "container_name")
-        if err:
-            return {"success": False, "error": err}
-
-        from .k8s_deploy import k8s_remove
-        return await k8s_remove(container_name)
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@mcp.tool(
     name="list_apps",
     description="List deployed user-apps.",
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
@@ -276,75 +217,13 @@ async def list_apps(
 
 @mcp.tool(
     name="inspect",
-    description="Inspect a deployed app. Not supported in GitOps mode.",
+    description="Inspect a deployed app: status, URL, labels, pod info.",
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def inspect(container_name: str) -> dict:
-    """Inspect is not supported in GitOps mode. Use 'logs' or 'list_apps'."""
+    """Inspect a deployed app via K8s API."""
     try:
         from .k8s_deploy import k8s_inspect
         return await k8s_inspect(container_name)
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@mcp.tool(
-    name="exec_command",
-    description="Execute a command inside a running container. Not supported in GitOps mode.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def exec_command(
-    container_name: str,
-    command: str,
-    workdir: str | None = None,
-) -> dict:
-    """Exec is not supported in GitOps mode (apps are deployed, not interactive)."""
-    try:
-        from .k8s_deploy import k8s_exec_command
-        return await k8s_exec_command(container_name, command)
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@mcp.tool(
-    name="start",
-    description="Start a stopped container. Not supported in GitOps mode.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def start(container_name: str) -> dict:
-    """Start is not supported in GitOps mode. Use deploy to redeploy."""
-    return {
-        "success": False,
-        "error": "'start' is not supported in GitOps mode. Use 'deploy' to redeploy.",
-    }
-
-
-@mcp.tool(
-    name="restart",
-    description="Restart a container. Not supported in GitOps mode.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def restart(container_name: str, timeout: int = 10) -> dict:
-    """Restart is not supported in GitOps mode. Use deploy to redeploy."""
-    return {
-        "success": False,
-        "error": "'restart' is not supported in GitOps mode. Use 'deploy' to redeploy.",
-    }
-
-
-@mcp.tool(
-    name="list_volumes",
-    description="List volumes. Not supported in GitOps mode.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def list_volumes(
-    project_id: str | None = None,
-    compose_project: str | None = None,
-    druppie_only: bool = True,
-) -> dict:
-    """List volumes is not supported in GitOps mode. PVCs are managed by the app Helm chart."""
-    try:
-        from .k8s_deploy import k8s_list_volumes
-        return await k8s_list_volumes()
     except Exception as e:
         return {"success": False, "error": str(e)}

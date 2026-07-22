@@ -127,7 +127,7 @@ class MCPConfig:
         """Get URL for an MCP server.
 
         Args:
-            server: Server name (coding, docker)
+            server: Server name (coding, deploy)
 
         Returns:
             Server URL with /mcp suffix for FastMCP
@@ -311,7 +311,7 @@ class MCPConfig:
     def get_hidden_params_for_full_name(self, full_name: str) -> set[str]:
         """Get hidden param names for a tool given its registry full name.
 
-        Parses the full name (e.g., "deploy_deploy") into server ("docker")
+        Parses the full name (e.g., "deploy_deploy") into server ("deploy")
         and tool name ("deploy"), then looks up hidden params.
 
         Args:

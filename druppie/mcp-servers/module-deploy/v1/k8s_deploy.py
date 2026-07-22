@@ -549,11 +549,6 @@ async def k8s_stop(container_name: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-async def k8s_remove(container_name: str) -> dict:
-    """Remove = teardown via GitOps (same as teardown)."""
-    return await k8s_teardown(container_name)
-
-
 async def k8s_logs(container_name: str, tail: int = 100) -> dict:
     """Read logs from the app's first pod (in-cluster, read-only)."""
     slug = _slugify(container_name)
@@ -610,27 +605,52 @@ async def k8s_list_apps(
 
 
 async def k8s_inspect(container_name: str) -> dict:
-    return {
-        "success": False,
-        "error": (
-            "'inspect' is not supported in GitOps/K8s mode. Use 'logs' or "
-            "'list_apps' for status."
-        ),
-    }
+    """Inspect a deployed app: status, URL, labels, pod info."""
+    slug = _slugify(container_name)
+    cc = _cluster_client()
+    if not cc.available:
+        return {"success": False, "error": "no in-cluster SA token available"}
 
+    try:
+        hr = await cc.get_helmrelease(slug, slug)
+        if not hr:
+            return {"success": False, "error": f"app '{slug}' not found (no HelmRelease)"}
 
-async def k8s_exec_command(container_name: str, command: str) -> dict:
-    return {
-        "success": False,
-        "error": "'exec' is not supported in GitOps/K8s mode (apps are deployed, not interactive).",
-    }
+        status = hr.get("status", {})
+        conditions = status.get("conditions", [])
+        ready = any(
+            c.get("status") == "True" and c.get("type") == "Ready"
+            for c in conditions
+        )
 
+        pods = await cc.list_pods(slug, f"app.kubernetes.io/instance={slug}")
+        items = (pods or {}).get("items") if pods else []
 
-async def k8s_list_volumes() -> dict:
-    return {
-        "success": False,
-        "error": (
-            "'list_volumes' is not supported in GitOps/K8s mode. PVCs are managed "
-            "by the app Helm chart (longhorn-branch-env, Delete reclaim)."
-        ),
-    }
+        pod_info = []
+        for p in items:
+            pod_info.append({
+                "name": p["metadata"]["name"],
+                "status": p.get("status", {}).get("phase", "Unknown"),
+                "ready": all(
+                    c.get("ready") for c in p.get("status", {}).get("containerStatuses", [])
+                ) if p.get("status", {}).get("containerStatuses") else False,
+            })
+
+        return {
+            "success": True,
+            "name": slug,
+            "namespace": slug,
+            "url": f"https://{slug}-apps.{APPS_DOMAIN}",
+            "ready": ready,
+            "helmrelease_status": {
+                "reconciled_at": status.get("lastAppliedRevision"),
+                "revision": status.get("lastAppliedRevision"),
+            },
+            "pods": pod_info,
+            "labels": {
+                "managed-by": "druppie-module-deploy",
+                "druppie.io/user-app": "true",
+            },
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}

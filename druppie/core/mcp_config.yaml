@@ -135,19 +135,19 @@ mcps:
       - name: _internal_close_pull_request
         requires_approval: false
 
-  docker:
+  deploy:
     url: ${MCP_DEPLOY_URL:-http://module-deploy:9002}
     type: core
-    # Declarative injection rules for docker MCP
+    # Declarative injection rules for deploy MCP
     inject:
       session_id:
         from: session.id
         hidden: true
-        tools: [build, run, deploy]  # Only these tools accept session_id
+        tools: [build, deploy]
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [build, deploy]  # Only build needs repo info
+        tools: [build, deploy]
       repo_owner:
         from: project.repo_owner
         hidden: true
@@ -155,39 +155,13 @@ mcps:
       user_id:
         from: session.user_id
         hidden: true
-        tools: [run, deploy]  # For ownership labels
+        tools: [deploy]
       project_id:
         from: session.project_id
         hidden: true
-        tools: [run, deploy]  # For ownership labels
+        tools: [deploy]
     tools:
       - name: build
-        # GLOBAL: docker:build ALWAYS needs developer approval (per goal.md)
-        requires_approval: true
-        required_role: developer
-
-      - name: run
-        # GLOBAL: docker:run ALWAYS needs developer approval (per goal.md)
-        requires_approval: true
-        required_role: developer
-
-      - name: stop
-        requires_approval: false
-
-      - name: logs
-        requires_approval: false
-
-      - name: remove
-        requires_approval: true
-        required_role: developer
-
-      - name: list_apps
-        requires_approval: false
-
-      - name: inspect
-        requires_approval: false
-
-      - name: exec_command
         requires_approval: true
         required_role: developer
 
@@ -198,6 +172,18 @@ mcps:
       - name: teardown
         requires_approval: true
         required_role: developer
+
+      - name: stop
+        requires_approval: false
+
+      - name: logs
+        requires_approval: false
+
+      - name: list_apps
+        requires_approval: false
+
+      - name: inspect
+        requires_approval: false
 
   # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
