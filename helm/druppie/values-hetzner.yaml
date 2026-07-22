@@ -93,7 +93,7 @@ backend:
   replicaCount: 1
   devMode: false
   dockerSocket:
-    enabled: false                  # Docker socket only needed on infra nodes (module-coding/module-docker)
+    enabled: false                  # Docker socket only needed on infra nodes (module-coding/module-deploy)
   resources:
     requests:
       memory: "1Gi"

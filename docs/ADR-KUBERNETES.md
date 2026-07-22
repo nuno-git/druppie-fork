@@ -560,7 +560,7 @@ flowchart TB
                 subgraph MCPModules["MCP Modules"]
                     direction LR
                     MC["module-coding"]
-                    MD["module-docker"]
+                    MD["module-deploy"]
                     MO["+ 6 modules"]
                 end
 

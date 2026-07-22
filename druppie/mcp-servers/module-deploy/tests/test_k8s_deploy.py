@@ -1,4 +1,4 @@
-"""Tests for module-docker K8s deploy path (GitOps model).
+"""Tests for module-deploy K8s deploy path (GitOps model).
 
 Covers:
   - _slugify
@@ -8,8 +8,8 @@ Covers:
   - k8s_compose_down: deletes the app subdir via list_dir -> delete ops
   - stubs (inspect/exec/volumes) return a clear not-supported error
 
-Run:  python druppie/mcp-servers/module-docker/tests/test_k8s_deploy.py
-   or pytest druppie/mcp-servers/module-docker/tests/test_k8s_deploy.py
+Run:  python druppie/mcp-servers/module-deploy/tests/test_k8s_deploy.py
+   or pytest druppie/mcp-servers/module-deploy/tests/test_k8s_deploy.py
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-# Make `import k8s_deploy` resolve to module-docker/v1/k8s_deploy.py.
+# Make `import k8s_deploy` resolve to module-deploy/v1/k8s_deploy.py.
 _V1 = Path(__file__).resolve().parents[1] / "v1"
 sys.path.insert(0, str(_V1))
 import k8s_deploy as kd  # noqa: E402
@@ -72,7 +72,7 @@ class TestManifestBuilders(unittest.TestCase):
         ns = yaml.safe_load(kd.build_namespace_yaml("todo"))
         self.assertEqual(ns["kind"], "Namespace")
         self.assertEqual(ns["metadata"]["name"], "todo")
-        self.assertEqual(ns["metadata"]["labels"]["managed-by"], "druppie-module-docker")
+        self.assertEqual(ns["metadata"]["labels"]["managed-by"], "druppie-module-deploy")
 
     def test_gitrepository(self):
         gr = yaml.safe_load(kd.build_gitrepository_yaml("todo", "https://x/ai/todo.git", "main"))

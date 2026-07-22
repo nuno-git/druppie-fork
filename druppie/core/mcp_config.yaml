@@ -136,7 +136,7 @@ mcps:
         requires_approval: false
 
   docker:
-    url: ${MCP_DOCKER_URL:-http://module-docker:9002}
+    url: ${MCP_DEPLOY_URL:-http://module-deploy:9002}
     type: core
     # Declarative injection rules for docker MCP
     inject:

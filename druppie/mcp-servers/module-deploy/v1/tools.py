@@ -10,12 +10,10 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from .module import DockerModule
-
-MODULE_ID = "docker"
+MODULE_ID = "deploy"
 MODULE_VERSION = "1.0.0"
 
-logger = logging.getLogger("docker-mcp")
+logger = logging.getLogger("deploy-mcp")
 
 mcp = FastMCP(
     "GitOps Deployer",

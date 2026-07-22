@@ -85,7 +85,7 @@ EMBED_MODULES="${EMBED_MODULES:-}"
 # start_mcp_module fall back to a runtime venv build, or skip with a warning.
 declare -A MCP_MODULES=(
     [coding]="module-coding 9001"
-    [docker]="module-docker 9002"
+    [docker]="module-deploy 9002"
     [filesearch]="module-filesearch 9004"
     [web]="module-web 9005"
     [archimate]="module-archimate 9006"

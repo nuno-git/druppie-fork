@@ -1,6 +1,6 @@
-# READ-ONLY cluster RBAC for module-docker (user-app GitOps).
+# READ-ONLY cluster RBAC for module-deploy (user-app GitOps).
 #
-# module-docker deploys user apps by committing a Flux GitRepository+HelmRelease
+# module-deploy deploys user apps by committing a Flux GitRepository+HelmRelease
 # to the GitOps repo (ai/k8s) via the Gitea API — Flux does the actual deploys.
 # The only cluster access it needs is reading live status: HelmRelease conditions
 # per app namespace, pods (for logs + status), and namespaces (to list apps).
@@ -8,18 +8,18 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "druppie.fullname" . }}-module-docker
+  name: {{ include "druppie.fullname" . }}-module-deploy
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-docker
+    app.kubernetes.io/component: module-deploy
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "druppie.fullname" . }}-module-docker
+  name: {{ include "druppie.fullname" . }}-module-deploy
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-docker
+    app.kubernetes.io/component: module-deploy
 rules:
   - apiGroups: [""]
     resources: ["namespaces"]
@@ -37,15 +37,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "druppie.fullname" . }}-module-docker
+  name: {{ include "druppie.fullname" . }}-module-deploy
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-docker
+    app.kubernetes.io/component: module-deploy
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "druppie.fullname" . }}-module-docker
+  name: {{ include "druppie.fullname" . }}-module-deploy
 subjects:
   - kind: ServiceAccount
-    name: {{ include "druppie.fullname" . }}-module-docker
+    name: {{ include "druppie.fullname" . }}-module-deploy
     namespace: {{ .Release.Namespace }}

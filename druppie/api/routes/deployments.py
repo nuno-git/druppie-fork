@@ -139,7 +139,7 @@ class InspectResponse(BaseModel):
 
 def parse_container_to_deployment(container: dict) -> DeploymentSummary:
     """Parse container/app info to DeploymentSummary (Docker or K8s shape)."""
-    # K8s (GitOps) shape from module-docker k8s_list_containers:
+    # K8s (GitOps) shape from module-deploy k8s_list_containers:
     #   {name, namespace, url, ready, status_message}
     if "url" in container and "namespace" in container:
         ready = bool(container.get("ready"))

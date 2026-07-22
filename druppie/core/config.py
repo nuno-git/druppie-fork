@@ -161,7 +161,7 @@ class MCPSettings(BaseSettings):
         description="Coding MCP server URL",
     )
     docker_url: str = Field(
-        default="http://module-docker:9002",
+        default="http://module-deploy:9002",
         description="Docker MCP server URL",
     )
     filesearch_url: str = Field(

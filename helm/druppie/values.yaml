@@ -319,7 +319,7 @@ modules:
     enabled: true
     replicaCount: 1
     image:
-      repository: druppie-module-docker
+      repository: druppie-module-deploy
       tag: latest
     port: 9002
     resources:
@@ -329,7 +329,7 @@ modules:
       limits:
         memory: 2Gi
         cpu: 2000m
-    # User-application GitOps deployer. module-docker deploys user apps by
+    # User-application GitOps deployer. module-deploy deploys user apps by
     # committing a Flux GitRepository+HelmRelease to the GitOps repo
     # (clusters/user-apps/<slug>/); Flux reconciles. The module only needs
     # a Gitea token (push to ai/k8s) + read-only cluster access for status.

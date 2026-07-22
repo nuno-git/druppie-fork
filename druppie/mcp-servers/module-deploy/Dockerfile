@@ -9,13 +9,13 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
-COPY module-docker/requirements.txt .
+COPY module-deploy/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 ARG CACHEBUST
 # Copy shared router factory and module code
 COPY module_router.py .
-COPY module-docker/ .
+COPY module-deploy/ .
 
 # Environment variables
 ENV MCP_PORT=9002

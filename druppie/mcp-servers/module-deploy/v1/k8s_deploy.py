@@ -1,7 +1,7 @@
 """
 K8s Deploy Manager — GitOps-native replacement for Docker operations.
 
-Used by module-docker when DRUPPIE_SANDBOX_MODE=k8s.
+Used by module-deploy when DRUPPIE_SANDBOX_MODE=k8s.
 
 Model: a generated app ships its OWN Helm chart (chart/) and its OWN Gitea
 Actions CI. Deploying it means committing a Flux GitRepository + HelmRelease to
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration (env, with branch-env-compatible fallbacks)
 # ---------------------------------------------------------------------------
-DEPLOY_MODE = "k8s"  # Always GitOps mode
+
 
 GITOPS_URL = os.getenv(
     "USERAPPS_GITOPS_URL", os.getenv("BRANCH_ENV_GITOPS_URL", "https://aigit.waterschap.org")
@@ -65,7 +65,7 @@ ROLLOUT_TIMEOUT = int(os.getenv("USERAPPS_ROLLOUT_TIMEOUT", "600"))     # 10m
 HEALTH_TIMEOUT_DEFAULT = 300
 HTTP_TIMEOUT = 30.0
 
-_APP_LABEL = "managed-by=druppie-module-docker"
+_APP_LABEL = "managed-by=druppie-module-deploy"
 
 
 def _slugify(name: str) -> str:
@@ -271,7 +271,7 @@ def build_namespace_yaml(slug: str) -> str:
             "metadata": {
                 "name": slug,
                 "labels": {
-                    "managed-by": "druppie-module-docker",
+                    "managed-by": "druppie-module-deploy",
                     "druppie.io/user-app": "true",
                 },
                 "annotations": {"druppie.io/created-at": _utcnow_iso()},
@@ -519,7 +519,7 @@ async def k8s_compose_up(
         "health_check": "healthy" if healthy else "timeout",
         "project_id": project_id,
         "session_id": session_id,
-        "labels": {"managed-by": "druppie-module-docker", "druppie.io/user-app": slug},
+        "labels": {"managed-by": "druppie-module-deploy", "druppie.io/user-app": slug},
     }
 
 

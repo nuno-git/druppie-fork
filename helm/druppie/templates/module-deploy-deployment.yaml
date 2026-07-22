@@ -2,21 +2,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "druppie.fullname" . }}-module-docker
+  name: {{ include "druppie.fullname" . }}-module-deploy
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-docker
+    app.kubernetes.io/component: module-deploy
 spec:
   replicas: {{ .Values.modules.docker.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: module-docker
+      app.kubernetes.io/component: module-deploy
   template:
     metadata:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: module-docker
+        app.kubernetes.io/component: module-deploy
         {{- if not .Values.persistence.rwx }}
         druppie.io/shared-storage: "true"
         {{- end }}
@@ -24,14 +24,14 @@ spec:
         reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
-      serviceAccountName: {{ include "druppie.fullname" . }}-module-docker
+      serviceAccountName: {{ include "druppie.fullname" . }}-module-deploy
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
-        - name: module-docker
+        - name: module-deploy
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           env:
@@ -40,9 +40,9 @@ spec:
             - name: DRUPPIE_URL
               value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
             {{- with .Values.modules.docker.userApps }}
-            # User-app GitOps deployer: module-docker commits the app's
+            # User-app GitOps deployer: module-deploy commits the app's
             # Flux GitRepository+HelmRelease to the GitOps repo; Flux deploys.
-            # Reads live status read-only (module-docker-rbac.yaml).
+            # Reads live status read-only (module-deploy-rbac.yaml).
             - name: USERAPPS_GITOPS_URL
               value: {{ .gitops.url | quote }}
             - name: USERAPPS_GITOPS_REPO

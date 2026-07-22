@@ -187,7 +187,7 @@ druppie/
       server.py
       v1/tools.py        # @mcp.tool() definitions (single source of truth for schemas)
       v1/module.py
-    module-docker/       # Port 9002 — container lifecycle
+    module-deploy/       # Port 9002 — container lifecycle
     module-filesearch/   # Port 9004 — local file search
     module-web/          # Port 9005 — web browsing/search
     module-archimate/    # Port 9006 — ArchiMate model ops
@@ -642,7 +642,7 @@ gitea               Gitea 1.21        :3100   Git hosting
 druppie-backend     FastAPI           :8100   Backend API
 druppie-frontend    Vite/React        :5273   Frontend
 module-coding       FastMCP           :9001   File/git operations
-module-docker       FastMCP           :9002   Docker operations
+module-deploy       FastMCP           :9002   Docker operations
 module-filesearch   FastMCP           :9004   File search
 module-web          FastMCP           :9005   Web browsing
 module-archimate    FastMCP           :9006   ArchiMate models
@@ -1141,7 +1141,7 @@ Five policies control traffic:
 - `sandbox-net`: sandbox pods accept ingress only from backend and module-coding
 - `sandbox-inet`: sandbox pods can reach the internet but not private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
 - `sandbox-modules`: module-coding accepts ingress only from backend
-- `sandbox-modules-docker`: module-docker accepts ingress only from backend
+- `sandbox-modules-docker`: module-deploy accepts ingress only from backend
 
 ### 9.5 Init System
 

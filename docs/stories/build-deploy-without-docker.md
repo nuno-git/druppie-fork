@@ -10,8 +10,8 @@
 > **Implementation status (2026-07-17, local — nothing pushed):**
 > - ✅ Phase 0a — `ai/k8s` `user-apps` Flux Kustomization + machine-managed dir (`feature/user-apps-gitops`)
 > - ✅ Phase 1 — app template ships a Helm chart (`chart/`) + per-app CI (`.gitea/workflows/build.yaml`); `docker-compose.yaml` removed; template Dockerfile/SDK made buildable (`druppie-sdk` optional). `helm lint`+`template` green.
-> - ✅ Phase 2/3 — `module-docker/v1/k8s_deploy.py` rewritten: GitOps commit (namespace+gitrepository+helmrelease), CI dispatch+poll, Flux rollout wait, 300s ingress health-gate, teardown, read-only logs/list, stubs. `tools.py` dispatch rewired; `httpx` added.
-> - ✅ Phase 4 — socket mount + `docker-installer` forced off in K8s mode (AC7); module-docker GitOps env + read-only RBAC + egress CNP; `deployer.yaml` prompt rewritten for GitOps; backend `parse_container_to_deployment` handles the K8s shape (AC8 via existing UI); 13 unit tests pass.
+> - ✅ Phase 2/3 — `module-deploy/v1/k8s_deploy.py` rewritten: GitOps commit (namespace+gitrepository+helmrelease), CI dispatch+poll, Flux rollout wait, 300s ingress health-gate, teardown, read-only logs/list, stubs. `tools.py` dispatch rewired; `httpx` added.
+> - ✅ Phase 4 — socket mount + `docker-installer` forced off in K8s mode (AC7); module-deploy GitOps env + read-only RBAC + egress CNP; `deployer.yaml` prompt rewritten for GitOps; backend `parse_container_to_deployment` handles the K8s shape (AC8 via existing UI); 13 unit tests pass.
 > - ⏳ **Not done:** live cluster validation (blocked — Longhorn down on `ka-k8s-ai`, see §8); ADR/BACKLOG status bump (on merge). *(TLS needs no new cert — `<slug>-apps.rijnland.dev` is a single label, covered by the existing `*.rijnland.dev` wildcard.)*
 
 
@@ -62,7 +62,7 @@
 ### Definition of Done
 
 - [ ] AC1–AC8 groen op `colab-dev` (dev-cluster) én gedemonstreerd op `ka-k8s-ai`.
-- [ ] Cross-repo: `ai/druppie` (template + chart + CI workflow + module-docker) **en** `ai/k8s` (`user-apps` kustomization) geleverd.
+- [ ] Cross-repo: `ai/druppie` (template + chart + CI workflow + module-deploy) **en** `ai/k8s` (`user-apps` kustomization) geleverd.
 - [ ] Socket-mount + `docker-installer` DaemonSet gated-off voor K8s-mode; lokale dev (`docker`) blijft werken.
 - [ ] Deployer-agent prompt bijgewerkt voor GitOps/Helm/CI-realiteit.
 - [ ] Tests voor CI-dispatch/-poll-pad + GitOps-commit-pad.
@@ -89,7 +89,7 @@ symmetry with Druppie's own pipeline (`.gitea/workflows/build.yaml`).
                   │                                 │   gitrepository.yaml  ─┐                    │
                   │ ① push / workflow_dispatch      │   helmrelease.yaml    ─┤ per-app namespace  │
                   ▼                                 │   externalsecrets.yaml ┘ (committed by       │
-        Gitea Actions (shared DinD runner):         │                         module-docker)     │
+        Gitea Actions (shared DinD runner):         │                         module-deploy)     │
           docker build → harbor…/druppie/<app>:<tag>└──────────────┬──────────────────────────────┘
           CI bumps imageTag in ai/k8s HelmRelease ──────────────────▶
                                                                    │
@@ -97,7 +97,7 @@ symmetry with Druppie's own pipeline (`.gitea/workflows/build.yaml`).
                                                        pulls chart from ai/<app> ─► Helm install
                                                        Ingress <app>-apps.rijnland.dev, PVC, ExternalSecret
                                                                    │
-   module-docker (Druppie backend) ────────────────────────────────┘ ③ health-gate polls
+   module-deploy (Druppie backend) ────────────────────────────────┘ ③ health-gate polls
      • create_project: scaffold repo (incl. chart + workflow) +          https://<app>-apps.rijnland.dev/health (300s)
        provision Harbor creds/Gitea API
      • deploy: commit the ai/k8s footprint, dispatch build, watch rollout
@@ -107,7 +107,7 @@ symmetry with Druppie's own pipeline (`.gitea/workflows/build.yaml`).
 - **GitOps invariant** — AGENTS.md: *"FluxCD will revert manual `kubectl apply` changes."* Committing to `ai/k8s` is the only durable path.
 - **Audit + drift correction** — every user-app deployment is a git commit; Flux self-heals drift.
 - **Symmetry** — identical mechanism to Druppie's own prod/dev/branch-env deploys. Reuses the **proven `branch-envs` machine-managed Kustomization pattern** (`clusters/ka-k8s-ai/infra/branch-envs/branch-envs-kustomization.yaml`).
-- **No Kaniko, no docker.sock in the backend** — the existing shared DinD runner (50Gi layer-cache PVC) builds via `docker build`, exactly like Druppie's own images. `module-docker` only dispatches + watches; it never runs Docker.
+- **No Kaniko, no docker.sock in the backend** — the existing shared DinD runner (50Gi layer-cache PVC) builds via `docker build`, exactly like Druppie's own images. `module-deploy` only dispatches + watches; it never runs Docker.
 - **Eliminates the hardest risk** — no compose→K8s translator; the app ships a real Helm chart.
 
 ### Precedent we copy verbatim
@@ -158,15 +158,15 @@ spec:
 
 | Component | File | What it does |
 |-----------|------|--------------|
-| **Socket mount** | `helm/druppie/templates/{module-docker,module-coding,backend}-deployment.yaml` | Mounts `/var/run/docker.sock` (hostPath), gated by `.Values.backend.dockerSocket.enabled` |
+| **Socket mount** | `helm/druppie/templates/{module-deploy,module-coding,backend}-deployment.yaml` | Mounts `/var/run/docker.sock` (hostPath), gated by `.Values.backend.dockerSocket.enabled` |
 | **DaemonSet** | `helm/druppie/templates/docker-installer-daemonset.yaml` | Installs Docker Engine on every `pool=app` node via `nsenter` (privileged) — self-described *"Phase 1 workaround"* |
 | **Mode toggle** | `helm/druppie/templates/configmap.yaml:85` | `DRUPPIE_SANDBOX_MODE: docker` \| `k8s` (driven by `agentSandbox.enabled`) |
-| **Docker tools** | `druppie/mcp-servers/module-docker/v1/tools.py` (~1565 lines) | `build`, `run`, `compose_up`, `compose_down`, `logs`, … — each dispatches on `DEPLOY_MODE` |
+| **Docker tools** | `druppie/mcp-servers/module-deploy/v1/tools.py` (~1565 lines) | `build`, `run`, `compose_up`, `compose_down`, `logs`, … — each dispatches on `DEPLOY_MODE` |
 
 ### 4.2 Current build→deploy flow (Docker mode)
 
 ```
-orchestrator → tool_executor → mcp_http → module-docker:9002
+orchestrator → tool_executor → mcp_http → module-deploy:9002
   → tools.compose_up()  (tools.py:663)
       git clone gitea repo
       write docker-compose.override.yaml (ownership labels + DOCKER_NETWORK)
@@ -186,9 +186,9 @@ Partial code on `colab-dev`:
 |------|-------|------------------|
 | `druppie/core/k8s_sandbox.py` | ✅ Complete (coding-sandbox reference) | untouched |
 | `druppie/mcp-servers/module-coding/v1/tools.py` | ✅ Dual-mode done | untouched |
-| `druppie/mcp-servers/module-docker/v1/k8s_deploy.py` (490 lines) | ⚠️ Partial, **wrong direction** (imperative K8s API + Kaniko) | **rewritten** to: CI dispatch/watch + GitOps commit (no Kaniko) |
-| `druppie/mcp-servers/module-docker/v1/tools.py` | ⚠️ Partial dispatch | route `compose_up/down/build` → CI + GitOps path |
-| `helm/druppie/templates/agent-sandbox/` | ✅ SandboxTemplate for coding; ❌ none for module-docker | (not needed — GitOps replaces it) |
+| `druppie/mcp-servers/module-deploy/v1/k8s_deploy.py` (490 lines) | ⚠️ Partial, **wrong direction** (imperative K8s API + Kaniko) | **rewritten** to: CI dispatch/watch + GitOps commit (no Kaniko) |
+| `druppie/mcp-servers/module-deploy/v1/tools.py` | ⚠️ Partial dispatch | route `compose_up/down/build` → CI + GitOps path |
+| `helm/druppie/templates/agent-sandbox/` | ✅ SandboxTemplate for coding; ❌ none for module-deploy | (not needed — GitOps replaces it) |
 | `templates/project/` | docker-compose only | **ship chart + CI workflow, drop compose** |
 
 ### 4.4 Gaps → how the design resolves them
@@ -208,9 +208,9 @@ Partial code on `colab-dev`:
 ## 5. Design Decisions (your choices applied)
 
 - **D1 — Template ships a per-app Helm chart + CI workflow, drops compose.** `templates/project/chart/` (Chart.yaml, values.yaml, templates: Deployment, Service, Ingress, PVC, ExternalSecret) **and** `templates/project/.gitea/workflows/build.yaml`. `docker-compose.yaml` removed. *(AC1)*
-- **D2 — Build = per-app Gitea Actions CI (not Kaniko).** The template workflow (trimmed copy of Druppie's own): on push + `workflow_dispatch`, the shared DinD runner does `docker build` → pushes `harbor.rijnland.dev/druppie/<app>:<branch>-<ts>-<sha>` → bumps `imageTag` in the app's `ai/k8s` HelmRelease. `module-docker` dispatches (if needed) + polls the run; **no Kaniko, no docker.sock in the backend**. *(AC2)*
+- **D2 — Build = per-app Gitea Actions CI (not Kaniko).** The template workflow (trimmed copy of Druppie's own): on push + `workflow_dispatch`, the shared DinD runner does `docker build` → pushes `harbor.rijnland.dev/druppie/<app>:<branch>-<ts>-<sha>` → bumps `imageTag` in the app's `ai/k8s` HelmRelease. `module-deploy` dispatches (if needed) + polls the run; **no Kaniko, no docker.sock in the backend**. *(AC2)*
 - **D3 — Credentials.** Push: Harbor robot creds (`HARBOR_USERNAME/PASSWORD`) provisioned into each app repo by `create_project` via the Gitea API (or org-level secrets). Pull: deployed Deployments get `imagePullSecrets: harbor-regcred`. *(AC2)*
-- **D4 — Deploy = GitOps commit to `ai/k8s`.** `module-docker` commits `clusters/user-apps/<app-slug>/{gitrepository,helmrelease}.yaml` via the Gitea API (same code path `branch_environment_service.py:870` already uses). `HelmRelease.values` sets `imageTag`, ingress `host`, DB secret ref. Flux reconciles. **No `kubectl apply`.** *(AC3)*
+- **D4 — Deploy = GitOps commit to `ai/k8s`.** `module-deploy` commits `clusters/user-apps/<app-slug>/{gitrepository,helmrelease}.yaml` via the Gitea API (same code path `branch_environment_service.py:870` already uses). `HelmRelease.values` sets `imageTag`, ingress `host`, DB secret ref. Flux reconciles. **No `kubectl apply`.** *(AC3)*
 - **D5 — Per-app namespace + a `user-apps` Kustomization.** Each app gets its **own namespace** (clean teardown/isolation, matches branch-env precedent); a separate Flux Kustomization watches `./clusters/user-apps`, `prune:true`, machine-managed, isolated from prod. One-time infra commit. *(AC3, AC6)*
 - **D6 — PVC from the chart using `longhorn-branch-env` (Delete, 1 replica).** User-apps are ephemeral (teardown = namespace delete) → **same orphan-volume risk** as branch-envs. `Delete`-reclaim class is **mandatory** — `longhorn-distributed` (Retain) leaked ~135 orphaned volumes and exhausted scheduling (`docs/longhorn-storage-issue.md`). *(AC4)*
 - **D7 — Reachability via chart Ingress on `<app>-apps.rijnland.dev`** — a single DNS label, so covered by the **existing `*.rijnland.dev` wildcard cert** (secret `druppie-tls`, mirrored into each app namespace via the cluster-wide `druppie-tls-mirror` store). No new cert. *(AC5)*
@@ -279,13 +279,13 @@ Druppie's own CI bumps `imageTag` by cloning `ai/k8s` with `CI_GIT_TOKEN` (`.git
 | Concern | Path |
 |---------|------|
 | App template (deploy + build contract) | `druppie/templates/project/chart/` + `druppie/templates/project/.gitea/workflows/build.yaml` (new) — drop `docker-compose.yaml` |
-| Docker MCP dispatch | `druppie/mcp-servers/module-docker/v1/tools.py` |
-| K8s impl (CI dispatch + GitOps) | `druppie/mcp-servers/module-docker/v1/k8s_deploy.py` |
+| Docker MCP dispatch | `druppie/mcp-servers/module-deploy/v1/tools.py` |
+| K8s impl (CI dispatch + GitOps) | `druppie/mcp-servers/module-deploy/v1/k8s_deploy.py` |
 | Project scaffolding | `druppie/agents/builtin_tools.py:418` (`create_project`), `druppie/core/gitea.py` (repo + secret provisioning) |
 | GitOps commit helper (reuse) | `druppie/services/branch_environment_service.py:870` |
 | Harbor webhook (fallback for §5.1-B) | `druppie/api/routes/registry_webhook.py`, `druppie/services/deploy_service.py` (only if A is revisited) |
 | Mode toggle | `helm/druppie/templates/configmap.yaml:85` |
-| Socket mounts / DaemonSet (gate off) | `helm/druppie/templates/{module-docker,module-coding,backend}-deployment.yaml`, `docker-installer-daemonset.yaml` |
+| Socket mounts / DaemonSet (gate off) | `helm/druppie/templates/{module-deploy,module-coding,backend}-deployment.yaml`, `docker-installer-daemonset.yaml` |
 | Deployer agent prompt | `druppie/agents/definitions/coding/project/deployer.yaml` |
 | Frontend | `frontend/src/pages/{Projects,Platform}.jsx`, `frontend/src/services/api.js` |
 | Reference CI (copy from) | `.gitea/workflows/build.yaml` (Druppie's own) |
