@@ -1050,12 +1050,13 @@ class ToolExecutor:
         )
 
         seq = self.execution_repo.get_next_sequence_number(session_id)
-        msg_id = self.execution_repo.create_message(
+        msg = self.execution_repo.create_message(
             session_id=session_id,
             role="system",
             content=message,
             sequence_number=seq,
         )
+        msg_id = msg.id
         self._active_db.flush()
         logger.info("translation_fallback_to_english", session_id=str(session_id))
 
@@ -1164,7 +1165,7 @@ class ToolExecutor:
             session_id=tool_call.session_id,
             approval_id=approval.id,
             tool_name=tool_call.tool_name,
-            required_role=required_role,
+            required_role=required_role or "developer",
         )
 
         return ToolCallStatus.WAITING_APPROVAL

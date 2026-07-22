@@ -1024,6 +1024,7 @@ class Orchestrator:
         The agent's continue_run() method loads all LLM calls and tool results
         from the database, so the tool result is automatically included.
         """
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
         from druppie.core.mcp_config import MCPConfig
         from druppie.execution.mcp_http import MCPHttp
         from druppie.execution.tool_executor import ToolCallStatus, ToolExecutor
@@ -1128,7 +1129,7 @@ class Orchestrator:
             if parent_chain_completed:
                 await self.execute_pending_runs(session_id)
 
-        return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)
+        return session_id
 
     async def resume_after_answer(
         self,
@@ -1261,15 +1262,9 @@ class Orchestrator:
             status=AgentRunStatus.RUNNING.value,
         )
 
-        # Step 5: Build fresh context and continue the agent
-        context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
-        result = await agent.continue_run(
-            session_id=session_id,
-            agent_run_id=agent_run.id,
-            context=context,
-        )
+        # Step 5: Resume the agent (builds context, continues run, handles result)
         return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)
+
     async def resume_after_entra_auth(
         self,
         session_id: UUID,
@@ -1320,11 +1315,14 @@ class Orchestrator:
                 status=ToolCallStatus.FAILED,
                 error=error_msg,
             )
-            await _event_mgr.broadcast_agent_run_updated(
-                session_id=session_id,
-                agent_run_id=agent_run.id,
-                status=AgentRunStatus.COMPLETED.value,
-            )
+            agent_run = self.execution_repo.get_by_id(waiting_tc.agent_run_id)
+            _event_mgr = get_event_manager()
+            if agent_run:
+                await _event_mgr.broadcast_agent_run_updated(
+                    session_id=session_id,
+                    agent_run_id=agent_run.id,
+                    status=AgentRunStatus.COMPLETED.value,
+                )
             db.commit()
             logger.warning(
                 "entra_token_retrieval_failed",
@@ -1333,7 +1331,6 @@ class Orchestrator:
                 error=error_msg,
             )
             # Still resume the agent so it sees the error
-            agent_run = self.execution_repo.get_by_id(waiting_tc.agent_run_id)
             if agent_run:
                 return await self._resume_agent(
                     session_id, agent_run.id, agent_run.agent_id,
@@ -1417,7 +1414,7 @@ class Orchestrator:
           1 — switch all agents in this session
           2 — cancel the request
         """
-        from druppie.agents.runtime import Agent
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
         from druppie.llm.fallback import FallbackLLM
 
         agent_state = question.agent_state or {}
@@ -1481,7 +1478,16 @@ class Orchestrator:
                 session_id, agent_run.id, result, agent_id=agent_run.agent_id,
             )
             if status == "completed":
-                await self.execute_pending_runs(session_id)
+                parent_chain_completed = await self._walk_parent_chain(
+                    session_id, agent_run, db,
+                )
+                if parent_chain_completed:
+                    await self.execute_pending_runs(session_id)
+                else:
+                    logger.info(
+                        "parent_chain_incomplete_waiting_for_siblings",
+                        session_id=str(session_id),
+                    )
         else:
             logger.info(
                 "fallback_rejected_by_user",
@@ -1918,62 +1924,5 @@ class Orchestrator:
         # The sandbox pushed to Gitea but the shared workspace volume
         # still has the old HEAD.
         self._sync_workspace(session_id)
-
-        # Set statuses back to running
-        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
-        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
-        self.execution_repo.commit()
-
-        _event_mgr = get_event_manager()
-        await _event_mgr.broadcast_agent_run_updated(
-            session_id=session_id,
-            agent_run_id=agent_run.id,
-            status=AgentRunStatus.RUNNING.value,
-        )
-
-        # Build fresh context and continue the agent
-        db = self.execution_repo.db
-        context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
-        try:
-            result = await agent.continue_run(
-                session_id=session_id,
-                agent_run_id=agent_run.id,
-                context=context,
-            )
-        except Exception as e:
-            error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
-            self.execution_repo.update_status(
-                agent_run.id,
-                AgentRunStatus.FAILED,
-                error_message=error_msg,
-            )
-            self.execution_repo.commit()
-            raise
-
-        # Handle result — agent may pause again
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
-
-        if status == "completed":
-            logger.info(
-                "agent_resumed_after_sandbox_completed",
-                agent_run_id=str(agent_run.id),
-                agent_id=agent_run.agent_id,
-            )
-            await _event_mgr.broadcast_agent_run_updated(
-                session_id=session_id,
-                agent_run_id=agent_run.id,
-                status=AgentRunStatus.COMPLETED.value,
-            )
-            parent_chain_completed = await self._walk_parent_chain(
-                session_id, agent_run, db,
-            )
-            if parent_chain_completed:
-                await self.execute_pending_runs(session_id)
-            else:
-                logger.info(
-                    "parent_chain_incomplete_waiting_for_siblings",
-                    session_id=str(session_id),
-                )
 
         return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)

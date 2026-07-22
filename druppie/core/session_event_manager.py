@@ -10,7 +10,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from fastapi import WebSocket
@@ -43,6 +43,7 @@ class SessionEventManager:
     """
 
     def __init__(self) -> None:
+        self._instance_id: str = str(uuid4())
         self._connections: dict[UUID, list[WebSocket]] = {}
         self._lock = asyncio.Lock()
         self._redis: Any | None = None
@@ -80,6 +81,12 @@ class SessionEventManager:
                         continue
                     try:
                         data = json.loads(message["data"])
+                        # Skip messages that originated from this instance —
+                        # broadcast() already called _broadcast_local() for
+                        # those.  Other replicas (different instance_id) still
+                        # process the message normally.
+                        if data.get("origin_instance_id") == self._instance_id:
+                            continue
                         session_id = UUID(data["session_id"])
                         event = data["event"]
                         await self._broadcast_local(session_id, event)
@@ -191,7 +198,11 @@ class SessionEventManager:
                 await self._redis.publish(
                     f"session:{session_id}",
                     json.dumps(
-                        {"session_id": str(session_id), "event": event},
+                        {
+                            "session_id": str(session_id),
+                            "event": event,
+                            "origin_instance_id": self._instance_id,
+                        },
                         default=str,
                     ),
                 )

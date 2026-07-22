@@ -283,7 +283,7 @@ async def _run_retry_background(
                 for s in paused_siblings
             ]
 
-            all_results = await asyncio.gather(*tasks)
+            all_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             if any(r == "paused" for r in all_results):
                 return
