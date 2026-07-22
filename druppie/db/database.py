@@ -54,3 +54,30 @@ def init_db() -> None:
     """
     from druppie.db.models import Base
     Base.metadata.create_all(bind=engine)
+
+    # Migration: fix model_overrides.updated_by FK to allow CASCADE on UPDATE
+    # and SET NULL on DELETE. This prevents FK violations during user UUID
+    # drift correction (e.g. after Keycloak DB reset).
+    # Runs idempotently — safe to call on every startup.
+    with engine.connect() as conn:
+        # Check if the constraint already has the correct rules
+        result = conn.execute(
+            """
+            SELECT rc.update_rule, rc.delete_rule
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.referential_constraints rc
+              ON rc.constraint_name = tc.constraint_name
+            WHERE tc.table_name = 'model_overrides'
+              AND tc.constraint_type = 'FOREIGN KEY';
+            """
+        ).fetchone()
+        if result and (result.update_rule != 'CASCADE' or result.delete_rule != 'SET NULL'):
+            conn.execute("ALTER TABLE model_overrides DROP CONSTRAINT model_overrides_updated_by_fkey")
+            conn.execute(
+                """
+                ALTER TABLE model_overrides ADD CONSTRAINT model_overrides_updated_by_fkey
+                  FOREIGN KEY (updated_by) REFERENCES users(id)
+                  ON UPDATE CASCADE ON DELETE SET NULL;
+                """
+            )
+            conn.commit()
