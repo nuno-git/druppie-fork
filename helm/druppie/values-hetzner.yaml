@@ -84,10 +84,10 @@ backend:
     repository: druppie-backend
     tag: latest
   port: 8000
-  # Single worker required: FallbackLLM approval state and TranslationService
-  # notification state are process-local. Multiple workers cause cross-worker
-  # desync (e.g. "Switch all agents" approval lost on round-robin).
-  workers: "1"
+  # All process-local state (FallbackLLM approvals, TranslationService
+  # notifications, model overrides) is now stored in the database, so
+  # multiple workers are safe.
+  workers: "2"
   nodePort: 30000
   composeDruppieUrl: "http://172.17.0.1:30000"   # Docker bridge gateway on Hetzner app nodes
   replicaCount: 1

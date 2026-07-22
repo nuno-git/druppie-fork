@@ -99,6 +99,12 @@ spec:
               value: {{ .Values.devWorkspace.repoUrl | quote }}
             - name: GIT_SSL_NO_VERIFY
               value: {{ .Values.devWorkspace.gitSslNoVerify | quote }}
+            {{- if .Values.devWorkspace.caConfigMap }}
+            - name: CURL_CA_BUNDLE
+              value: /etc/aigit-ca/chain.pem
+            - name: SSL_CERT_FILE
+              value: /etc/aigit-ca/chain.pem
+            {{- end }}
             - name: DEV_STACK
               value: {{ .Values.devWorkspace.stackMode | quote }}
             - name: RECOVERY_MODE
@@ -163,6 +169,11 @@ spec:
               mountPath: /home/developer/.kube/config
               subPath: kubeconfig
               readOnly: true
+            {{- if .Values.devWorkspace.caConfigMap }}
+            - name: aigit-ca
+              mountPath: /etc/aigit-ca
+              readOnly: true
+            {{- end }}
             {{- $needDocker := or (has "coding" $.Values.devWorkspace.embedModules) (has "docker" $.Values.devWorkspace.embedModules) }}
             {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
             # module-coding / module-docker talk to the host Docker daemon.
@@ -232,6 +243,11 @@ spec:
           secret:
             secretName: {{ include "druppie.fullname" . }}-kubeconfig
             optional: true
+        {{- if .Values.devWorkspace.caConfigMap }}
+        - name: aigit-ca
+          configMap:
+            name: {{ .Values.devWorkspace.caConfigMap }}
+        {{- end }}
         {{- $needDocker := or (has "coding" .Values.devWorkspace.embedModules) (has "docker" .Values.devWorkspace.embedModules) }}
         {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
         # Host Docker socket for embedded module-coding / module-docker.

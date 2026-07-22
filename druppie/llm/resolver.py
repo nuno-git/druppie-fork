@@ -41,22 +41,47 @@ class ResolvedModel:
 # Module-level profile cache
 _profiles_cache: dict[str, list[dict[str, str]]] | None = None
 
-# Module-level DB override cache: agent_id -> (provider, model, fallback_provider, fallback_model)
-# Populated by ModelManagementService on startup and after admin changes.
-# Process-local — requires single-worker deployment. Multi-worker requires
-# cross-worker invalidation (e.g. polling a DB timestamp).
-_db_overrides: dict[str, tuple[str, str, str | None, str | None]] = {}
 
+def _get_db_override(agent_id: str) -> tuple[str, str, str | None, str | None] | None:
+    """Fetch a single agent's DB override directly from the database.
 
-def set_db_overrides(overrides: dict[str, tuple[str, str, str | None, str | None]]) -> None:
-    """Replace the DB override cache. Called by the model management service."""
-    global _db_overrides
-    _db_overrides = overrides
+    Returns None if no override exists for this agent.
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.db.models.model_override import ModelOverride
+
+    db = SessionLocal()
+    try:
+        override = (
+            db.query(ModelOverride)
+            .filter(ModelOverride.target_type == "agent", ModelOverride.target_id == agent_id, ModelOverride.enabled.is_(True))
+            .first()
+        )
+        if override:
+            return (override.provider, override.model, override.fallback_provider, override.fallback_model)
+        return None
+    finally:
+        db.close()
 
 
 def get_db_overrides() -> dict[str, tuple[str, str, str | None, str | None]]:
-    """Return the current DB override cache (for status/debug)."""
-    return _db_overrides
+    """Return all current DB overrides (for status/debug endpoint)."""
+    from druppie.db.database import SessionLocal
+    from druppie.db.models.model_override import ModelOverride
+
+    db = SessionLocal()
+    try:
+        overrides = (
+            db.query(ModelOverride)
+            .filter(ModelOverride.target_type == "agent", ModelOverride.enabled.is_(True))
+            .all()
+        )
+        return {
+            o.target_id: (o.provider, o.model, o.fallback_provider, o.fallback_model)
+            for o in overrides
+        }
+    finally:
+        db.close()
 
 
 def _load_profiles() -> dict[str, list[dict[str, str]]]:
@@ -123,8 +148,9 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
         )
 
     # --- 2. DB override (admin UI) -----------------------------------------
-    if agent_def.id in _db_overrides:
-        provider, model, admin_fb_provider, admin_fb_model = _db_overrides[agent_def.id]
+    db_override = _get_db_override(agent_def.id)
+    if db_override:
+        provider, model, admin_fb_provider, admin_fb_model = db_override
         key_available = has_api_key(provider)
 
         if not key_available:
