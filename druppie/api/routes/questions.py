@@ -28,11 +28,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_attachment_repository, get_current_user, get_question_service, get_user_roles
-from druppie.repositories import AttachmentRepository
-from druppie.services import QuestionService
+from druppie.api.deps import get_attachment_repository, get_current_user, get_question_repository, get_question_service, get_session_service, get_user_roles
+from druppie.repositories import AttachmentRepository, QuestionRepository
+from druppie.services import QuestionService, SessionService
 from druppie.domain import QuestionDetail, PendingQuestionList
-from druppie.core.background_tasks import create_tracked_task, run_session_task
+from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
 
@@ -125,6 +125,8 @@ async def answer_question(
     question_id: UUID,
     request: AnswerRequest,
     question_service: QuestionService = Depends(get_question_service),
+    session_service: SessionService = Depends(get_session_service),
+    question_repo: QuestionRepository = Depends(get_question_repository),
     attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
     user: dict = Depends(get_current_user),
 ) -> AnswerResponse:
@@ -157,18 +159,53 @@ async def answer_question(
         answer_preview=request.answer[:50] if request.answer else "",
     )
 
-    # Step 1: Save answer to database (fast)
-    roles = get_user_roles(user)
-    question = question_service.answer(
-        question_id=question_id,
-        user_id=user_id,
-        answer=request.answer,
-        selected_choices=request.selected_choices,
-        is_admin="admin" in roles,
-        user_roles=roles,
-    )
+    # Step 1: Fetch question to get session_id for locking
+    raw_question = question_repo.get_by_id(question_id)
+    if not raw_question:
+        raise HTTPException(status_code=404, detail="Question not found")
 
-    # Step 1b: Link attachments to question
+    # Step 1b: Validate question is still pending BEFORE acquiring the lock.
+    # This prevents lock_for_hitl_resume() from committing session status to
+    # 'active' when the subsequent answer() call would fail (e.g., question
+    # already answered), which would leave the session stuck at 'active'.
+    if raw_question.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Question already {raw_question.status}",
+        )
+
+    # Step 2: Atomically lock session BEFORE saving the answer.
+    # This prevents a race where a concurrent resume endpoint reverts
+    # the session status back to paused_hitl between answer() and lock().
+    try:
+        previous_status = session_service.lock_for_hitl_resume(raw_question.session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    # Step 3: Save answer to database (fast)
+    # Wrapped in try/except so we can restore the session status if this fails
+    # unexpectedly (lock_for_hitl_resume already committed status to 'active').
+    roles = get_user_roles(user)
+    try:
+        question = question_service.answer(
+            question_id=question_id,
+            user_id=user_id,
+            answer=request.answer,
+            selected_choices=request.selected_choices,
+            is_admin="admin" in roles,
+            user_roles=roles,
+        )
+    except Exception:
+        # Restore session to its previous paused status so it doesn't get stuck at 'active'
+        logger.warning(
+            "answer_failed_restoring_session_status",
+            question_id=str(question_id),
+            session_id=str(raw_question.session_id),
+        )
+        session_service.revert_to_hitl_paused(raw_question.session_id, previous_status)
+        raise
+
+    # Step 3b: Link attachments to question
     if request.attachment_ids:
         try:
             attachment_uuids = [UUID(aid) for aid in request.attachment_ids]
@@ -183,9 +220,10 @@ async def answer_question(
         )
         attachment_repo.db.commit()
 
-    # Step 2: Spawn background task to resume workflow
+    # Step 4: Spawn background task to resume workflow
     try:
-        create_tracked_task(
+        create_session_task(
+            question.session_id,
             _resume_workflow_after_answer(
                 session_id=question.session_id,
                 question_id=question_id,
@@ -193,12 +231,16 @@ async def answer_question(
                 selected_choices=request.selected_choices,
             ),
             name=f"resume-answer-{question_id}",
+            skip_lock=True,
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
         )
     except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to start background task",
-        )
+        session_service.mark_failed(question.session_id, "Failed to start answer resume background task")
+        raise
 
     logger.info(
         "answer_recorded_resuming_in_background",
