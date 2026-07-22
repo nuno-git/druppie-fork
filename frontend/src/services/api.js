@@ -111,7 +111,7 @@ export const getAttachmentUrl = (attachmentId) => {
   return `${API_URL}/api/attachments/${attachmentId}`
 }
 
-export const downloadAttachment = async (attachmentId) => {
+export const downloadAttachment = async (attachmentId, filename) => {
   const token = getToken()
   const response = await fetch(`${API_URL}/api/attachments/${attachmentId}`, {
     headers: token ? { 'Authorization': `Bearer ${token}` } : {},
@@ -121,7 +121,7 @@ export const downloadAttachment = async (attachmentId) => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = attachmentId
+  a.download = filename || attachmentId
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
