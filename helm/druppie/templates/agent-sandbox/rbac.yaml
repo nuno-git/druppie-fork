@@ -18,7 +18,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "druppie.fullname" . }}-sandbox-user
-  namespace: {{ .Values.global.instance }}-sandbox
+  namespace: "{{ .Values.global.instance }}-sandbox"
 rules:
 - apiGroups: ["extensions.agents.x-k8s.io"]
   resources: ["sandboxclaims", "sandboxtemplates", "sandboxwarmpools"]
@@ -34,7 +34,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "druppie.fullname" . }}-sandbox-user
-  namespace: {{ .Values.global.instance }}-sandbox
+  namespace: "{{ .Values.global.instance }}-sandbox"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
