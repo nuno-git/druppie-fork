@@ -1,0 +1,34 @@
+{{- if and .Values.devWorkspace.enabled .Values.agentSandbox.enabled }}
+# NetworkPolicy: allow the dev-workspace pod to reach sandbox runtime pods
+# (port 8888) in the per-instance sandbox namespace.
+#
+# When module-coding is embedded in the workspace pod (devWorkspace.embedModules
+# contains "coding"), the pod has label component=dev-workspace, not
+# component=module-coding. The existing sandbox-modules NetworkPolicy only
+# grants egress to module-coding pods, so the workspace pod is blocked from
+# reaching sandbox pods by the app-net policy (which excludes 10/8 private IPs).
+# This policy adds the missing egress rule.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-workspace-sandbox
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dev-workspace
+  policyTypes:
+    - Egress
+  egress:
+    # Sandbox runtime pods — agent-sandbox command/file server (port 8888)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ .Values.global.instance }}-sandbox"
+      ports:
+        - port: 8888
+          protocol: TCP
+{{- end }}
