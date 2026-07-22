@@ -5,11 +5,37 @@ fails, and uses the fallback directly once the session is approved.
 """
 
 import asyncio
+import os
 
 import pytest
 
+from druppie.db.database import engine
+from druppie.db.models import Base
+from druppie.db.models.fallback_approval import FallbackApproval
 from druppie.llm.base import BaseLLM, FallbackAvailableError, LLMError, LLMResponse, ServerError
 from druppie.llm.fallback import FallbackLLM
+
+
+# Use SQLite for tests
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_fallback.db")
+
+
+@pytest.fixture(autouse=True)
+def _clean_approval_state():
+    """Clear all approval state before and after each test."""
+    # Create tables if they don't exist
+    Base.metadata.create_all(bind=engine)
+
+    # Clear approvals for any session that might exist
+    with engine.connect() as conn:
+        conn.execute(FallbackApproval.__table__.delete())
+        conn.commit()
+
+    yield
+
+    with engine.connect() as conn:
+        conn.execute(FallbackApproval.__table__.delete())
+        conn.commit()
 
 
 class MockLLM(BaseLLM):
@@ -49,16 +75,6 @@ class MockLLM(BaseLLM):
 
     def clear_call_history(self):
         pass
-
-
-@pytest.fixture(autouse=True)
-def _clean_approval_state():
-    """Clear all approval state before and after each test."""
-    FallbackLLM._approved_sessions.clear()
-    FallbackLLM._approved_agents.clear()
-    yield
-    FallbackLLM._approved_sessions.clear()
-    FallbackLLM._approved_agents.clear()
 
 
 def test_normal_mode_uses_primary():
@@ -135,8 +151,8 @@ def test_clear_session_removes_approval():
 
     FallbackLLM.clear_session("sess-6")
 
-    assert "sess-6" not in FallbackLLM._approved_sessions
-    assert ("sess-6", "agent-x") not in FallbackLLM._approved_agents
+    assert not FallbackLLM.is_approved("sess-6")
+    assert not FallbackLLM.is_approved("sess-6", "agent-x")
 
 
 def test_different_session_not_approved():

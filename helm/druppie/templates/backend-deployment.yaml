@@ -101,7 +101,7 @@ spec:
             - --port
             - {{ .Values.backend.port | quote }}
             - --workers
-            - {{ .Values.backend.workers | default "1" | quote }}
+            - {{ .Values.backend.workers | default "2" | quote }}
           envFrom:
             - configMapRef:
                 name: {{ include "druppie.fullname" . }}-config

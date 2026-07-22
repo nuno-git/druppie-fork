@@ -2,11 +2,10 @@
 
 When the primary provider fails, raises FallbackAvailableError so the agent
 loop can pause and ask the user whether to switch. If the user approves
-(tracked per-session via approve_fallback()), subsequent calls go straight
-to the fallback without asking again.
+(tracked per-session in the DB via approve_fallback()), subsequent calls go
+straight to the fallback without asking again.
 """
 
-import time
 from typing import Any
 
 import structlog
@@ -14,16 +13,6 @@ import structlog
 from .base import BaseLLM, FallbackAvailableError, LLMError
 
 logger = structlog.get_logger()
-
-_EVICTION_TTL = 86400  # 24 hours
-
-
-def _evict(store: dict, ttl: float = _EVICTION_TTL) -> None:
-    """Remove entries older than *ttl* seconds."""
-    cutoff = time.monotonic() - ttl
-    stale = [k for k, ts in store.items() if ts < cutoff]
-    for k in stale:
-        del store[k]
 
 
 class FallbackLLM(BaseLLM):
@@ -38,12 +27,9 @@ class FallbackLLM(BaseLLM):
       this agent type auto-switches in this session
     - Session-wide: approve_fallback(session_id) — all agents auto-switch
 
-    Process-local state — requires single-worker deployment (Dockerfile).
-    Entries are evicted after 24 hours to prevent unbounded growth.
+    Approval state is stored in the ``fallback_approvals`` DB table so it
+    is shared across all backend workers.
     """
-
-    _approved_sessions: dict[str, float] = {}
-    _approved_agents: dict[tuple[str, str], float] = {}
 
     def __init__(
         self, primary: BaseLLM, fallback: BaseLLM,
@@ -57,22 +43,95 @@ class FallbackLLM(BaseLLM):
     @classmethod
     def approve_fallback(cls, session_id: str) -> None:
         """Mark a session as approved for fallback (all agents)."""
-        _evict(cls._approved_sessions)
-        cls._approved_sessions[session_id] = time.monotonic()
+        from druppie.db.database import SessionLocal
+        from druppie.db.models.fallback_approval import FallbackApproval
+
+        db = SessionLocal()
+        try:
+            existing = (
+                db.query(FallbackApproval)
+                .filter(FallbackApproval.session_id == session_id, FallbackApproval.agent_id.is_(None))
+                .first()
+            )
+            if not existing:
+                db.add(FallbackApproval(session_id=session_id, agent_id=None))
+                db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     @classmethod
     def approve_fallback_for_agent(cls, session_id: str, agent_id: str) -> None:
         """Mark a specific agent as approved for fallback in this session."""
-        _evict(cls._approved_agents)
-        cls._approved_agents[(session_id, agent_id)] = time.monotonic()
+        from druppie.db.database import SessionLocal
+        from druppie.db.models.fallback_approval import FallbackApproval
+
+        db = SessionLocal()
+        try:
+            existing = (
+                db.query(FallbackApproval)
+                .filter(FallbackApproval.session_id == session_id, FallbackApproval.agent_id == agent_id)
+                .first()
+            )
+            if not existing:
+                db.add(FallbackApproval(session_id=session_id, agent_id=agent_id))
+                db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @classmethod
+    def is_approved(cls, session_id: str, agent_id: str | None = None) -> bool:
+        """Check if a session (optionally for a specific agent) is approved for fallback."""
+        if not session_id:
+            return False
+        from druppie.db.database import SessionLocal
+        from druppie.db.models.fallback_approval import FallbackApproval
+
+        db = SessionLocal()
+        try:
+            # Check session-wide approval first
+            session_wide = (
+                db.query(FallbackApproval.id)
+                .filter(FallbackApproval.session_id == session_id, FallbackApproval.agent_id.is_(None))
+                .first()
+            )
+            if session_wide:
+                return True
+            # Check per-agent approval
+            if agent_id:
+                agent_approved = (
+                    db.query(FallbackApproval.id)
+                    .filter(FallbackApproval.session_id == session_id, FallbackApproval.agent_id == agent_id)
+                    .first()
+                )
+                if agent_approved:
+                    return True
+            return False
+        finally:
+            db.close()
 
     @classmethod
     def clear_session(cls, session_id: str) -> None:
         """Remove all approval state for a session."""
-        cls._approved_sessions.pop(session_id, None)
-        cls._approved_agents = {
-            k: ts for k, ts in cls._approved_agents.items() if k[0] != session_id
-        }
+        from druppie.db.database import SessionLocal
+        from druppie.db.models.fallback_approval import FallbackApproval
+
+        db = SessionLocal()
+        try:
+            db.query(FallbackApproval).filter(FallbackApproval.session_id == session_id).delete(
+                synchronize_session="fetch"
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     # ------------------------------------------------------------------
     # Properties — delegate to primary
@@ -107,14 +166,7 @@ class FallbackLLM(BaseLLM):
     # ------------------------------------------------------------------
 
     def _is_approved(self) -> bool:
-        if not self._session_id:
-            return False
-        if self._session_id in self._approved_sessions:
-            return True
-        return bool(
-            self._agent_id
-            and (self._session_id, self._agent_id) in self._approved_agents
-        )
+        return self.__class__.is_approved(self._session_id, self._agent_id)
 
     def _raise_fallback_available(self, error: Exception) -> None:
         raise FallbackAvailableError(
