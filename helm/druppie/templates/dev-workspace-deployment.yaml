@@ -39,12 +39,11 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
-      {{- if has "kubernetes" .Values.devWorkspace.embedModules }}
       # module-kubernetes needs the k8s-readonly ClusterRoleBinding. Reuse its
       # ServiceAccount (the rbac template still renders the SA + binding when
-      # the module is embedded, just not the Deployment).
+      # the module is embedded, just not the Deployment). When agentSandbox is
+      # enabled, this SA also gets sandbox permissions in sandbox-runtime.
       serviceAccountName: {{ include "druppie.fullname" . }}-module-kubernetes
-      {{- end }}
       {{- with .Values.devWorkspace.ingressVIP }}
       # Resolve the public app domain to the in-cluster Traefik ClusterIP so
       # oauth2-proxy can reach Keycloak without hairpinning to the LB external IP.
