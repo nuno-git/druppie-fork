@@ -198,3 +198,11 @@ Usage: {{ $emb := include "druppie.moduleEmbedded" (dict "root" . "mod" "coding"
 {{- define "druppie.moduleEmbedded" -}}
 {{- if and .root.Values.devWorkspace.enabled (has .mod .root.Values.devWorkspace.embedModules) -}}true{{- end -}}
 {{- end -}}
+
+{{/*
+Dockerconfigjson template for ExternalSecret.
+Renders the JSON structure for a Kubernetes dockerconfigjson secret.
+*/}}
+{{- define "druppie.eso-dockerconfigjson" -}}
+{{- `{"auths":{"{{ .registry }}":{"username":"{{ .username }}","password":"{{ .password }}","auth":"{{ printf "%s:%s" .username .password | b64enc }}"}}}` -}}
+{{- end -}}
