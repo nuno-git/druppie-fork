@@ -280,21 +280,117 @@ Your branch environment's outbound traffic goes through a specific IP. If your f
 
 ## 7. Secrets and API Keys
 
-### Default secrets
+### How secrets flow into your environment
 
-By default, your branch environment inherits secrets from the `colab-dev` Vault path (`druppie/colab-dev/*`). This includes LLM API keys, database credentials, and other configuration.
+Secrets flow through three layers — you only touch the first one:
 
-### Using your own secrets
+```
+Vault (you edit here) ──(ESO polls every 1 min)──▶ ExternalSecret ──▶ K8s Secret ──(envFrom)──▶ Pod
+```
 
-You can select your **own Vault path** when creating the environment. Any value other than `colab-dev` maps to `druppie/developers/<your-name>/*`. This lets you:
+| Layer | What it is | Who manages it |
+|-------|-----------|----------------|
+| **Vault** | Source of truth — all secret values | You (via Vault UI or CLI) |
+| **ExternalSecret** | Bridge — tells ESO which Vault keys to sync | Helm chart (automatic) |
+| **K8s Secret** | What pods actually mount | ESO (automatic) |
+| **Pod env vars** | `envFrom: secretRef` dumps all keys as env vars | Helm chart (automatic) |
 
-- Use your own API keys and quotas
-- Create and manage your own secrets via the Vault UI
-- Keep your development costs separate from the shared keys
+**You only ever edit Vault.** The rest is automatic.
 
-[Screenshot: Branch Environments UI showing the secrets source selection]
+### Vault paths
 
-To set up your own secrets path, create the keys in Vault at `ai-team-k8s/druppie/developers/<your-name>/` (matching the structure of `druppie/colab-dev/`).
+Your environment reads secrets from one of two Vault paths, controlled by the `secrets_source` setting:
+
+| `secrets_source` | Vault path | Use case |
+|-----------------|------------|----------|
+| `colab-dev` (default) | `druppie/colab-dev/*` | Shared dev secrets (LLM keys, DB creds, etc.) |
+| `nuno` (example) | `druppie/developers/nuno/*` | Your own isolated secrets |
+
+Plus shared paths (same for all environments):
+- `ci/gitea` — Gitea token (GitOps operations)
+- `ci/harbor` — Harbor registry credentials
+
+### Vault structure
+
+```
+ai-team-k8s/
+├── ci/gitea          {token}
+├── ci/harbor         {username, password, registry}
+└── druppie/
+    ├── colab-dev/
+    │   ├── app       {internal-api-key, zai-api-key, deepseek-api-key, ...}
+    │   ├── database  {password}
+    │   ├── gitea     {admin-password, token, ...}
+    │   └── keycloak  {admin-user, admin-password, ...}
+    └── developers/
+        └── <your-name>/
+            ├── app   {same keys as colab-dev/app}
+            ├── database
+            ├── gitea
+            └── keycloak
+```
+
+### Updating an existing secret (automatic, no redeploy)
+
+```
+1. Edit a value in Vault UI (e.g. druppie/colab-dev/app#zai-api-key)
+2. ExternalSecret polls Vault every 1 minute → updates K8s Secret
+3. Stakater Reloader detects Secret change → restarts the pod
+4. Pod comes up with new env vars → hot-reload picks up the change
+```
+
+**No push, no ai/k8s changes, no CI pipeline.** Just edit Vault and wait ~1 minute.
+
+### Adding a new secret (requires code change)
+
+If you need a **new** env var that doesn't exist yet (e.g. `MY_NEW_API_KEY`):
+
+```
+1. Add the key in Vault (e.g. druppie/colab-dev/app#my-new-api-key)
+2. Add a remoteRef mapping in dev-workspace-secrets.yaml (Helm chart)
+3. Push to your branch
+4. Flux picks up the chart change (~1 min) → re-renders → ESO syncs → pod restarts
+```
+
+The pod uses `envFrom: secretRef`, which dumps **all keys** in the Secret as env vars. So you only need to update the ExternalSecret template — no pod template changes needed.
+
+**Important:** This requires a push and a redeploy cycle. Unlike updating existing values, adding new keys can't be done mid-work without a restart.
+
+### Setting up your own secrets
+
+To use your own isolated secrets:
+
+1. Create the keys in Vault at `ai-team-k8s/druppie/developers/<your-name>/` (matching the structure of `druppie/colab-dev/`)
+2. When creating your branch environment, set `secrets_source` to your name
+3. Your environment will read from `druppie/developers/<your-name>/*` instead of `druppie/colab-dev/*`
+
+This lets you use your own API keys and quotas, keeping your development costs separate.
+
+### What secrets are available
+
+The following env vars are synced from Vault into your pods:
+
+| Env var | Vault path | Purpose |
+|---------|-----------|---------|
+| `INTERNAL_API_KEY` | `app#internal-api-key` | Internal API authentication |
+| `ZAI_API_KEY` | `app#zai-api-key` | ZAI LLM provider |
+| `DEEPSEEK_API_KEY` | `app#deepseek-api-key` | DeepSeek LLM provider |
+| `DEEPINFRA_API_KEY` | `app#deepinfra-api-key` | DeepInfra LLM provider |
+| `FOUNDRY_API_KEY` | `app#foundry-api-key` | Foundry LLM provider |
+| `OPENROUTER_API_KEY` | `app#openrouter-api-key` | OpenRouter LLM provider |
+| `DRUPPIE_MODULE_API_TOKEN` | `app#module-api-token` | MCP module authentication |
+| `SANDBOX_API_SECRET` | `app#sandbox-api-secret` | Sandbox runtime authentication |
+| `DRUPPIE_DB_PASSWORD` | `database#password` | Database password |
+| `KEYCLOAK_ADMIN` | `keycloak#admin-user` | Keycloak admin username |
+| `KEYCLOAK_ADMIN_PASSWORD` | `keycloak#admin-password` | Keycloak admin password |
+| `GITEA_ADMIN_PASSWORD` | `gitea#admin-password` | Gitea admin password |
+| `GITEA_TOKEN` | `gitea#token` | Internal Gitea token |
+| `EXTERNAL_GITEA_TOKEN` | `ci/gitea#token` | External Gitea token (GitOps) |
+
+Plus infrastructure secrets (managed by separate ExternalSecrets, not Vault):
+- `druppie-tls` — TLS certificate for ingress
+- `druppie-branch-env-pull-secret` — Harbor image pull credentials
+- `druppie-branch-env-git` — GitOps Gitea token (for backend + module-deploy)
 
 ---
 
