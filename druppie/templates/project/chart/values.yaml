@@ -1,0 +1,79 @@
+# App image — set by the per-app CI (imageTag bumped in ai/k8s HelmRelease values).
+image:
+  repository: harbor.rijnland.dev/druppie/app   # overridden per app: .../druppie/<repo-name>
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Harbor pull secret — materialized in every namespace by the harbor-regcred
+# ExternalSecret (infra/vault-eso). The Druppie deploy must ensure it exists in
+# the per-app namespace too.
+imagePullSecrets:
+  - name: harbor-regcred
+
+# Override resource names (default: .Release.Name = the app slug).
+nameOverride: ""
+fullnameOverride: ""
+
+# Application runtime
+app:
+  port: 8000
+  replicaCount: 1
+  appName: "My App"
+  debug: "false"
+  # Druppie platform integration (optional — leave empty when unused).
+  druppieUrl: ""
+  druppieModuleApiToken: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+# Database (pgvector) — included so the starter app persists data across restarts.
+database:
+  enabled: true
+  image: pgvector/pgvector:pg16
+  user: app
+  db: app
+  port: 5432
+  storage:
+    size: 8Gi
+    # MANDATORY: Delete reclaim, 1 replica — user-apps are ephemeral and would
+    # otherwise leak orphaned Longhorn volumes (see D6 / longhorn-storage-issue.md).
+    storageClass: longhorn-branch-env
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+# ExternalSecret — DB password pulled from Vault. When vaultPath is empty the
+# ExternalSecret is not rendered (a real secret must then exist with that name).
+externalSecret:
+  enabled: true
+  secretStore: vault-ai-team-k8s       # ClusterSecretStore (infra/vault-eso)
+  vaultPath: ""                         # e.g. apps/<slug>/db — set per app on deploy
+  passwordKey: password
+
+# Ingress — reachable at <slug>-apps.rijnland.dev (covered by the existing
+# *.rijnland.dev cert; tls-mirror.yaml materializes it in this namespace).
+ingress:
+  enabled: true
+  className: traefik
+  host: ""                              # <slug>-apps.rijnland.dev — set per app
+  path: /
+  tls:
+    enabled: true
+    # The existing *.rijnland.dev wildcard cert (secret druppie-tls in ns
+    # druppie). tls-mirror.yaml materializes it into this namespace via the
+    # cluster-wide druppie-tls-mirror ClusterSecretStore.
+    secretName: druppie-tls
+
+# Health probes (the app exposes GET /health — see app/__init__.py).
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 15
+  readiness:
+    path: /health
+    initialDelaySeconds: 5

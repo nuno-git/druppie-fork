@@ -120,8 +120,6 @@ backend:
       memory: 1Gi
       cpu: 2000m
   devMode: false
-  dockerSocket:
-    enabled: false
   serviceAccount:
     create: true
     name: ''
@@ -321,7 +319,7 @@ modules:
     enabled: true
     replicaCount: 1
     image:
-      repository: druppie-module-docker
+      repository: druppie-module-deploy
       tag: latest
     port: 9002
     resources:
@@ -331,6 +329,27 @@ modules:
       limits:
         memory: 2Gi
         cpu: 2000m
+    # User-application GitOps deployer. module-deploy deploys user apps by
+    # committing a Flux GitRepository+HelmRelease to the GitOps repo
+    # (clusters/user-apps/<slug>/); Flux reconciles. The module only needs
+    # a Gitea token (push to ai/k8s) + read-only cluster access for status.
+    userApps:
+      gitops:
+        url: https://aigit.waterschap.org
+        repo: ai/k8s
+        branch: main
+        path: clusters/user-apps
+        appRepoOrg: ai
+        # Secret holding a Gitea token (key below) with push to the GitOps repo.
+        # Reuses the ci/gitea token (same as the branch-env deployer).
+        tokenSecret:
+          name: druppie-branch-env-git
+          key: token
+        caConfigMap: ''
+      domain: rijnland.dev   # host scheme: <slug>-apps.<domain> (covered by *.<domain> cert)
+      harbor:
+        registry: harbor.rijnland.dev
+        project: druppie
   filesearch:
     enabled: true
     replicaCount: 1

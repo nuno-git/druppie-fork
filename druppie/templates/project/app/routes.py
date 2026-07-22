@@ -20,17 +20,38 @@ Example adding your own:
         return jsonify([{'id': str(i.id), 'name': i.name} for i in items])
 """
 
+from functools import wraps
+
 from flask import Blueprint, jsonify, request
-from druppie_sdk import DruppieClient
+
+try:
+    from druppie_sdk import DruppieClient  # optional — AI/RAG endpoints need it
+except ImportError:  # pragma: no cover - SDK is optional for the base template
+    DruppieClient = None
 
 from app.database import get_db
 from app.rag import RAG
 
 api = Blueprint("api", __name__)
 
-druppie = DruppieClient()
+# None when the Druppie SDK isn't installed; AI/RAG endpoints then return 503.
+druppie = DruppieClient() if DruppieClient else None
 
 RAG_INDEX = "knowledge-base"
+
+
+def requires_sdk(fn):
+    """Return 503 when the Druppie SDK isn't installed (graceful degradation).
+
+    Lets the app boot and serve /health, /info and the frontend even when the
+    SDK isn't vendored — only the AI/RAG endpoints are unavailable.
+    """
+    @wraps(fn)
+    def _wrapper(*args, **kwargs):
+        if druppie is None:
+            return jsonify(error="Druppie SDK not configured on this instance"), 503
+        return fn(*args, **kwargs)
+    return _wrapper
 
 
 @api.route("/info")
@@ -46,6 +67,7 @@ def info():
 
 
 @api.route("/ai/chat", methods=["POST"])
+@requires_sdk
 def ai_chat_endpoint():
     """LLM chat completion. Body: {"prompt": "...", "system": "..."}"""
     data = request.get_json(silent=True)
@@ -59,6 +81,7 @@ def ai_chat_endpoint():
 
 
 @api.route("/ai/ocr", methods=["POST"])
+@requires_sdk
 def ai_ocr_endpoint():
     """OCR text extraction. Body: {"image_url": "https://..."}"""
     data = request.get_json(silent=True)
@@ -69,6 +92,7 @@ def ai_ocr_endpoint():
 
 
 @api.route("/ai/search", methods=["POST"])
+@requires_sdk
 def ai_search_endpoint():
     """Web search. Body: {"query": "search terms"}"""
     data = request.get_json(silent=True)
@@ -89,6 +113,7 @@ def ai_search_endpoint():
 
 
 @api.route("/rag/index", methods=["POST"])
+@requires_sdk
 def rag_index_endpoint():
     """Embed and store documents in the app's own database.
 
@@ -111,6 +136,7 @@ def rag_index_endpoint():
 
 
 @api.route("/rag/search", methods=["POST"])
+@requires_sdk
 def rag_search_endpoint():
     """Semantic similarity search over the stored documents.
 

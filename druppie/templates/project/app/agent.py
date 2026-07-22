@@ -36,9 +36,12 @@ Example customization for a permit search app:
         return {"answer": answer, "steps": steps}
 """
 
-from druppie_sdk import DruppieClient
+try:
+    from druppie_sdk import DruppieClient  # optional
+except ImportError:  # pragma: no cover - SDK is optional for the base template
+    DruppieClient = None
 
-druppie = DruppieClient()
+druppie = DruppieClient() if DruppieClient else None
 
 
 def run_agent(question: str, history: list[dict], db) -> dict:
@@ -55,6 +58,9 @@ def run_agent(question: str, history: list[dict], db) -> dict:
     Returns:
         {"answer": str, "steps": list[dict]}
     """
+    if druppie is None:
+        return {"answer": "Druppie SDK is niet geconfigureerd op deze instantie.",
+                "steps": []}
     steps = []
 
     # Build conversation context

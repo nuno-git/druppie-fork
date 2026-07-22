@@ -77,7 +77,7 @@ Druppie is een governance platform voor AI-agents met 20+ services: een FastAPI 
 |-----|--------|
 | Helm chart | Werkend voor Kind, 43 K8s resources, sandbox nog placeholder |
 | Kind cluster config | Single-node dev + multi-node config aanwezig |
-| Docker socket dependency | 3 services (sandbox-manager, module-docker, backend) |
+| Docker socket dependency | 3 services (sandbox-manager, module-deploy, backend) |
 | Shared volumes (RWX) | `workspace` volume gedeeld door 4 services |
 | Database migraties | Geen — SQLAlchemy `create_all()`, reset = drop + recreate |
 
@@ -583,7 +583,7 @@ Beide zijn open source runtimes die als `RuntimeClass` in Kubernetes draaien. Ag
 
 ### 2.7 Shared Volume Strategie (RWX)
 
-Het `workspace` volume wordt gedeeld door 4 services: backend, module-coding, module-docker, module-data-access. Dit vereist ReadWriteMany (RWX) — meerdere pods schrijven naar hetzelfde volume.
+Het `workspace` volume wordt gedeeld door 4 services: backend, module-coding, module-deploy, module-data-access. Dit vereist ReadWriteMany (RWX) — meerdere pods schrijven naar hetzelfde volume.
 
 #### Vergelijkingsmatrix
 
@@ -1081,7 +1081,7 @@ Spawn MCP modules on-demand per agent sessie als tijdelijke pods:
 
 ```
 Session start → spawn module-coding pod (session-123)
-             → spawn module-docker pod (session-123)
+             → spawn module-deploy pod (session-123)
 Session end  → cleanup pods
 ```
 

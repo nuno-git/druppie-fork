@@ -15,7 +15,7 @@ Usage:
 
     # Get tools for an agent
     tools = registry.get_tools_for_agent(
-        agent_mcps=["coding", "docker"],
+        agent_mcps=["coding", "deploy"],
         builtin_tool_names=["done", "hitl_ask_question"],
     )
 
@@ -74,7 +74,7 @@ class ToolRegistry:
                 logger.error(
                     "tool_registry_not_initialized",
                     hint="Call await initialize_tool_registry() at startup",
-                    impact="Only builtin tools available — ALL MCP tools (coding, docker, filesearch, etc.) are MISSING",
+                    impact="Only builtin tools available — ALL MCP tools (coding, deploy, filesearch, etc.) are MISSING",
                 )
                 # Load builtin tools only as fallback
                 self._load_builtin_tools()
@@ -310,7 +310,7 @@ class ToolRegistry:
 
         Args:
             agent_mcps: MCP servers the agent can use.
-                - List format: ["coding", "docker"] - all tools from these servers
+                - List format: ["coding", "deploy"] - all tools from these servers
                 - Dict format: {"coding": ["write_file"]} - specific tools only
             builtin_tool_names: Builtin tools the agent can use
 

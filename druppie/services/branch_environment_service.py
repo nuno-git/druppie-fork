@@ -327,6 +327,10 @@ def build_helmrelease_yaml(
             "enabled": True,
             "warmPool": {"replicas": 2},
         },
+        # Agent sandbox (gVisor) — branch envs share the cluster-wide
+        # SandboxTemplate + WarmPool in sandbox-runtime; we only need the
+        # per-instance RBAC so the workspace pod can create SandboxClaims.
+        "agentSandbox": {"enabled": True},
     }
     if recovery_mode:
         values["recoveryMode"] = True

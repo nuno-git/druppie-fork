@@ -12,8 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY druppie-sdk/ /tmp/druppie-sdk/
-RUN pip install --no-cache-dir /tmp/druppie-sdk/
 COPY app/ ./app/
 COPY --from=frontend /build/dist ./static/
 EXPOSE 8000

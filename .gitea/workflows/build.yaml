@@ -153,7 +153,7 @@ jobs:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
         run: |
-          for module in module-coding module-docker module-web module-vision \
+          for module in module-coding module-deploy module-web module-vision \
                         module-archimate module-data-access module-registry \
                         module-filesearch module-kubernetes module-llm \
                         module-azuredevops module-searxng module-browser; do

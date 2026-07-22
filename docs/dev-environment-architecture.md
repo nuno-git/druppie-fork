@@ -20,7 +20,7 @@ original document were revised. The full v2 spec lives in the k8s GitOps repo:
 | Sandbox management | Docker CLI (subprocess) | **agent-sandbox CRD** (kubernetes-sigs v0.5.0) | At 1500-user scale, Docker CLI subprocess calls don't scale. agent-sandbox provides warm pools, hibernation, and K8s-native lifecycle management. |
 | Docker-in-Docker | Required (docker-compose inside sandbox) | **Eliminated** | DinD doesn't scale to 1500 users (500MB overhead per daemon). Replaced by Kaniko (builds) and K8s API (deployments). |
 | Agent isolation | Sysbox user namespaces | **gVisor syscall interception** | Stronger isolation — sandbox never touches host kernel. |
-| Code changes | None (sysbox drop-in) | **module-coding + module-docker rewrite** | ~800 lines across 2 files. Dual-mode dispatch: Docker for local dev, K8s for production. |
+| Code changes | None (sysbox drop-in) | **module-coding + module-deploy rewrite** | ~800 lines across 2 files. Dual-mode dispatch: Docker for local dev, K8s for production. |
 
 ### Infrastructure deployed (ka-k8s-ai cluster)
 
@@ -36,8 +36,8 @@ original document were revised. The full v2 spec lives in the k8s GitOps repo:
 
 - `druppie/core/k8s_sandbox.py` — K8sSandboxManager (agent-sandbox SDK wrapper)
 - `druppie/mcp-servers/module-coding/v1/tools.py` — dual-mode dispatch (Docker/K8s)
-- `druppie/mcp-servers/module-docker/v1/k8s_deploy.py` — Kaniko + K8s API replacements
-- `druppie/mcp-servers/module-docker/v1/tools.py` — dual-mode dispatch
+- `druppie/mcp-servers/module-deploy/v1/k8s_deploy.py` — Kaniko + K8s API replacements
+- `druppie/mcp-servers/module-deploy/v1/tools.py` — dual-mode dispatch
 - `helm/druppie/templates/agent-sandbox/` — SandboxTemplates, WarmPool, namespace
 - `druppie/requirements.txt` — k8s-agent-sandbox[async]>=0.5.0
 

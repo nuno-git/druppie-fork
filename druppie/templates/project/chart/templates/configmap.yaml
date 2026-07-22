@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "app.fullname" . }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+data:
+  APP_NAME: {{ .Values.app.appName | quote }}
+  DEBUG: {{ .Values.app.debug | quote }}
+  {{- if .Values.app.druppieUrl }}
+  DRUPPIE_URL: {{ .Values.app.druppieUrl | quote }}
+  {{- end }}

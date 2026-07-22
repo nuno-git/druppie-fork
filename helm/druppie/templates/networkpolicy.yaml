@@ -178,7 +178,7 @@ spec:
   podSelector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: module-docker
+      app.kubernetes.io/component: module-deploy
   policyTypes:
     - Ingress
   ingress:

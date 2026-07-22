@@ -8,7 +8,7 @@ metadata:
     # Pod Security Admission. enforce stays "privileged" (non-blocking) because
     # Phase-1 workloads in this namespace legitimately need privileged/hostPath
     # plumbing (docker-installer DaemonSet, nfs-server, and the docker.sock
-    # mounts on backend/module-docker/module-coding). audit/warn=baseline
+    # mounts on backend/module-deploy/module-coding). audit/warn=baseline
     # surfaces every violation that must be cleared before the enforce level can
     # be ratcheted to baseline -> restricted as the native-K8s migration removes
     # the docker-socket dependency.
