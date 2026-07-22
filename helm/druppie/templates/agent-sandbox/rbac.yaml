@@ -2,11 +2,11 @@
 # RBAC for agent-sandbox claims.
 #
 # The module-coding pod runs in the release namespace (e.g. druppie-colab-dev)
-# but creates SandboxClaims and execs into sandbox pods in the sandbox-runtime
-# namespace. A pod may only use a ServiceAccount from its own namespace, so we
-# create a per-instance SA here and grant it permissions in sandbox-runtime via
-# a per-instance Role + RoleBinding (per-instance naming avoids collisions when
-# multiple Druppie releases, e.g. prod + dev, enable agentSandbox).
+# but creates SandboxClaims and execs into sandbox pods in the per-instance
+# sandbox namespace (e.g. druppie-colab-dev-sandbox). A pod may only use a
+# ServiceAccount from its own namespace, so we create a per-instance SA here
+# and grant it permissions in the per-instance sandbox namespace via a
+# per-instance Role + RoleBinding.
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -18,7 +18,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "druppie.fullname" . }}-sandbox-user
-  namespace: sandbox-runtime
+  namespace: "{{ .Values.global.instance }}-sandbox"
 rules:
 - apiGroups: ["extensions.agents.x-k8s.io"]
   resources: ["sandboxclaims", "sandboxtemplates", "sandboxwarmpools"]
@@ -34,7 +34,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "druppie.fullname" . }}-sandbox-user
-  namespace: sandbox-runtime
+  namespace: "{{ .Values.global.instance }}-sandbox"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

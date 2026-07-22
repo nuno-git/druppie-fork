@@ -49,13 +49,13 @@ data:
   WORKSPACE_PATH: "/app/workspace"
   USE_MCP_MICROSERVICES: "true"
   {{- if not .Values.global.ingress.enabled }}
-  # URL for compose_up apps to reach the backend (Docker-reachable, not K8s DNS)
+  # URL for deploy apps to reach the backend (Docker-reachable, not K8s DNS)
   COMPOSE_DRUPPIE_URL: {{ (.Values.backend.composeDruppieUrl | default (printf "http://172.25.0.1:%d" (int .Values.backend.nodePort))) | quote }}
   {{- end }}
 
   # MCP module URLs
   MCP_CODING_URL: "http://{{ include "druppie.fullname" . }}-module-coding:9001"
-  MCP_DOCKER_URL: "http://{{ include "druppie.fullname" . }}-module-docker:9002"
+  MCP_DOCKER_URL: "http://{{ include "druppie.fullname" . }}-module-deploy:9002"
   MCP_FILESEARCH_URL: "http://{{ include "druppie.fullname" . }}-module-filesearch:9004"
   MCP_WEB_URL: "http://{{ include "druppie.fullname" . }}-module-web:9005"
   MCP_ARCHIMATE_URL: "http://{{ include "druppie.fullname" . }}-module-archimate:9006"
@@ -83,14 +83,17 @@ data:
   LLMKUBE_MODEL: {{ .Values.backend.llmkube.model | quote }}
   LLMKUBE_BASE_URL: {{ .Values.backend.llmkube.baseUrl | quote }}
 
-  # Sandbox
-  DRUPPIE_SANDBOX_MODE: {{ if .Values.agentSandbox.enabled }}k8s{{ else }}docker{{ end }}
+  # Sandbox — mode is k8s only when agentSandbox is enabled; otherwise docker.
+  # SANDBOX_NAMESPACE / SANDBOX_WARMPOOL are only meaningful in k8s mode.
+{{- if .Values.agentSandbox.enabled }}
+  DRUPPIE_SANDBOX_MODE: "k8s"
+  SANDBOX_NAMESPACE: "{{ .Values.global.instance }}-sandbox"
+  SANDBOX_WARMPOOL: "{{ .Values.global.instance }}-warmpool"
+{{- else }}
+  DRUPPIE_SANDBOX_MODE: "docker"
+{{- end }}
   DRUPPIE_SANDBOX_RUNTIME: {{ .Values.sandbox.runtime | quote }}
   DRUPPIE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
-  {{- if .Values.agentSandbox.enabled }}
-  SANDBOX_NAMESPACE: "sandbox-runtime"
-  SANDBOX_WARMPOOL: "agent-coding-warmpool"
-  {{- end }}
   DRUPPIE_SANDBOX_USER: {{ .Values.global.instance | quote }}
   DRUPPIE_SANDBOX_NETWORK: "{{ .Values.global.instance }}-sandbox-net"
   DRUPPIE_SANDBOX_INET_NETWORK: "{{ .Values.global.instance }}-sandbox-inet"

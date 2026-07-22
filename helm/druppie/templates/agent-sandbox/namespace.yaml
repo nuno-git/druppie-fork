@@ -1,0 +1,13 @@
+{{- if .Values.agentSandbox.enabled }}
+# Per-instance sandbox namespace — each Druppie instance (prod, colab-dev,
+# branch env) gets its own isolated sandbox runtime with its own SandboxTemplate,
+# WarmPool, RBAC, and pods. No shared infrastructure between instances.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: "{{ .Values.global.instance }}-sandbox"
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-runtime
+{{- end }}
