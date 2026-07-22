@@ -6,6 +6,7 @@ so the orchestrator can re-execute them.
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -161,6 +162,17 @@ class RevertService:
 
         for pr_number in git_analysis["pr_numbers"]:
             await self._close_pr(session_id=session_id, pr_number=pr_number)
+
+        # Snapshot session state before retry
+        existing_snapshots = session.retry_snapshots or []
+        current_attempt = max((s.get("attempt", 0) for s in existing_snapshots), default=-1) + 1
+        existing_snapshots.append({
+            "attempt": current_attempt,
+            "project_id": str(session.project_id) if session.project_id else None,
+            "status": session.status,
+            "snapshotted_at": datetime.now(timezone.utc).isoformat(),
+        })
+        session.retry_snapshots = existing_snapshots
 
         # Step 5: Mark runs as superseded (preserve history) and create new copies
         # Mark reset runs as superseded and create fresh PENDING copies
@@ -394,10 +406,23 @@ class RevertService:
             if not parent:
                 break
 
-            self.execution_repo.db.query(ToolCallModel).filter(
-                ToolCallModel.agent_run_id == current_id,
-                ToolCallModel.tool_name == "done",
-            ).delete(synchronize_session="fetch")
+            # Clear spawning_tool_call_id on runs referencing done() TCs before deleting
+            done_tc_ids = [
+                tc.id for tc in
+                self.execution_repo.db.query(ToolCallModel)
+                .filter(
+                    ToolCallModel.agent_run_id == current_id,
+                    ToolCallModel.tool_name == "done",
+                )
+                .all()
+            ]
+            if done_tc_ids:
+                self.execution_repo.db.query(AgentRun).filter(
+                    AgentRun.spawning_tool_call_id.in_(done_tc_ids),
+                ).update({"spawning_tool_call_id": None}, synchronize_session="fetch")
+                self.execution_repo.db.query(ToolCallModel).filter(
+                    ToolCallModel.id.in_(done_tc_ids),
+                ).delete(synchronize_session="fetch")
 
             if current_tc_id:
                 subagents_tc = (
@@ -435,6 +460,9 @@ class RevertService:
                     .all()
                 ]
                 if later_tc_ids:
+                    self.execution_repo.db.query(AgentRun).filter(
+                        AgentRun.spawning_tool_call_id.in_(later_tc_ids),
+                    ).update({"spawning_tool_call_id": None}, synchronize_session="fetch")
                     self.execution_repo.db.query(ToolCallNormalization).filter(
                         ToolCallNormalization.tool_call_id.in_(later_tc_ids)
                     ).delete(synchronize_session="fetch")

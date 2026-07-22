@@ -340,6 +340,7 @@ class ExecutionRepository(BaseRepository):
             completed_at=agent_run.completed_at,
             superseded_at=agent_run.superseded_at,
             superseded_by_run_id=agent_run.superseded_by_run_id,
+            retry_attempt=agent_run.retry_attempt or 0,
         )
 
     # =========================================================================
@@ -1108,6 +1109,9 @@ class ExecutionRepository(BaseRepository):
         Returns a mapping of old_run_id -> new_run_id so callers can
         set superseded_by_run_id on the old runs.
         """
+        max_attempt = max((r.retry_attempt or 0) for r in runs_to_copy) if runs_to_copy else 0
+        new_attempt = max_attempt + 1
+
         old_to_new: dict[UUID, UUID] = {}
         for old_run in runs_to_copy:
             new_run = AgentRun(
@@ -1118,6 +1122,7 @@ class ExecutionRepository(BaseRepository):
                 planned_prompt=old_run.planned_prompt,
                 spawning_tool_call_id=old_run.spawning_tool_call_id,
                 status="pending",
+                retry_attempt=new_attempt,
             )
             self.db.add(new_run)
             self.db.flush()

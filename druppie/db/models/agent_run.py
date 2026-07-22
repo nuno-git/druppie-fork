@@ -51,6 +51,7 @@ class AgentRun(Base):
     # Superseded tracking (retry/redirect preserves old runs instead of deleting)
     superseded_at = Column(DateTime(timezone=True), nullable=True)
     superseded_by_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id"), nullable=True)
+    retry_attempt = Column(Integer, default=0)
 
     # Relationships
     messages = relationship("Message", back_populates="agent_run")
@@ -76,6 +77,7 @@ class AgentRun(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "superseded_at": self.superseded_at.isoformat() if self.superseded_at else None,
             "superseded_by_run_id": str(self.superseded_by_run_id) if self.superseded_by_run_id else None,
+            "retry_attempt": self.retry_attempt or 0,
         }
 
 

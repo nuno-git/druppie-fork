@@ -230,7 +230,7 @@ const OutlineAgentHeader = ({ agentRun, selected, onClick }) => {
         {config.name}
       </span>
       {isSuperseded && (
-        <span className="text-[9px] font-medium px-1 py-0.5 rounded bg-gray-200 text-gray-500">Vorige poging</span>
+        <span className="text-[9px] font-medium px-1 py-0.5 rounded bg-gray-200 text-gray-500">Poging {(agentRun.retry_attempt || 0) + 1}</span>
       )}
       <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
         {tokens > 0 && <span className="text-[10px] text-gray-400">{formatTokens(tokens)}</span>}
@@ -402,9 +402,14 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
         <AgentIcon className={`w-4 h-4 ${isSuperseded ? 'text-gray-400' : colors.accent}`} />
         <span className={`text-sm font-semibold ${isSuperseded ? 'text-gray-400 line-through' : colors.accent}`}>{config.name}</span>
         {isSuperseded ? (
-          <span className="px-1.5 py-0.5 rounded text-xs bg-gray-200 text-gray-500 font-medium">Vorige poging</span>
+          <span className="px-1.5 py-0.5 rounded text-xs bg-gray-200 text-gray-500 font-medium">Poging {(agentRun.retry_attempt || 0) + 1}</span>
         ) : (
-          <StatusBadge status={agentRun.status} />
+          <>
+            <StatusBadge status={agentRun.status} />
+            {(agentRun.retry_attempt || 0) > 0 && (
+              <span className="px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-600 font-medium">Poging {(agentRun.retry_attempt || 0) + 1}</span>
+            )}
+          </>
         )}
         {tokens > 0 && <span className="text-xs text-gray-500">{formatTokens(tokens)} tok</span>}
         {duration && <span className="text-xs text-gray-500">&middot; {duration}</span>}

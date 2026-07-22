@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from .base import Base, utcnow
@@ -44,6 +44,8 @@ class Session(Base):
     # Confidentiality: "openbaar", "intern", or "vertrouwelijk"
     access_level = Column(String(20), nullable=True, default="intern")
 
+    retry_snapshots = Column(JSON, nullable=True)
+
     created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -67,6 +69,7 @@ class Session(Base):
             "bewaartermijn_looptijd": self.bewaartermijn_looptijd,
             "bewaartermijn_trigger": self.bewaartermijn_trigger,
             "access_level": self.access_level,
+            "retry_snapshots": self.retry_snapshots,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
