@@ -43,4 +43,11 @@ subjects:
 - kind: ServiceAccount
   name: {{ include "druppie.fullname" . }}-module-coding
   namespace: {{ .Release.Namespace }}
+{{- if .Values.devWorkspace.enabled }}
+# When devWorkspace is enabled, the workspace pod uses the module-kubernetes SA
+# but also needs sandbox permissions (module-coding runs embedded in the workspace).
+- kind: ServiceAccount
+  name: {{ include "druppie.fullname" . }}-module-kubernetes
+  namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- end }}
