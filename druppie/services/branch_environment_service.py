@@ -316,6 +316,16 @@ def build_helmrelease_yaml(
             "gitBranch": branch,
             "codeServer": {"devHost": _workspace_host(host)},
             "caConfigMap": "aigit-ca",
+            # All MCP modules run inside the workspace pod under uvicorn --reload
+            # so edits in code-server hot-reload instantly (no push needed).
+            # layout_service is excluded — it's not an MCP module.
+            "embedModules": [m for m in ALL_MODULES if m != "layout_service"],
+        },
+# Per-instance sandbox: each branch env gets its own sandbox namespace,
+        # SandboxTemplate, WarmPool, and RBAC — no shared infrastructure.
+        "agentSandbox": {
+            "enabled": True,
+            "warmPool": {"replicas": 2},
         },
         # Agent sandbox (gVisor) — branch envs share the cluster-wide
         # SandboxTemplate + WarmPool in sandbox-runtime; we only need the
