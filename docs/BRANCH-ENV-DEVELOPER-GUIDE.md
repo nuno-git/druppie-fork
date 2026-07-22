@@ -449,6 +449,19 @@ Image missing from Harbor (after a reset). The `harbor-ci-trigger` job rebuilds 
 kubectl -n harbor create job ci-trigger-rerun --from=job/harbor-ci-trigger
 ```
 
+### Nothing works — just recreate it
+
+If you're stuck and can't figure out what's wrong, the fastest fix is often to **stop and recreate** the environment:
+
+1. Go to the **Branch Environments** page in the Druppie UI
+2. Click **Stop** on your environment (this deletes everything — pods, PVCs, database)
+3. Wait a minute for cleanup
+4. Click **Deploy** again with the same branch name
+
+This gives you a clean slate. Your code is still in the Git branch, so nothing is lost. The PVC data is the only thing that gets wiped — if you have important data, save it first.
+
+**This is the nuclear option** — use it when debugging takes longer than a fresh deploy (~2-5 minutes).
+
 ---
 
 ## 10. FAQ
