@@ -7,7 +7,7 @@ separated from models to avoid circular imports.
 import os
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 # Database URL from environment
@@ -62,22 +62,22 @@ def init_db() -> None:
     with engine.connect() as conn:
         # Check if the constraint already has the correct rules
         result = conn.execute(
-            """
+            text("""
             SELECT rc.update_rule, rc.delete_rule
             FROM information_schema.table_constraints tc
             JOIN information_schema.referential_constraints rc
               ON rc.constraint_name = tc.constraint_name
             WHERE tc.table_name = 'model_overrides'
               AND tc.constraint_type = 'FOREIGN KEY';
-            """
+            """)
         ).fetchone()
         if result and (result.update_rule != 'CASCADE' or result.delete_rule != 'SET NULL'):
-            conn.execute("ALTER TABLE model_overrides DROP CONSTRAINT model_overrides_updated_by_fkey")
+            conn.execute(text("ALTER TABLE model_overrides DROP CONSTRAINT model_overrides_updated_by_fkey"))
             conn.execute(
-                """
+                text("""
                 ALTER TABLE model_overrides ADD CONSTRAINT model_overrides_updated_by_fkey
                   FOREIGN KEY (updated_by) REFERENCES users(id)
                   ON UPDATE CASCADE ON DELETE SET NULL;
-                """
+                """)
             )
             conn.commit()
