@@ -4,8 +4,8 @@
 # In agent-sandbox (k8s) mode, the host-side clone runs git clone inside the
 # module-coding pod. The app-net NetworkPolicy blocks egress to private IPs
 # (10/8), but Gitea endpoints resolve to private IPs:
-#   - Internal: gitea:3000 (ClusterIP 10.43.x.x, same namespace)
-#   - External: aigit.waterschap.org:443 (resolves to 10.23.0.101)
+#   - Internal: gitea:3000 (ClusterIP, same namespace)
+#   - External: {{ .Values.gitea.external.url }} (resolves to {{ .Values.gitea.external.ip }})
 #
 # This CNP adds egress rules for both so git clone doesn't hang.
 # Cilium unions CNP and NP egress, so this adds to the standard policies.
@@ -25,7 +25,7 @@ spec:
   egress:
     # Allow module-coding to reach the external Gitea (used for update_core scope)
     - toFQDNs:
-        - matchPattern: "aigit.waterschap.org"
+        - matchPattern: "{{ .Values.gitea.external.url | replace "https://" "" | replace "http://" "" }}"
       toPorts:
         - ports:
             - port: "443"
@@ -34,7 +34,7 @@ spec:
               protocol: TCP
       # Also allow by known IP to avoid dependency on DNS proxy
     - toCIDR:
-        - 10.23.0.101/32
+        - {{ .Values.gitea.external.ip }}/32
       toPorts:
         - ports:
             - port: "443"

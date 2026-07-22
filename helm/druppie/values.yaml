@@ -86,6 +86,12 @@ gitea:
   adminPassword: ""
   adminEmail: admin@druppie.local
   org: druppie
+  # External Gitea (aigit.waterschap.org) — used for CNP egress rules when
+  # pods need to reach the corporate Gitea server. The IP is a fallback for
+  # Cilium's FQDN matching (DNS proxy dependency). Update if Gitea moves.
+  external:
+    url: "https://aigit.waterschap.org"
+    ip: "10.23.0.101"
   sshPort: 2222
   httpPort: 3000
   nodePort: 3000
