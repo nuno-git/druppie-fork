@@ -81,12 +81,9 @@ spec:
       ports:
       - protocol: TCP
         port: 443
-    # Gitea (git clone/push)
-    - to:
-      - namespaceSelector: {}
-      ports:
-      - protocol: TCP
-        port: 3000
+    # NOTE: No Gitea egress rule — gVisor sandboxes cannot reach in-cluster
+    # ClusterIP services (userspace netstack). All git operations are handled
+    # by the host-side clone/push in the module-coding pod.
     # Harbor (image pulls)
     - to:
       - namespaceSelector:
@@ -95,11 +92,14 @@ spec:
       ports:
       - protocol: TCP
         port: 80
-    # LLM endpoint
+    # LLM endpoint — restrict to backend pods only (not all port 8000 in namespace)
     - to:
       - namespaceSelector:
           matchLabels:
             kubernetes.io/metadata.name: {{ .Release.Namespace }}
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/component: backend
       ports:
       - protocol: TCP
         port: 8000
