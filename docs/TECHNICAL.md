@@ -306,10 +306,12 @@ PDF compilation from native **Typst** source files authored by agents. The Docum
 
 ### 3.3 Real-time Updates
 
-The frontend uses polling for real-time updates:
+The frontend uses **WebSocket** for real-time updates with a Redis pub/sub backbone for cross-replica broadcasting:
 
-- **Active sessions**: 500ms polling interval for chat messages and agent status.
-- **Approvals**: 1-second polling interval for pending approval/question lists.
+- **WebSocket endpoint**: `/api/sessions/{id}/events` — connects without a token in the URL, then authenticates by sending a JSON frame `{type:"auth",token:"<jwt>"}` within 10 seconds. Pushes `timeline_entry`, `agent_run_update`, `approval`, `question`, and `session_status` events as they happen. This prevents the token from leaking into access logs, browser history, and Referer headers.
+- **Redis pub/sub**: When the backend broadcasts an event, it publishes to a Redis channel (`session:{id}`) so all backend replicas receive the event and can forward it to their local WebSocket clients. This ensures users see updates regardless of which replica handles their connection.
+- **Graceful fallback**: If Redis is unavailable, events are broadcast locally within the process. The system degrades cleanly to single-replica behavior.
+- **Legacy polling**: Some pages (e.g., approvals list, agent test runs) still use polling for simplicity where WebSocket is not yet wired.
 
 ### 3.4 API Client
 

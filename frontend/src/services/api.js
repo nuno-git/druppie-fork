@@ -169,9 +169,19 @@ export const getSessions = (page = 1, limit = 20) =>
   request(`/api/sessions?page=${page}&limit=${limit}`)
 
 // Get complete session with ALL data (messages, llm_calls, events, approvals, etc.)
-export const getSession = (sessionId, { includeSuperseded = false } = {}) => {
-  const params = includeSuperseded ? '?include_superseded=true' : ''
-  return request(`/api/sessions/${sessionId}${params}`)
+export const getSession = (sessionId, options = {}) => {
+  const params = new URLSearchParams()
+  if (options.includeSuperseded) {
+    params.append('include_superseded', 'true')
+  }
+  if (options.sinceSequence !== undefined && options.sinceSequence !== null) {
+    params.append('since_sequence', options.sinceSequence)
+  }
+  if (options.exclude && options.exclude.length > 0) {
+    params.append('exclude', options.exclude.join(','))
+  }
+  const qs = params.toString()
+  return request(`/api/sessions/${sessionId}${qs ? '?' + qs : ''}`)
 }
 
 export const resumeSession = (sessionId, contexts = null) => {

@@ -165,11 +165,9 @@ Last updated: 2026-07-15
   - Tiered summarization: keep recent agents in full detail, compress older ones
   - Token budget: cap the summary section at a fixed token count and summarize when exceeded
 
-### No WebSocket Support
+### Redis Pub/Sub (Completed)
 
-- The frontend API client has no WebSocket or Socket.io code. All real-time updates rely on polling (visible in the chat and approval pages).
-- No backend WebSocket server exists either.
-- This means there is no push-based notification mechanism for agent progress updates.
+- ~~No WebSocket Support~~ — **RESOLVED.** Backend WebSocket endpoint (`/api/sessions/{id}/events`) is live with Redis pub/sub for cross-replica broadcasting. Frontend receives timeline_entry, agent_run_update, approval, and question events in real-time. Redis fallbacks gracefully to local-only if unavailable.
 
 ### No API Rate Limiting
 
