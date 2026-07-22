@@ -10,5 +10,4 @@ metadata:
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: sandbox-runtime
-    {{- include "druppie.selectorLabels" . | nindent 4 }}
 {{- end }}
