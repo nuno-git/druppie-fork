@@ -1019,6 +1019,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     if (viewMode !== 'inspect' && newMode === 'inspect' && timelineRef.current) {
       savedInspectScroll.current = timelineRef.current.scrollTop
     }
+    // Reset merge buffer on mode switch to prevent superseded data leaking between modes
+    highestSeqRef.current = undefined
+    mergedTimelineRef.current = []
     _setViewMode(newMode)
   }
   const queryClient = useQueryClient()
