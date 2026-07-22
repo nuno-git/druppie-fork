@@ -34,14 +34,24 @@ Navigate to the **Branch Environments** page.
 
 [Screenshot: Druppie UI - Branch Environments page]
 
-### Step 2: Create and deploy your environment
+### Step 2: Choose your deployment type
+
+There are **two deployment options**:
+
+| Option | What it deploys | URLs | Use case |
+|--------|----------------|------|----------|
+| **Full deployment** (default) | Complete Druppie stack: backend, frontend, database, Keycloak, Gitea, MCP modules + workspace | All 3 URLs below | Developing and testing code changes against the full application |
+| **Workspace only** (recovery mode) | Just the workspace pod + Keycloak for auth | VS Code + Desktop only | Using Claude Code or OpenCode without deploying the full stack — saves cluster resources |
+
+[Screenshot: Branch Environments UI showing the deployment type toggle/checkbox]
 
 1. Type your feature branch name (e.g. `feature/my-awesome-feature`)
-2. Click **"Deploy"**
+2. Select your deployment type
+3. Click **"Deploy"**
 
 The system **automatically creates the branch** from `colab-dev` if it doesn't exist yet. No manual git commands needed.
 
-3. Wait ~2-5 minutes for the environment to become ready
+4. Wait ~2-5 minutes for the environment to become ready
 
 [Screenshot: Deployment pipeline showing the stages: Flux sync → Chart source → Secrets → Helm install → Pods & images]
 
@@ -55,6 +65,8 @@ Open your IDE URL (see [Your URLs](#2-your-urls) below), log in, and start editi
 
 Every branch environment gets URLs based on your branch name (slashes and special characters become dashes):
 
+### Full deployment
+
 | Access | URL Pattern | Example |
 |--------|-------------|---------|
 | **App** (frontend + backend) | `druppie-<slug>.rijnland.dev` | `druppie-feature-my-feature.rijnland.dev` |
@@ -67,8 +79,6 @@ Every branch environment gets URLs based on your branch name (slashes and specia
 
 [Screenshot: The desktop environment showing XFCE with terminal]
 
-### What you get
-
 **App URL** — The full Druppie application with hot-reloading backend and frontend. Log in with Keycloak.
 
 **VS Code URL** — Full VS Code in your browser with:
@@ -79,6 +89,15 @@ Every branch environment gets URLs based on your branch name (slashes and specia
 - Read-only `kubectl` access to the cluster
 
 **Desktop URL** — Full XFCE desktop environment with VS Code desktop, Chromium, and Terminator terminal.
+
+### Workspace only (recovery mode)
+
+| Access | URL Pattern | Example |
+|--------|-------------|---------|
+| **VS Code** (code-server IDE) | `druppie-<slug>-dev.rijnland.dev` | `druppie-feature-my-feature-dev.rijnland.dev` |
+| **Desktop** (XFCE/noVNC) | `druppie-<slug>-dev.rijnland.dev/proxy/6080/` | `druppie-feature-my-feature-dev.rijnland.dev/proxy/6080/` |
+
+No app URL — just the workspace for coding with Claude Code or OpenCode. Use this when you don't need the full Druppie stack and want to save cluster resources.
 
 ---
 
@@ -102,7 +121,7 @@ Every branch environment gets URLs based on your branch name (slashes and specia
 
 [Screenshot: Split screen showing code edit in code-server and the app updating live]
 
-### How it works
+### How it works (full deployment)
 
 Your branch environment has **one workspace pod** that runs the hot-reloading backend and frontend, plus **separate pods** for the supporting services:
 
@@ -123,6 +142,23 @@ Your branch environment has **one workspace pod** that runs the hot-reloading ba
 ```
 
 The workspace pod connects to the separate services (database, Keycloak, MCP modules) over in-cluster DNS.
+
+### How it works (workspace only)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Workspace Pod                                               │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  code-server (:8080)     ← VS Code IDE                │  │
+│  │  Desktop (:6080)        ← XFCE/noVNC                  │  │
+│  │  PVC /workspace (20Gi)  ← Persists across restarts    │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                             │
+│  Keycloak (for authentication only)                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+No backend, frontend, database, Gitea, or MCP modules — just the workspace and Keycloak for auth.
 
 ### Test users
 
