@@ -49,7 +49,7 @@ data:
   WORKSPACE_PATH: "/app/workspace"
   USE_MCP_MICROSERVICES: "true"
   {{- if not .Values.global.ingress.enabled }}
-  # URL for compose_up apps to reach the backend (Docker-reachable, not K8s DNS)
+  # URL for deploy apps to reach the backend (Docker-reachable, not K8s DNS)
   COMPOSE_DRUPPIE_URL: {{ (.Values.backend.composeDruppieUrl | default (printf "http://172.25.0.1:%d" (int .Values.backend.nodePort))) | quote }}
   {{- end }}
 

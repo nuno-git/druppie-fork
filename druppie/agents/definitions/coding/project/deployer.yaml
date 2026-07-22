@@ -19,18 +19,18 @@ system_prompt: |
   =============================================================================
   The app lives in its own Gitea repo and ships its own Helm chart (chart/) +
   its own CI workflow (.gitea/workflows/build.yaml). Deploying means:
-    docker:compose_up  → commits a Flux GitRepository + HelmRelease to ai/k8s
+    deploy:deploy  → commits a Flux GitRepository + HelmRelease to ai/k8s
                           (clusters/user-apps/<slug>/), triggers the app's CI
                           build, waits for Flux to roll it out, then health-gates
                           the public URL.
   Flux does the actual reconcile. The app is reachable at:
     https://<slug>-apps.rijnland.dev
   There is no port number and no docker-compose.yaml — the chart is the deploy
-  contract. `compose_up` returns: { success, url, slug, namespace,
+  contract. `deploy` returns: { success, url, slug, namespace,
   health_check: "healthy"|"timeout", helmrelease_ready }.
 
-  docker:compose_down → removes the app's ai/k8s dir; Flux prunes the namespace.
-  docker:list_containers → lists deployed user-apps (slug, url, ready).
+  deploy:teardown → removes the app's ai/k8s dir; Flux prunes the namespace.
+  deploy:list_apps → lists deployed user-apps (slug, url, ready).
   docker:logs            → reads the app pod's logs.
 
   =============================================================================
@@ -76,12 +76,12 @@ system_prompt: |
      - Deployment is ALREADY FINISHED — do NOT call tools.
      - Immediately call done() with the deployment info from CONTEXT.
      - Include "DEPLOYMENT_COMPLETE" in your summary.
-  2. If CONTEXT contains "last_approved_tool: docker:compose_up" and "last_tool_result":
-     - compose_up JUST ran successfully — do NOT call it again.
+  2. If CONTEXT contains "last_approved_tool: deploy:deploy" and "last_tool_result":
+     - deploy JUST ran successfully — do NOT call it again.
      - Extract the URL and slug from last_tool_result and continue to the
        USER FEEDBACK section (do NOT skip to done).
-  3. If CONTEXT contains "last_approved_tool: docker:compose_down":
-     - compose_down just ran (teardown) — continue with compose_up for the
+  3. If CONTEXT contains "last_approved_tool: deploy:teardown":
+     - teardown just ran (teardown) — continue with deploy for the
        final deployment.
 
   =============================================================================
@@ -100,25 +100,25 @@ system_prompt: |
   You receive in CONTEXT: project_id, project_name, session_id, intent.
   repo_name, repo_owner, and session_id are auto-injected into tool calls —
   you do NOT provide them. You MUST provide the branch explicitly to
-  docker:compose_up.
+  deploy:deploy.
 
   =============================================================================
   DEPLOYMENT WORKFLOW
   =============================================================================
   STEP 0 — DISCOVER EXISTING APPS (ALWAYS FIRST):
-  Call docker:list_containers to see what's already deployed for this project.
+  Call deploy:list_apps to see what's already deployed for this project.
 
   COMPOSE PROJECT NAMING (becomes the app slug → hostname):
   - For create_project: use the project name, e.g. compose_project_name: "todo-app"
     → app reachable at https://todo-app-apps.rijnland.dev
   - For PREVIEW deploy: compose_project_name: "<project>-preview"
   - For FINAL deploy (after PR merge):
-      docker:compose_down(compose_project_name="<project>-preview")
-      docker:compose_up(compose_project_name="<project>", branch="main")
+      deploy:teardown(compose_project_name="<project>-preview")
+      deploy:deploy(compose_project_name="<project>", branch="main")
 
   STEPS:
-  0. docker:list_containers to discover existing apps
-  1. docker:compose_up (requires approval) — branch from PREVIOUS AGENT SUMMARY
+  0. deploy:list_apps to discover existing apps
+  1. deploy:deploy (requires approval) — branch from PREVIOUS AGENT SUMMARY
      or "main"; compose_project_name per the naming rules; do NOT pass git_url
      (repo_name is auto-injected). No health parameters needed — the K8s path
      health-gates /health for 300s automatically.
@@ -126,7 +126,7 @@ system_prompt: |
      and slug are in the result. If health_check is "timeout" or success is
      false, read the error, call docker:logs to debug, fix (write_file + push),
      and retry.
-  3. Only report success once compose_up returns health_check "healthy".
+  3. Only report success once deploy returns health_check "healthy".
 
   =============================================================================
   G5: POST-DEPLOYMENT DEVELOPER APPROVAL (REQUIRED — BEFORE USER FEEDBACK)
@@ -159,7 +159,7 @@ system_prompt: |
   =============================================================================
   COMMON DEPLOYMENT ERRORS AND FIXES
   =============================================================================
-  compose_up errors:
+  deploy errors:
   - "build failed: ..." → the app's CI workflow failed. Read the run URL/logs.
     Common cause: a missing dependency (requirements.txt) or a Dockerfile error.
   - health_check "timeout" → the app did not answer /health with 200 within 300s.
@@ -177,7 +177,7 @@ system_prompt: |
   DEPLOY APPROVAL GATE (MANDATORY)
   =============================================================================
   ### G4: Pre-Deployment Approval
-  Before executing any deployment action (compose_up triggers a CI build + a
+  Before executing any deployment action (deploy triggers a CI build + a
   GitOps commit), the system automatically requests developer approval via the
   tool approval mechanism. You MUST:
   1. Present a clear deployment summary first (what is deployed, the target URL,
@@ -200,20 +200,20 @@ system_prompts:
 
 mcps:
   docker:
-    - compose_up
-    - compose_down
-    - list_containers
+    - deploy
+    - teardown
+    - list_apps
     - logs
     - inspect
   coding:
     tools: [read_file, bash, get_git_status, push_changes, git_fetch, git_pull, create_pr]
     git: current_project
 
-# compose_up is the main deployment action — it commits to ai/k8s, triggers a CI
+# deploy is the main deployment action — it commits to ai/k8s, triggers a CI
 # build, and rolls out via Flux. The approval gate ensures a developer reviews
 # before the app goes live.
 approval_overrides:
-  "docker:compose_up":
+  "deploy:deploy":
     requires_approval: true
     required_role: developer
 

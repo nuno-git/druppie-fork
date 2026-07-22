@@ -1,11 +1,11 @@
 """Deployments API routes.
 
-Bridge to Docker MCP - lets frontend manage containers that agents have deployed.
+Bridge to module-deploy - lets frontend manage containers that agents have deployed.
 
 Architecture:
     Route (this file)
       │
-      └──▶ MCP Bridge (Docker MCP list_containers, stop, logs)
+      └──▶ MCP Bridge (module-deploy list_apps, stop, logs)
             (filter by druppie.* labels)
 
 Deployments are tracked via container labels:
@@ -60,7 +60,7 @@ def get_mcp_http() -> MCPHttp:
 
 
 class DeploymentSummary(BaseModel):
-    """Deployment info from Docker MCP."""
+    """Deployment info from module-deploy."""
     container_id: str
     container_name: str
     image: str
@@ -139,7 +139,7 @@ class InspectResponse(BaseModel):
 
 def parse_container_to_deployment(container: dict) -> DeploymentSummary:
     """Parse container/app info to DeploymentSummary (Docker or K8s shape)."""
-    # K8s (GitOps) shape from module-deploy k8s_list_containers:
+    # K8s (GitOps) shape from module-deploy k8s_list_apps:
     #   {name, namespace, url, ready, status_message}
     if "url" in container and "namespace" in container:
         ready = bool(container.get("ready"))
@@ -231,7 +231,7 @@ async def list_deployments(
     all_containers: bool = Query(False, description="Include stopped containers"),
     user: dict = Depends(get_current_user),
 ) -> DeploymentListResponse:
-    """List running deployments via Docker MCP.
+    """List running deployments via module-deploy.
 
     Filters by druppie.* labels to show only Druppie-managed containers.
     Non-admin users only see their own deployments.
@@ -255,7 +255,7 @@ async def list_deployments(
     try:
         result = await mcp_http.call(
             server="docker",
-            tool="list_containers",
+            tool="list_apps",
             args=args,
             timeout_seconds=30.0,
         )
@@ -293,7 +293,7 @@ async def stop_deployment(
     remove: bool = Query(True, description="Remove container after stopping"),
     user: dict = Depends(get_current_user),
 ) -> StopResponse:
-    """Stop a running deployment via Docker MCP.
+    """Stop a running deployment via module-deploy.
 
     Verifies ownership via container labels before stopping.
     """
@@ -333,7 +333,7 @@ async def get_deployment_logs(
     tail: int = Query(100, ge=1, le=1000, description="Number of lines"),
     user: dict = Depends(get_current_user),
 ) -> LogsResponse:
-    """Get container logs via Docker MCP.
+    """Get container logs via module-deploy.
 
     Verifies ownership via container labels before fetching logs.
     """
@@ -372,7 +372,7 @@ async def inspect_deployment(
     container_name: str,
     user: dict = Depends(get_current_user),
 ) -> InspectResponse:
-    """Inspect a deployment container via Docker MCP.
+    """Inspect a deployment container via module-deploy.
 
     Returns detailed container information including labels and ports.
     """
@@ -486,7 +486,7 @@ async def list_volumes(
     try:
         # Pull every volume + every druppie container so we can link by
         # com.docker.compose.project even when the volume itself has no
-        # druppie.* label (older compose_up deploys didn't label volumes).
+        # druppie.* label (older deploy deploys didn't label volumes).
         vols_task = mcp_http.call(
             server="docker",
             tool="list_volumes",
@@ -495,7 +495,7 @@ async def list_volumes(
         )
         containers_task = mcp_http.call(
             server="docker",
-            tool="list_containers",
+            tool="list_apps",
             args={"all": True},
             timeout_seconds=15.0,
         )
@@ -584,13 +584,13 @@ async def wipe_project(
     try:
         list_result = await mcp_http.call(
             server="docker",
-            tool="list_containers",
+            tool="list_apps",
             args={"all": True, "project_id": project_id},
             timeout_seconds=15.0,
         )
     except MCPHttpError as e:
         logger.error("wipe_project_mcp_unreachable", project_id=project_id, error=str(e))
-        raise HTTPException(status_code=502, detail="Docker MCP unreachable")
+        raise HTTPException(status_code=502, detail="module-deploy unreachable")
 
     containers = list_result.get("containers", []) if list_result.get("success") else []
 
@@ -620,14 +620,14 @@ async def wipe_project(
         if cp:
             compose_projects.add(cp)
 
-    # Use compose_down to remove all containers AND volumes per compose project.
+    # Use teardown to remove all containers AND volumes per compose project.
     # This handles sidecar containers (db, redis, etc.) that don't carry
     # druppie.* labels but belong to the same compose stack.
     for cp in compose_projects:
         try:
             r = await mcp_http.call(
                 server="docker",
-                tool="compose_down",
+                tool="teardown",
                 args={"compose_project_name": cp, "remove_volumes": True},
                 timeout_seconds=60.0,
             )
@@ -636,12 +636,12 @@ async def wipe_project(
                 for v in r.get("volumes_removed", []):
                     volumes_removed.append(v)
             else:
-                errors.append(f"compose_down {cp}: {r.get('error', 'unknown')}")
+                errors.append(f"teardown {cp}: {r.get('error', 'unknown')}")
         except MCPHttpError as e:
-            errors.append(f"compose_down {cp}: {e}")
+            errors.append(f"teardown {cp}: {e}")
 
     # Remove any druppie-labeled containers not part of a compose project
-    # (e.g. standalone containers created outside compose_up).
+    # (e.g. standalone containers created outside deploy).
     standalone = [
         c for c in containers
         if not any(

@@ -143,23 +143,23 @@ mcps:
       session_id:
         from: session.id
         hidden: true
-        tools: [build, run, compose_up]  # Only these tools accept session_id
+        tools: [build, run, deploy]  # Only these tools accept session_id
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [build, compose_up]  # Only build needs repo info
+        tools: [build, deploy]  # Only build needs repo info
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [build, compose_up]
+        tools: [build, deploy]
       user_id:
         from: session.user_id
         hidden: true
-        tools: [run, compose_up]  # For ownership labels
+        tools: [run, deploy]  # For ownership labels
       project_id:
         from: session.project_id
         hidden: true
-        tools: [run, compose_up]  # For ownership labels
+        tools: [run, deploy]  # For ownership labels
     tools:
       - name: build
         # GLOBAL: docker:build ALWAYS needs developer approval (per goal.md)
@@ -181,7 +181,7 @@ mcps:
         requires_approval: true
         required_role: developer
 
-      - name: list_containers
+      - name: list_apps
         requires_approval: false
 
       - name: inspect
@@ -191,11 +191,11 @@ mcps:
         requires_approval: true
         required_role: developer
 
-      - name: compose_up
+      - name: deploy
         requires_approval: true
         required_role: developer
 
-      - name: compose_down
+      - name: teardown
         requires_approval: true
         required_role: developer
 

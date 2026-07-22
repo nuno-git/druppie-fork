@@ -3,9 +3,9 @@
 Covers:
   - _slugify
   - manifest builders (namespace / gitrepository / helmrelease)
-  - k8s_compose_up: commits namespace+gitrepository+helmrelease, dispatches the
+  - k8s_deploy: commits namespace+gitrepository+helmrelease, dispatches the
     CI build, waits for rollout + health gate
-  - k8s_compose_down: deletes the app subdir via list_dir -> delete ops
+  - k8s_teardown: deletes the app subdir via list_dir -> delete ops
   - stubs (inspect/exec/volumes) return a clear not-supported error
 
 Run:  python druppie/mcp-servers/module-deploy/tests/test_k8s_deploy.py
@@ -109,7 +109,7 @@ class TestComposeUp(unittest.TestCase):
              patch.object(kd, "_wait_helmrelease_ready", new=AsyncMock(return_value=True)), \
              patch.object(kd, "_health_gate", new=AsyncMock(return_value=True)):
             result = asyncio.run(
-                kd.k8s_compose_up(repo_name="todo-app", branch="main", compose_project_name="todo-app")
+                kd.k8s_deploy(repo_name="todo-app", branch="main", compose_project_name="todo-app")
             )
 
         self.assertTrue(result["success"], result)
@@ -142,7 +142,7 @@ class TestComposeUp(unittest.TestCase):
             "status": "completed", "conclusion": "success"})), \
              patch.object(kd, "_wait_helmrelease_ready", new=AsyncMock(return_value=True)), \
              patch.object(kd, "_health_gate", new=AsyncMock(return_value=True)):
-            asyncio.run(kd.k8s_compose_up(repo_name="todo-app", branch="main"))
+            asyncio.run(kd.k8s_deploy(repo_name="todo-app", branch="main"))
 
         ops = fake.committed[0]["files"]
         self.assertTrue(all(o["operation"] == "update" for o in ops))
@@ -153,7 +153,7 @@ class TestComposeDown(unittest.TestCase):
     def test_teardown_deletes_all_files(self):
         fake = FakeGitops()
         kd._gitops = fake
-        result = asyncio.run(kd.k8s_compose_down("todo-app"))
+        result = asyncio.run(kd.k8s_teardown("todo-app"))
         self.assertTrue(result["success"])
         self.assertEqual(len(result["removed"]), 2)
         ops = fake.committed[0]["files"]
@@ -164,7 +164,7 @@ class TestComposeDown(unittest.TestCase):
         fake = FakeGitops()
         fake.list_dir = AsyncMock(return_value=[])
         kd._gitops = fake
-        result = asyncio.run(kd.k8s_compose_down("nope"))
+        result = asyncio.run(kd.k8s_teardown("nope"))
         self.assertFalse(result["success"])
 
 

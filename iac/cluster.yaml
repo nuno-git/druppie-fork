@@ -105,7 +105,7 @@ worker_node_pools:
     taints: []                          # No taints — fully schedulable
     additional_packages:
       - nfs-common                      # Required for NFS RWX volumes on new nodes
-      - docker.io                       # Required for compose_up sandbox (module-deploy)
+      - docker.io                       # Required for deploy sandbox (module-deploy)
 
 # -- Addons ------------------------------------------------------------------
 # hetzner-k3s installs these automatically. Customize here if needed.

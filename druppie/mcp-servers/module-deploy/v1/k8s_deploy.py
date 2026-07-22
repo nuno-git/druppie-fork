@@ -9,9 +9,9 @@ ai/k8s (clusters/user-apps/<slug>/) and letting Flux reconcile — identical to 
 Druppie deploys itself. No Docker daemon, no Kaniko, no imperative kubectl apply.
 
   build        → dispatch the app's .gitea/workflows/build.yaml + poll the run
-  compose_up   → commit namespace+gitrepository+helmrelease, (re)build, wait for
+  deploy   → commit namespace+gitrepository+helmrelease, (re)build, wait for
                  Flux HelmRelease Ready, then health-gate the ingress URL (300s)
-  compose_down → delete the app's ai/k8s subdir (Flux prune tears down the ns)
+  teardown → delete the app's ai/k8s subdir (Flux prune tears down the ns)
   logs         → read the app pod's logs (in-cluster SA token, read-only)
   list         → list deployed user-apps (namespaces labelled managed-by)
   stop         → scale the app Deployment to 0
@@ -444,7 +444,7 @@ async def k8s_build(
     }
 
 
-async def k8s_compose_up(
+async def k8s_deploy(
     repo_name: str,
     branch: str = "main",
     repo_owner: str | None = None,
@@ -523,7 +523,7 @@ async def k8s_compose_up(
     }
 
 
-async def k8s_compose_down(compose_project_name: str) -> dict:
+async def k8s_teardown(compose_project_name: str) -> dict:
     """Teardown: delete the app's ai/k8s subdir. Flux prune removes the namespace."""
     slug = _slugify(compose_project_name)
     g = _gitops_client()
@@ -550,8 +550,8 @@ async def k8s_stop(container_name: str) -> dict:
 
 
 async def k8s_remove(container_name: str) -> dict:
-    """Remove = teardown via GitOps (same as compose_down)."""
-    return await k8s_compose_down(container_name)
+    """Remove = teardown via GitOps (same as teardown)."""
+    return await k8s_teardown(container_name)
 
 
 async def k8s_logs(container_name: str, tail: int = 100) -> dict:
@@ -574,7 +574,7 @@ async def k8s_logs(container_name: str, tail: int = 100) -> dict:
         return {"success": False, "error": str(e)}
 
 
-async def k8s_list_containers(
+async def k8s_list_apps(
     session_id: str | None = None,
     project_id: str | None = None,
 ) -> list[dict]:
@@ -614,7 +614,7 @@ async def k8s_inspect(container_name: str) -> dict:
         "success": False,
         "error": (
             "'inspect' is not supported in GitOps/K8s mode. Use 'logs' or "
-            "'list_containers' for status."
+            "'list_apps' for status."
         ),
     }
 

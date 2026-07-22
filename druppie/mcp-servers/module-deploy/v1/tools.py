@@ -21,9 +21,9 @@ mcp = FastMCP(
     instructions="""Deploy user applications via GitOps (Flux HelmRelease).
 
 Use when:
-- Deploying apps from a Gitea repo (compose_up)
-- Tearing down deployed apps (compose_down)
-- Listing deployed apps (list_containers)
+- Deploying apps from a Gitea repo (deploy)
+- Tearing down deployed apps (teardown)
+- Listing deployed apps (list_apps)
 - Reading app logs (logs)
 - Stopping/removing apps (stop, remove)
 
@@ -123,11 +123,11 @@ async def run(
 
 
 @mcp.tool(
-    name="compose_up",
+    name="deploy",
     description="Deploy application via GitOps: commit Flux manifests, trigger CI, wait for rollout.",
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
-async def compose_up(
+async def deploy(
     repo_name: str | None = None,
     repo_owner: str | None = None,
     git_url: str | None = None,
@@ -148,9 +148,9 @@ async def compose_up(
         if not repo_name:
             return {"success": False, "error": "repo_name is required (deploys via GitOps)."}
 
-        from .k8s_deploy import k8s_compose_up
+        from .k8s_deploy import k8s_deploy
         project_name_final = compose_project_name or project_id or repo_name
-        return await k8s_compose_up(
+        return await k8s_deploy(
             repo_name=repo_name,
             repo_owner=repo_owner,
             branch=branch,
@@ -167,11 +167,11 @@ async def compose_up(
 
 
 @mcp.tool(
-    name="compose_down",
+    name="teardown",
     description="Teardown: delete the app's ai/k8s manifests. Flux prunes the namespace.",
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
-async def compose_down(
+async def teardown(
     compose_project_name: str,
     remove_volumes: bool = True,
 ) -> dict:
@@ -183,8 +183,8 @@ async def compose_down(
         if not compose_project_name:
             return {"success": False, "error": "Invalid compose_project_name: empty after sanitization"}
 
-        from .k8s_deploy import k8s_compose_down
-        return await k8s_compose_down(compose_project_name)
+        from .k8s_deploy import k8s_teardown
+        return await k8s_teardown(compose_project_name)
 
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -254,11 +254,11 @@ async def remove(container_name: str, force: bool = False) -> dict:
 
 
 @mcp.tool(
-    name="list_containers",
+    name="list_apps",
     description="List deployed user-apps.",
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
-async def list_containers(
+async def list_apps(
     all: bool = False,
     project_id: str | None = None,
     session_id: str | None = None,
@@ -266,8 +266,8 @@ async def list_containers(
 ) -> dict:
     """List deployed user-apps by scanning ai/k8s clusters/user-apps/*."""
     try:
-        from .k8s_deploy import k8s_list_containers
-        containers = await k8s_list_containers(session_id=session_id, project_id=project_id)
+        from .k8s_deploy import k8s_list_apps
+        containers = await k8s_list_apps(session_id=session_id, project_id=project_id)
         return {"success": True, "containers": containers}
 
     except Exception as e:
@@ -280,7 +280,7 @@ async def list_containers(
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def inspect(container_name: str) -> dict:
-    """Inspect is not supported in GitOps mode. Use 'logs' or 'list_containers'."""
+    """Inspect is not supported in GitOps mode. Use 'logs' or 'list_apps'."""
     try:
         from .k8s_deploy import k8s_inspect
         return await k8s_inspect(container_name)
@@ -312,10 +312,10 @@ async def exec_command(
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def start(container_name: str) -> dict:
-    """Start is not supported in GitOps mode. Use compose_up to redeploy."""
+    """Start is not supported in GitOps mode. Use deploy to redeploy."""
     return {
         "success": False,
-        "error": "'start' is not supported in GitOps mode. Use 'compose_up' to redeploy.",
+        "error": "'start' is not supported in GitOps mode. Use 'deploy' to redeploy.",
     }
 
 
@@ -325,10 +325,10 @@ async def start(container_name: str) -> dict:
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def restart(container_name: str, timeout: int = 10) -> dict:
-    """Restart is not supported in GitOps mode. Use compose_up to redeploy."""
+    """Restart is not supported in GitOps mode. Use deploy to redeploy."""
     return {
         "success": False,
-        "error": "'restart' is not supported in GitOps mode. Use 'compose_up' to redeploy.",
+        "error": "'restart' is not supported in GitOps mode. Use 'deploy' to redeploy.",
     }
 
 
