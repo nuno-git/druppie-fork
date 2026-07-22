@@ -316,6 +316,10 @@ def build_helmrelease_yaml(
             "gitBranch": branch,
             "codeServer": {"devHost": _workspace_host(host)},
             "caConfigMap": "aigit-ca",
+            # All MCP modules run inside the workspace pod under uvicorn --reload
+            # so edits in code-server hot-reload instantly (no push needed).
+            # layout_service is excluded — it's not an MCP module.
+            "embedModules": [m for m in ALL_MODULES if m != "layout_service"],
         },
     }
     if recovery_mode:

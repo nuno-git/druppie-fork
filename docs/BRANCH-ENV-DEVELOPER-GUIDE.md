@@ -114,34 +114,38 @@ No app URL — just the workspace for coding with Claude Code or OpenCode. Use t
 
 ### What hot-reloads
 
+**Everything hot-reloads.** The workspace pod runs the backend, frontend, and all MCP modules under `uvicorn --reload` — edits in code-server reflect instantly.
+
 | Component | How | Speed |
 |-----------|-----|-------|
 | **Backend** (Python/FastAPI) | `uvicorn --reload` watches `/workspace/druppie` | ~1-2 sec |
 | **Frontend** (React/Vite) | Vite HMR via websocket | ~instant |
+| **MCP modules** (all 11) | `uvicorn --reload` per module | ~1-2 sec |
 
 [Screenshot: Split screen showing code edit in code-server and the app updating live]
 
 ### How it works (full deployment)
 
-Your branch environment has **one workspace pod** that runs the hot-reloading backend and frontend, plus **separate pods** for the supporting services:
+Your branch environment has **one workspace pod** that runs everything with hot-reload, plus **separate pods** for the supporting infrastructure:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Workspace Pod (hot-reload)                                 │
+│  Workspace Pod (everything hot-reloads)                     │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │  code-server (:8080)     ← VS Code IDE                │  │
 │  │  uvicorn --reload (:8000) ← Backend (hot-reload)      │  │
 │  │  Vite HMR (:5173)       ← Frontend (hot-reload)       │  │
+│  │  MCP modules (:9001-15) ← All modules (hot-reload)    │  │
 │  │  Desktop (:6080)        ← XFCE/noVNC                  │  │
 │  │  PVC /workspace (20Gi)  ← Persists across restarts    │  │
 │  └───────────────────────────────────────────────────────┘  │
 │                                                             │
-│  Separate Pods (baked images, no hot-reload):               │
-│  Keycloak · Postgres · Gitea · MCP modules                 │
+│  Separate Pods (infrastructure, no hot-reload needed):      │
+│  Keycloak · Postgres · Gitea                                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The workspace pod connects to the separate services (database, Keycloak, MCP modules) over in-cluster DNS.
+The workspace pod connects to the infrastructure services (database, Keycloak, Gitea) over in-cluster DNS.
 
 ### How it works (workspace only)
 
