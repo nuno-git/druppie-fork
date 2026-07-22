@@ -83,14 +83,17 @@ data:
   LLMKUBE_MODEL: {{ .Values.backend.llmkube.model | quote }}
   LLMKUBE_BASE_URL: {{ .Values.backend.llmkube.baseUrl | quote }}
 
-  # Sandbox
-  DRUPPIE_SANDBOX_MODE: "k8s"
-  DRUPPIE_SANDBOX_RUNTIME: {{ .Values.sandbox.runtime | quote }}
-  DRUPPIE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
+  # Sandbox — mode is k8s only when agentSandbox is enabled; otherwise docker.
+  # SANDBOX_NAMESPACE / SANDBOX_WARMPOOL are only meaningful in k8s mode.
 {{- if .Values.agentSandbox.enabled }}
+  DRUPPIE_SANDBOX_MODE: "k8s"
   SANDBOX_NAMESPACE: "{{ .Values.global.instance }}-sandbox"
   SANDBOX_WARMPOOL: "{{ .Values.global.instance }}-warmpool"
-  {{- end }}
+{{- else }}
+  DRUPPIE_SANDBOX_MODE: "docker"
+{{- end }}
+  DRUPPIE_SANDBOX_RUNTIME: {{ .Values.sandbox.runtime | quote }}
+  DRUPPIE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
   DRUPPIE_SANDBOX_USER: {{ .Values.global.instance | quote }}
   DRUPPIE_SANDBOX_NETWORK: "{{ .Values.global.instance }}-sandbox-net"
   DRUPPIE_SANDBOX_INET_NETWORK: "{{ .Values.global.instance }}-sandbox-inet"
