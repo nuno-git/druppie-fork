@@ -55,7 +55,8 @@ mcp = FastMCP(
 # CONFIGURATION
 # =============================================================================
 
-GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
+GITEA_INTERNAL_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
+GITEA_URL = os.getenv("GITEA_URL", GITEA_INTERNAL_URL)
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
