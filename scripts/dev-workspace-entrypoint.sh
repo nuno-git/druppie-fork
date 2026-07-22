@@ -545,6 +545,16 @@ persist_dir ".config-xfce4" ".config/xfce4"
 # XFCE session cache
 persist_dir ".cache-sessions" ".cache/sessions"
 
+# Setup .bashrc.d for persisting env vars to desktop terminals
+OPENCODE_BASHRC_D="${HOME}/.bashrc.d"
+install -d -m 755 "${OPENCODE_BASHRC_D}"
+# Ensure .bashrc sources .bashrc.d/ (idempotent — only adds once).
+if ! grep -q 'source.*\.bashrc\.d' "${HOME}/.bashrc" 2>/dev/null; then
+    printf '\nfor f in "${HOME}/.bashrc.d/"*; do [ -r "$f" ] && source "$f"; done\n' >> "${HOME}/.bashrc"
+fi
+OPENCODE_ENV_FILE="${OPENCODE_BASHRC_D}/opencode-env"
+: > "${OPENCODE_ENV_FILE}"  # clear stale entries on restart
+
 # Persist CLAUDE_CONFIG_DIR to .bashrc.d so desktop terminals inherit it
 printf 'export CLAUDE_CONFIG_DIR="%s"\n' "${CLAUDE_CONFIG_DIR}" >> "${OPENCODE_ENV_FILE}"
 
@@ -567,17 +577,6 @@ fi
 #   ZAI_API_KEY    -> ZHIPU_API_KEY            (Z.AI + Z.AI Coding Plan share it)
 #   FOUNDRY_API_KEY -> AZURE_API_KEY + AZURE_RESOURCE_NAME   (Azure / Foundry)
 #
-# Also persist the aliases to ~/.bashrc.d/opencode-env so desktop terminals
-# (which are not direct children of this entrypoint) inherit them.
-OPENCODE_BASHRC_D="${HOME}/.bashrc.d"
-install -d -m 755 "${OPENCODE_BASHRC_D}"
-# Ensure .bashrc sources .bashrc.d/ (idempotent — only adds once).
-if ! grep -q 'source.*\.bashrc\.d' "${HOME}/.bashrc" 2>/dev/null; then
-    printf '\nfor f in "${HOME}/.bashrc.d/"*; do [ -r "$f" ] && source "$f"; done\n' >> "${HOME}/.bashrc"
-fi
-OPENCODE_ENV_FILE="${OPENCODE_BASHRC_D}/opencode-env"
-: > "${OPENCODE_ENV_FILE}"  # clear stale entries on restart
-
 if [ -n "${ZAI_API_KEY:-}" ]; then
     export ZHIPU_API_KEY="${ZAI_API_KEY}"
     printf 'export ZHIPU_API_KEY="%s"\n' "${ZAI_API_KEY}" >> "${OPENCODE_ENV_FILE}"
