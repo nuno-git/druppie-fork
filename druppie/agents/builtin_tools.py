@@ -274,7 +274,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             "name": "make_pdf_document",
             "description": (
                 "Compile a native Typst source file (.typ) into a professionally formatted PDF "
-                "using the Rijnland corporate identity template. "
+                "using the corporate identity template the .typ file imports. "
                 "The agent must first write the .typ file to the workspace, "
                 "then call this tool with the workspace-relative path. "
                 "The resulting PDF is attached to the chat and a download link is returned."

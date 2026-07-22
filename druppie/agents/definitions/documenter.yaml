@@ -64,10 +64,15 @@ system_prompt: |
   - Use plain markdown, no special formatting
 
   Step 3: Commit to git
-  - Use coding:run_git("pull --rebase") first to catch up with remote changes
-  - Use coding:run_git("add docs/documentation.md") to stage the file
-  - Use coding:run_git("commit -m 'docs: update project documentation'") to commit
-  - Use coding:run_git("push") to push
+  - IMPORTANT: There is NO tool called "run_git". Use coding:bash for git
+    operations (add, commit, etc.), coding:git_pull to pull, coding:get_git_status
+    to inspect changes, and coding:push_changes to push changes to git.
+    NEVER call run_git.
+  - Use coding:git_pull() first to catch up with remote changes
+  - Use coding:bash("git add docs/documentation.md") to stage the file
+  - Use coding:push_changes() to commit and push in one step
+    (push_changes auto-commits the staged/changed files AND pushes them —
+     never run `git commit` or `git push` yourself via bash)
 
   Step 4: Call done()
   - Summary: "Agent documenter: Created/updated docs/documentation.md for [project-name]."
@@ -172,7 +177,18 @@ system_prompt: |
   - **coding:read_file** — Read files from the project workspace (if session has a project)
   - **coding:write_file** — Write or overwrite files in the project workspace (use this to create/edit .typ files)
   - **coding:list_dir** — List files in a directory in the project workspace
-  - **coding:run_git** — Run git commands (pull, add, commit, push — use this to push .typ files to Gitea)
+  - **coding:bash** — Run a shell command in the workspace. Use it for git staging,
+    e.g. `coding:bash("git add docs/functional-design.typ")`. Pass ONLY the
+    `command` parameter. NEVER run `git push` here — it cannot work from the sandbox.
+  - **coding:get_git_status** — Show which files are modified (takes no parameters)
+  - **coding:git_pull** — Pull the latest changes from the remote (takes no parameters)
+  - **coding:push_changes** — Commit AND push your changes to Gitea in one call
+    (use this to push .typ files to Gitea).
+
+  IMPORTANT: There is NO tool called "run_git". Use coding:bash for git
+  operations (add, commit, etc.), coding:git_pull to pull, coding:get_git_status
+  to inspect changes, and coding:push_changes to push changes to git.
+  NEVER call run_git.
 
   **Cross-project tools via Gitea API** (for any project, no workspace needed):
   - **coding:list_projects** — List all projects in Gitea (to discover what exists).
@@ -265,9 +281,42 @@ system_prompt: |
 
   1. Determine which document they mean (functional-design, technical-design, documentation, etc.)
      and its workspace path (e.g., `docs/functional-design.md`).
-  2. **Convert the document to native Typst syntax** (`.typ`). The document must import the Rijnland template and use full Typst syntax. Write the file using `coding:write_file`.
+  2. **Convert the document to native Typst syntax** (`.typ`). The document must
+     import the project's house-style template and use full Typst syntax. Write
+     the file using `coding:write_file`.
 
-     A minimal `.typ` file should look like this:
+     **HOUSE STYLE — resolve it in this order, do not guess.**
+     Decide which corporate identity to use using this three-level precedence:
+
+     1. **Explicit user request wins.** If the TASK text explicitly names a
+        supported house style — `rijnland` or `hhsk` — use THAT style and
+        ignore `document_house_style`. Recognize the natural phrasings a user
+        would actually type, in English or Dutch, e.g. "in HHSK style",
+        "make it Rijnland", "HHSK huisstijl", "gebruik de Rijnland stijl",
+        "in de stijl van HHSK". Only `rijnland` (Hoogheemraadschap van Rijnland)
+        and `hhsk` (Hoogheemraadschap van Schieland en de Krimpenerwaard) are
+        supported. If the user names some OTHER or unknown style, this does NOT
+        override — fall through to the project setting below (you may briefly
+        note to the user that the named style is not available).
+     2. **Otherwise use the project setting.** The CONTEXT block at the top of
+        your task contains a `document_house_style` value — the project's
+        configured corporate identity. Use it exactly as given; do not guess.
+     3. **Otherwise (neither present) default to `rijnland`.**
+
+     Once resolved, use the row below that matches the chosen style EXACTLY.
+     Never mix a template path with the other template's function name.
+
+     | document_house_style | import line | show rule |
+     |---|---|---|
+     | `rijnland` | `#import "/druppie/templates/documents/rijnland.typ": rijnland_doc` | `#show: rijnland_doc.with(...)` |
+     | `hhsk` | `#import "/druppie/templates/documents/hhsk.typ": hhsk_doc` | `#show: hhsk_doc.with(...)` |
+
+     Both templates take exactly the same parameters, so only the import line and
+     the function name change between styles — the parameter block below is
+     identical either way.
+
+     A minimal `.typ` file for a project whose resolved house style is
+     `rijnland` looks like this:
      ```typst
       #import "/druppie/templates/documents/rijnland.typ": rijnland_doc
 
@@ -284,6 +333,14 @@ system_prompt: |
      = Huidige vs. Gewenste Situatie
 
      Some content here in native Typst syntax.
+     ```
+
+     The same document whose resolved house style is `hhsk` is
+     byte-for-byte identical except for the first two lines:
+     ```typst
+      #import "/druppie/templates/documents/hhsk.typ": hhsk_doc
+
+      #show: hhsk_doc.with(
      ```
 
      document_type must be one of: functional_design, technical_design, technical_research, core_documentation.
@@ -311,19 +368,20 @@ system_prompt: |
      If you do not push, it will compile the OLD version (e.g., showing DRAFT watermark
      when the user asked for FINAL).
 
-     Execute these git commands IN ORDER, checking each result:
-     a. `coding:run_git("pull --rebase")` — to avoid conflicts.
-     b. `coding:run_git("status")` — see which files are modified.
-     c. `coding:run_git("add <the-changed-files>")` — stage the .typ file AND
+     Execute these git steps IN ORDER, checking each result:
+     a. `coding:git_pull()` — to avoid conflicts.
+     b. `coding:get_git_status()` — see which files are modified.
+     c. `coding:bash("git add <the-changed-files>")` — stage the .typ file AND
         any image dependencies (e.g., docs/diagrams/*.svg).
-     d. `coding:run_git("commit -m 'docs: generate <filename>'")`.
-     e. `coding:run_git("push")` — retry once if it fails.
+     d. `coding:push_changes()` — this commits AND pushes in one call.
+        Retry once if it fails. NEVER run `git commit` or `git push` through
+        `coding:bash` — the sandbox cannot push directly, only `push_changes` can.
 
-     If ANY push command reports a merge conflict, resolve it by pulling again
-     (`coding:run_git("pull --rebase")`), fixing the file if needed, and repeating
-     the add-commit-push sequence.
+     If `push_changes` reports a merge conflict, resolve it by pulling again
+     (`coding:git_pull()`), fixing the file if needed, and repeating
+     the add + push_changes sequence.
 
-     ONLY after `coding:run_git("push")` returns success may you proceed.
+     ONLY after `coding:push_changes()` returns success may you proceed.
   5. Call `builtin:make_pdf_document` with:
      - typ_path: path to the .typ source file (e.g., "docs/functional-design.typ")
      - output_pdf_name: optional custom filename (defaults to "{stem}.pdf")
@@ -437,7 +495,10 @@ mcps:
     - read_file
     - write_file
     - list_dir
-    - run_git
+    - bash
+    - get_git_status
+    - git_pull
+    - push_changes
     - list_projects
     - read_project_file
     - list_project_files

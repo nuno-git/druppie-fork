@@ -1164,7 +1164,14 @@ The choice between ArchiMate and Mermaid, plus the full element/relationship voc
 
 ## Document Formatter (PDF Generation)
 
-Druppie converts agent-authored **Typst** (`.typ`) source files into professionally formatted PDFs that follow the Rijnland corporate identity (Huisstijlhandboek). Agents write native Typst directly — the old Markdown pipeline was replaced in Phase 2.
+Druppie converts agent-authored **Typst** (`.typ`) source files into professionally formatted PDFs that follow an official waterschap corporate identity (Huisstijlhandboek). Agents write native Typst directly — the old Markdown pipeline was replaced in Phase 2.
+
+Two house styles are supported, selectable **per project**:
+
+- **Rijnland** — Hoogheemraadschap van Rijnland. The default.
+- **HHSK** — Hoogheemraadschap van Schieland en de Krimpenerwaard. New.
+
+Both styles implement the same document types, title page, watermark, table of contents, tables, code blocks, blockquotes and diagram embedding, so a project renders identically-structured documents regardless of which brand it uses — only the visual identity (palette, fonts, logo, layout) differs.
 
 ### Supported Document Types
 
@@ -1177,7 +1184,7 @@ Druppie converts agent-authored **Typst** (`.typ`) source files into professiona
 
 ### How It Works
 
-1. The **Documenter agent** writes a native `.typ` file using the Rijnland template (`#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`).
+1. The **Documenter agent** writes a native `.typ` file that imports the project's house-style template. It reads the project's configured style from its context (`document_house_style`) and imports the matching module — `rijnland.typ:rijnland_doc` or `hhsk.typ:hhsk_doc` — automatically; the author never has to choose.
 2. The agent **pushes to Gitea** — this is mandatory because `PdfRenderService` reads source from Gitea, not the local workspace.
 3. The agent calls `builtin:make_pdf_document` with the `.typ` path.
 4. `PdfRenderService.get_or_create_pdf()` fetches the source from Gitea, builds a cache key from `(project_id, typ_path, git_blob_sha)`, and checks the `pdf_renders` table.
@@ -1185,7 +1192,18 @@ Druppie converts agent-authored **Typst** (`.typ`) source files into professiona
    - **Cache miss** → `DocumentFormatterService.compile_typ()` compiles via Typst CLI subprocess; the PDF is written to `/app/workspace/uploads/pdf-cache/` and the cache record is inserted.
 5. A `MessageAttachment` record is created so the frontend serves the PDF via `/api/attachments/{id}`.
 
-### Corporate Identity Applied
+### Choosing a House Style
+
+House style is a **per-project setting** that defaults to Rijnland. It is changed via the API:
+
+```
+PUT /api/projects/{id}/house-style
+{ "house_style": "rijnland" | "hhsk" }
+```
+
+There is **no frontend UI yet** — the style is API-only for now. Once set, the documenter agent uses the project's style automatically on the next PDF export; no other action is needed.
+
+### Corporate Identity — Rijnland
 
 - **Primary color:** `#0065BD` (Rijnland blue, PMS 300)
 - **Typography:** Neusa Next Pro (brand headings) with Lato as fallback. Body text is light-weight; headings are bold.
@@ -1194,6 +1212,18 @@ Druppie converts agent-authored **Typst** (`.typ`) source files into professiona
 - **Layout:** Grid-based margins (25mm sides, 32mm bottom), subtle blue header line on page 2+.
 - **Watermark:** Semi-transparent "DRAFT" or "Niet-definitief — ter goedkeuring" in the foreground layer when `include_watermark == true && status != "FINAL"`. Suppressed entirely when `status == "FINAL"`.
 - **Footer:** Full-bleed dijk-en-sloot shape above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page/total". Footer appears on all pages except the title page.
+
+### Corporate Identity — HHSK
+
+The HHSK style is built directly from the official *Huisstijlhandboek HHSK*:
+
+- **Palette:** a donkerblauw/blauw/groen/oranje brand palette (plus light 40% tints), sampled byte-exact from the vector logo source. Default text colour is donkerblauw, not black, per the handbook.
+- **Typography:** **Ruda** — the HHSK house font (family name `Ruda`, weights 400–900, no italic). Body is Ruda Regular; headings are Ruda Black.
+- **Gradient headings:** large title headings use a blue (or green) brand gradient; the handbook restricts gradients to headings only, never as a page or panel background.
+- **Logo placement:** the full-colour logo sits top-left inside the outer band of an **8-part page grid** with 7mm mandatory clear space, always on a white background.
+- **Accessibility:** every colour pairing is checked against the handbook's normative contrast matrix; combinations not listed there are treated as forbidden.
+- **Pay-off:** "Droge voeten en schoon water" on the title page.
+- **Watermark, TOC, tables, code blocks, blockquotes:** implemented to the same feature set as Rijnland, styled in the HHSK palette.
 
 ### Template Features
 
@@ -1204,7 +1234,7 @@ Druppie converts agent-authored **Typst** (`.typ`) source files into professiona
 - **Mermaid diagrams:** Rendered inline by the `@preview/mmdr:0.2.2` Typst package (no Chromium/Node.js). Agents embed them with `#mermaid("...")`.
 - **ArchiMate diagrams:** The `archimate:save_model` MCP tool exports each view to SVG via pure-Python `svg_export.py`. Agents embed them in Typst with `#image("docs/diagrams/view-name.svg")`.
 - **Section breaks:** Optional page break before every H1 (`section_breaks: true`).
-- **Fonts:** Lato (Google Fonts, system fallback) + Neusa Next Pro (brand font, installed in `assets/fonts/`). Verified with `typst fonts`.
+- **Fonts:** Lato (Google Fonts, system fallback) + Neusa Next Pro (Rijnland brand font) + Ruda (HHSK house font), all installed under `assets/fonts/` and auto-registered. Verified with `typst fonts`.
 
 ### Current Phase
 

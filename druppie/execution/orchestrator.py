@@ -584,6 +584,9 @@ class Orchestrator:
             if project:
                 context["project_id"] = str(project.id)
                 context["project_name"] = project.name
+                # House style drives which Typst template the documenter
+                # imports. Injected explicitly so the agent never has to guess.
+                context["document_house_style"] = project.house_style.value
                 # Add git repo info if available
                 if project.repo_name:
                     context["repo_name"] = project.repo_name

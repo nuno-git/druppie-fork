@@ -619,3 +619,16 @@ Security review findings from the Entra ID broker implementation. These are know
 - Frontend "Download PDF" button in chat timeline or project page.
 
 **Priority:** Medium — agent-driven PDF generation works; REST API purely adds convenience.
+
+#### HHSK house style — follow-ups
+
+The HHSK corporate identity (`druppie/templates/documents/hhsk.typ`) is live alongside Rijnland, selectable per project via `PUT /api/projects/{id}/house-style`. Known gaps, recorded honestly:
+
+- **No frontend UI to set house style** — the style is API-only for now. A project setting / dropdown is needed.
+- **Title-page shape is a placeholder** — the graphic shape element on the cover is a plain bleeding rounded rect. The real vector shapes exist in HHSK's `Vormelementen-2024.ai` shape library, which is not in this repo (re-request it from HHSK), and are not yet wired as SVG. The user has been asked to supply SVG shape assets.
+- **White logo and beeldmerk are wired but unplaced** — `logo_white.png` (diapositief) and `Beeldmerk.svg` are registered as available assets but not used in the default report layout. The only coloured surface (the title-page shape) is a light 40% tint, on which white/colour marks fail the accessibility contrast matrix. They become usable once a compliant coloured surface (e.g. a donkerblauw chapter divider or cover photo) is designed.
+- **Unsigned-off type scale / layout values** — several point sizes, leading, table padding, gradient angle, etc. are `// CHOICE:` decisions in `hhsk.typ` that the Huisstijlhandboek does not specify. Pending brand sign-off before treating them as brand-approved.
+- **Two brand-source ambiguities flagged to HHSK** (mediateam@hhsk.nl): (1) the handbook contradicts itself on logo placement between pages 2 and 3 — resolved to top-left per p2 plus p3's own artwork; (2) the handbook's printed hex for the two 40% tints differs from the vector source — the `.ai` values were used. Both need confirmation.
+- **Ruda has no italic** — emphasis maps to a heavier weight (SemiBold/Bold) rather than a synthesised oblique, which would be off-brand.
+
+**Unrelated baseline note:** roughly ~50 test-suite failures exist at baseline, independent of the HHSK work. Recorded here so the HHSK feature is not blamed for pre-existing red.
