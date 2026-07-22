@@ -461,15 +461,21 @@ async def _create_sandbox_container(
         repo_owner = DRUPPIE_CORE_REPO_OWNER
         effective_gitea_url = DRUPPIE_CORE_GITEA_URL
     else:
-        effective_gitea_url = GITEA_URL
+        effective_gitea_url = GITEA_INTERNAL_URL if SANDBOX_MODE == "k8s" else GITEA_URL
 
     # ── K8s mode: use agent-sandbox SDK ──────────────────────────────────
+    # In k8s mode the host-side clone + push run from the workspace pod (or
+    # module-coding pod), which can only reach the *internal* Gitea service
+    # (ClusterIP). The external Gitea URL is unreachable from inside the cluster
+    # (blocked by NetworkPolicy / no route). Use GITEA_INTERNAL_URL for all
+    # in-cluster git operations. The external URL is only needed for the
+    # update_core scope (aigit.waterschap.org), which has its own CNP.
     if SANDBOX_MODE == "k8s":
         scope = git_scope or "current_project"
         clone_url = None
         branch = "main"
         if scope == "current_project" and repo_name:
-            clone_url = _get_gitea_clone_url(repo_name, repo_owner)
+            clone_url = _get_gitea_clone_url(repo_name, repo_owner, GITEA_INTERNAL_URL)
         elif scope == "update_core":
             clone_url = _get_gitea_clone_url(DRUPPIE_CORE_REPO_NAME, DRUPPIE_CORE_REPO_OWNER, DRUPPIE_CORE_GITEA_URL)
             branch = DRUPPIE_CORE_REPO_BRANCH
