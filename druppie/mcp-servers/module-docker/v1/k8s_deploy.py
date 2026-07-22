@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration (env, with branch-env-compatible fallbacks)
 # ---------------------------------------------------------------------------
-DEPLOY_MODE = os.getenv("DRUPPIE_SANDBOX_MODE", "docker")
+DEPLOY_MODE = "k8s"  # Always GitOps mode
 
 GITOPS_URL = os.getenv(
     "USERAPPS_GITOPS_URL", os.getenv("BRANCH_ENV_GITOPS_URL", "https://aigit.waterschap.org")

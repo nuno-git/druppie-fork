@@ -1,5 +1,4 @@
-{{- if .Values.agentSandbox.enabled }}
-# READ-ONLY cluster RBAC for module-docker in K8s mode (user-app GitOps).
+# READ-ONLY cluster RBAC for module-docker (user-app GitOps).
 #
 # module-docker deploys user apps by committing a Flux GitRepository+HelmRelease
 # to the GitOps repo (ai/k8s) via the Gitea API — Flux does the actual deploys.
@@ -50,4 +49,3 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "druppie.fullname" . }}-module-docker
     namespace: {{ .Release.Namespace }}
-{{- end }}

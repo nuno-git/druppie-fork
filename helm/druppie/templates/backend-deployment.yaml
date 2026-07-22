@@ -167,10 +167,6 @@ spec:
               mountPath: /app/workspace
             - name: sandbox-bundles
               mountPath: /app/sandbox_bundles
-            {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
-            {{- end }}
             {{- if and .Values.backend.branchEnvDeployer.enabled .Values.backend.branchEnvDeployer.gitops.caConfigMap }}
             - name: gitops-ca
               mountPath: /app/gitops-ca
@@ -205,12 +201,6 @@ spec:
         - name: sandbox-bundles
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-sandbox-bundles
-        {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
-        {{- end }}
         {{- if and .Values.backend.branchEnvDeployer.enabled .Values.backend.branchEnvDeployer.gitops.caConfigMap }}
         # Private CA for the GitOps Gitea server (branch-environments deployer).
         - name: gitops-ca

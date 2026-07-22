@@ -28,9 +28,7 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
-      {{- if .Values.agentSandbox.enabled }}
       serviceAccountName: {{ include "druppie.fullname" . }}-module-coding
-      {{- end }}
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       initContainers:
         - name: wait-for-gitea
@@ -57,10 +55,7 @@ spec:
           env:
             - name: MCP_PORT
               value: {{ .Values.modules.coding.port | quote }}
-            {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
-            - name: DOCKER_HOST
-              value: "unix:///var/run/docker.sock"
-            {{- end }}
+            
           envFrom:
             - configMapRef:
                 name: {{ include "druppie.fullname" . }}-config
@@ -80,10 +75,6 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspaces
-            {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
-            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -113,10 +104,4 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
-        {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
-        {{- end }}
 {{- end }}

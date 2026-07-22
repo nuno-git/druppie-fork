@@ -24,9 +24,7 @@ spec:
         reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
-      {{- if .Values.agentSandbox.enabled }}
       serviceAccountName: {{ include "druppie.fullname" . }}-module-docker
-      {{- end }}
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
@@ -41,13 +39,8 @@ spec:
               value: {{ .Values.modules.docker.port | quote }}
             - name: DRUPPIE_URL
               value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
-            {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
-            - name: DOCKER_HOST
-              value: "unix:///var/run/docker.sock"
-            {{- end }}
-            {{- if .Values.agentSandbox.enabled }}
             {{- with .Values.modules.docker.userApps }}
-            # User-app GitOps deployer (K8s mode): module-docker commits the app's
+            # User-app GitOps deployer: module-docker commits the app's
             # Flux GitRepository+HelmRelease to the GitOps repo; Flux deploys.
             # Reads live status read-only (module-docker-rbac.yaml).
             - name: USERAPPS_GITOPS_URL
@@ -76,7 +69,6 @@ spec:
             - name: HARBOR_PROJECT
               value: {{ .harbor.project | quote }}
             {{- end }}
-            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "druppie.fullname" . }}-config
@@ -96,9 +88,10 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspaces
-            {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
+            {{- if .Values.modules.docker.userApps.gitops.caConfigMap }}
+            - name: gitops-ca
+              mountPath: /app/gitops-ca
+              readOnly: true
             {{- end }}
           livenessProbe:
             httpGet:
@@ -129,10 +122,9 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
-        {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
+        {{- if .Values.modules.docker.userApps.gitops.caConfigMap }}
+        - name: gitops-ca
+          configMap:
+            name: {{ .Values.modules.docker.userApps.gitops.caConfigMap }}
         {{- end }}
 {{- end }}

@@ -174,12 +174,7 @@ spec:
               mountPath: /etc/aigit-ca
               readOnly: true
             {{- end }}
-            {{- $needDocker := or (has "coding" $.Values.devWorkspace.embedModules) (has "docker" $.Values.devWorkspace.embedModules) }}
-            {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
-            # module-coding / module-docker talk to the host Docker daemon.
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
-            {{- end }}
+            
           resources:
             {{- toYaml .Values.devWorkspace.resources | nindent 12 }}
           readinessProbe:
@@ -248,14 +243,7 @@ spec:
           configMap:
             name: {{ .Values.devWorkspace.caConfigMap }}
         {{- end }}
-        {{- $needDocker := or (has "coding" .Values.devWorkspace.embedModules) (has "docker" .Values.devWorkspace.embedModules) }}
-        {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
-        # Host Docker socket for embedded module-coding / module-docker.
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
-        {{- end }}
+        
       {{- with .Values.devWorkspace.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

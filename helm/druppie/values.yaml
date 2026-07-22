@@ -120,8 +120,6 @@ backend:
       memory: 1Gi
       cpu: 2000m
   devMode: false
-  dockerSocket:
-    enabled: false
   serviceAccount:
     create: true
     name: ''
@@ -331,12 +329,10 @@ modules:
       limits:
         memory: 2Gi
         cpu: 2000m
-    # User-application GitOps deployer (active in K8s mode, i.e. when
-    # agentSandbox.enabled → DRUPPIE_SANDBOX_MODE=k8s). module-docker deploys
-    # user apps by committing a Flux GitRepository+HelmRelease to the GitOps
-    # repo (clusters/user-apps/<slug>/); Flux reconciles. The module only needs
+    # User-application GitOps deployer. module-docker deploys user apps by
+    # committing a Flux GitRepository+HelmRelease to the GitOps repo
+    # (clusters/user-apps/<slug>/); Flux reconciles. The module only needs
     # a Gitea token (push to ai/k8s) + read-only cluster access for status.
-    # Env/RBAC/egress templates are gated on agentSandbox.enabled.
     userApps:
       gitops:
         url: https://aigit.waterschap.org
