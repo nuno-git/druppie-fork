@@ -1030,7 +1030,7 @@ The **Agent Testing Tool** (available at `/tools/developer` in the UI) lets user
 ### Key Characteristics
 
 - **No session lifecycle** — runs are not full chat sessions; they execute directly and report results
-- **Polling, not WebSocket** — consistent with the existing developer page pattern
+- **WebSocket-based** — uses first-message auth over TLS for real-time status updates
 - **Subagents supported** — agents with `role: subagent` can still be run (shown with a warning badge), and they can call `done()` and `subagents()` normally
 - **Git scope respected** — the project selector, core update badge, and no-sandbox badge reflect the agent's YAML configuration
 - **Run history** — past runs are listed as history entries filtered by session title prefix `"Agent Test: "`

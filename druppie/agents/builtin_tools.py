@@ -54,6 +54,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked",
                     },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
+                    },
                 },
                 "required": ["question"],
             },
@@ -79,6 +84,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "context": {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
                     },
                 },
                 "required": ["question", "choices"],
@@ -111,6 +121,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "context": {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked.",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
                     },
                 },
                 "required": ["expert_role", "question"],
@@ -145,6 +160,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "context": {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked.",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
                     },
                 },
                 "required": ["expert_role", "question", "choices"],

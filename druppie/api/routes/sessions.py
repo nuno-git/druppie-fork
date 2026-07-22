@@ -88,6 +88,8 @@ async def list_sessions(
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: UUID,
+    since_sequence: int | None = Query(None, description="Only return timeline entries after this sequence number"),
+    exclude: str | None = Query(None, description="Comma-separated fields to exclude: llm_raw,tool_results,subagent_runs,compaction_events,resume_contexts"),
     service: SessionService = Depends(get_session_service),
     user: dict = Depends(get_current_user),
 ) -> SessionDetail:
@@ -116,10 +118,16 @@ async def get_session(
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
 
+    exclude_set: set[str] | None = None
+    if exclude:
+        exclude_set = {x.strip() for x in exclude.split(",") if x.strip()}
+
     detail = service.get_detail(
         session_id=session_id,
         user_id=user_id,
         user_roles=user_roles,
+        since_sequence=since_sequence,
+        exclude=exclude_set,
     )
 
     logger.info("session_retrieved", session_id=str(session_id), user_id=str(user_id))

@@ -49,6 +49,7 @@ import structlog
 from druppie.agents.prompt_builder import DEFAULT_LANGUAGE
 from druppie.core.gitea import get_gitea_client
 from druppie.core.language_detection import LanguageDetector
+from druppie.core.session_event_manager import get_event_manager
 from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
 from druppie.execution.human_input import HumanInput
 from druppie.llm.base import clean_llm_error
@@ -225,7 +226,7 @@ class Orchestrator:
                 self._notify_translation_failed(current_session_id)
 
         # Step 3b: Save user message to the timeline (after translation so we can store both versions)
-        message_id = self.execution_repo.create_message(
+        user_message = self.execution_repo.create_message(
             session_id=current_session_id,
             role="user",
             content=message,
@@ -234,11 +235,17 @@ class Orchestrator:
         )
         next_seq += 1
 
+        _event_mgr = get_event_manager()
+        await _event_mgr.broadcast_message_created(
+            session_id=current_session_id,
+            message=user_message,
+        )
+
         # Step 3c: Link uploaded attachments to the user message
         attachment_context = ""
         if attachment_ids and self.attachment_repo:
             self.attachment_repo.link_to_message(
-                attachment_ids, message_id, current_session_id,
+                attachment_ids, user_message.id, current_session_id,
             )
             attachments = self.attachment_repo.get_by_ids(attachment_ids)
             attachment_context = self._build_attachment_context(attachments)
@@ -255,7 +262,7 @@ class Orchestrator:
             router_prompt = f"{projects_context}\n\n{conversation_history}\n\nNEW USER MESSAGE:\n{translated_message}{attachment_context}"
         else:
             router_prompt = f"{projects_context}\n\nUSER REQUEST:\n{translated_message}{attachment_context}"
-        self.execution_repo.create_agent_run(
+        router_run = self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="router",
             status=AgentRunStatus.PENDING,
@@ -263,12 +270,17 @@ class Orchestrator:
             sequence_number=next_seq,
         )
 
+        await _event_mgr.broadcast_agent_run_created(
+            session_id=current_session_id,
+            agent_run=router_run,
+        )
+
         # Planner starts with basic prompt - set_intent will update it with context
         if conversation_history:
             planner_prompt = f"{conversation_history}\n\nNEW USER MESSAGE:\n{translated_message}{attachment_context}"
         else:
             planner_prompt = f"USER REQUEST:\n{translated_message}{attachment_context}"
-        self.execution_repo.create_agent_run(
+        planner_run = self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="planner",
             status=AgentRunStatus.PENDING,
@@ -276,6 +288,11 @@ class Orchestrator:
             sequence_number=next_seq + 1,
         )
         self.execution_repo.commit()
+
+        await _event_mgr.broadcast_agent_run_created(
+            session_id=current_session_id,
+            agent_run=planner_run,
+        )
 
         # Step 6: Execute all pending runs
         # Router runs first, calls set_intent() which updates planner prompt
@@ -370,6 +387,8 @@ class Orchestrator:
         """
         logger.info("execute_pending_runs_start", session_id=str(session_id))
 
+        _event_mgr = get_event_manager()
+
         while True:
             # Check for user-initiated pause (cooperative — Stop button sets PAUSED)
             self.session_repo.db.expire_all()
@@ -386,6 +405,10 @@ class Orchestrator:
                 logger.info("execute_pending_runs_complete", session_id=str(session_id))
                 self.session_repo.update_status(session_id, SessionStatus.COMPLETED)
                 self.session_repo.commit()
+                await _event_mgr.broadcast_session_status(
+                    session_id=session_id,
+                    status=SessionStatus.COMPLETED.value,
+                )
                 await _cleanup_sandbox(str(session_id))
                 return
 
@@ -443,6 +466,10 @@ class Orchestrator:
                 else:
                     self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
                 self.session_repo.commit()
+                await _event_mgr.broadcast_session_status(
+                    session_id=session_id,
+                    status=self.session_repo.get_by_id(session_id).status,
+                )
                 logger.info(
                     "execute_pending_runs_paused",
                     session_id=str(session_id),
@@ -658,6 +685,13 @@ class Orchestrator:
         self.execution_repo.update_status(agent_run_id, AgentRunStatus.RUNNING)
         self.execution_repo.commit()
 
+        _event_mgr = get_event_manager()
+        await _event_mgr.broadcast_agent_run_updated(
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            status=AgentRunStatus.RUNNING.value,
+        )
+
         # Create and run agent
         agent = Agent(agent_id, db=self.execution_repo.db, session_id=str(session_id))
         try:
@@ -722,11 +756,22 @@ class Orchestrator:
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_TOOL)
                 self.session_repo.update_status(session_id, SessionStatus.PAUSED)
             self.execution_repo.commit()
+            await _event_mgr.broadcast_agent_run_updated(
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                status=self.execution_repo.get_by_id(agent_run_id).status.value,
+            )
             return "paused"
 
         # Completed
         self.execution_repo.update_status(agent_run_id, AgentRunStatus.COMPLETED)
         self.execution_repo.commit()
+
+        await _event_mgr.broadcast_agent_run_updated(
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            status=AgentRunStatus.COMPLETED.value,
+        )
 
         logger.info(
             "agent_run_completed",
@@ -1045,6 +1090,47 @@ class Orchestrator:
             previous_status=agent_run.status.value if hasattr(agent_run.status, 'value') else agent_run.status,
         )
 
+        # Step 4: Set status back to running
+        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+        self.execution_repo.commit()
+
+        _event_mgr = get_event_manager()
+        await _event_mgr.broadcast_agent_run_updated(
+            session_id=session_id,
+            agent_run_id=agent_run.id,
+            status=AgentRunStatus.RUNNING.value,
+        )
+
+        # Step 5: Build fresh context and continue the agent
+        context = self.build_project_context(session_id)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
+        result = await agent.continue_run(
+            session_id=session_id,
+            agent_run_id=agent_run.id,
+            context=context,
+        )
+
+        # Step 6: Handle result (correctly handles user_paused, sandbox, etc.)
+        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
+
+        if status == "completed":
+            logger.info(
+                "agent_resumed_after_approval_completed",
+                agent_run_id=str(agent_run.id),
+                agent_id=agent_run.agent_id,
+            )
+            await _event_mgr.broadcast_agent_run_updated(
+                session_id=session_id,
+                agent_run_id=agent_run.id,
+                status=AgentRunStatus.COMPLETED.value,
+            )
+            parent_chain_completed = await self._walk_parent_chain(
+                session_id, agent_run, db,
+            )
+            if parent_chain_completed:
+                await self.execute_pending_runs(session_id)
+
         return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)
 
     async def resume_after_answer(
@@ -1171,8 +1257,22 @@ class Orchestrator:
                 session_id, agent_run, question, answer, selected_choices, db,
             )
 
-        return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)
+        _event_mgr = get_event_manager()
+        await _event_mgr.broadcast_agent_run_updated(
+            session_id=session_id,
+            agent_run_id=agent_run.id,
+            status=AgentRunStatus.RUNNING.value,
+        )
 
+        # Step 5: Build fresh context and continue the agent
+        context = self.build_project_context(session_id)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
+        result = await agent.continue_run(
+            session_id=session_id,
+            agent_run_id=agent_run.id,
+            context=context,
+        )
+        return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)
     async def resume_after_entra_auth(
         self,
         session_id: UUID,
@@ -1222,6 +1322,11 @@ class Orchestrator:
                 waiting_tc.id,
                 status=ToolCallStatus.FAILED,
                 error=error_msg,
+            )
+            await _event_mgr.broadcast_agent_run_updated(
+                session_id=session_id,
+                agent_run_id=agent_run.id,
+                status=AgentRunStatus.COMPLETED.value,
             )
             db.commit()
             logger.warning(
@@ -1670,6 +1775,13 @@ class Orchestrator:
         self.execution_repo.update_status(paused_run.id, AgentRunStatus.RUNNING)
         self.execution_repo.commit()
 
+        _event_mgr = get_event_manager()
+        await _event_mgr.broadcast_agent_run_updated(
+            session_id=session_id,
+            agent_run_id=paused_run.id,
+            status=AgentRunStatus.RUNNING.value,
+        )
+
         db = self.execution_repo.db
         context = self.build_project_context(session_id)
         if user_context and context is not None:
@@ -1716,6 +1828,11 @@ class Orchestrator:
                 "agent_resumed_after_pause_completed",
                 agent_run_id=str(paused_run.id),
                 agent_id=paused_run.agent_id,
+            )
+            await _event_mgr.broadcast_agent_run_updated(
+                session_id=session_id,
+                agent_run_id=paused_run.id,
+                status=AgentRunStatus.COMPLETED.value,
             )
             parent_chain_completed = await self._walk_parent_chain(
                 session_id, paused_run, db,
@@ -1804,5 +1921,62 @@ class Orchestrator:
         # The sandbox pushed to Gitea but the shared workspace volume
         # still has the old HEAD.
         self._sync_workspace(session_id)
+
+        # Set statuses back to running
+        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+        self.execution_repo.commit()
+
+        _event_mgr = get_event_manager()
+        await _event_mgr.broadcast_agent_run_updated(
+            session_id=session_id,
+            agent_run_id=agent_run.id,
+            status=AgentRunStatus.RUNNING.value,
+        )
+
+        # Build fresh context and continue the agent
+        db = self.execution_repo.db
+        context = self.build_project_context(session_id)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
+        try:
+            result = await agent.continue_run(
+                session_id=session_id,
+                agent_run_id=agent_run.id,
+                context=context,
+            )
+        except Exception as e:
+            error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
+            self.execution_repo.update_status(
+                agent_run.id,
+                AgentRunStatus.FAILED,
+                error_message=error_msg,
+            )
+            self.execution_repo.commit()
+            raise
+
+        # Handle result — agent may pause again
+        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
+
+        if status == "completed":
+            logger.info(
+                "agent_resumed_after_sandbox_completed",
+                agent_run_id=str(agent_run.id),
+                agent_id=agent_run.agent_id,
+            )
+            await _event_mgr.broadcast_agent_run_updated(
+                session_id=session_id,
+                agent_run_id=agent_run.id,
+                status=AgentRunStatus.COMPLETED.value,
+            )
+            parent_chain_completed = await self._walk_parent_chain(
+                session_id, agent_run, db,
+            )
+            if parent_chain_completed:
+                await self.execute_pending_runs(session_id)
+            else:
+                logger.info(
+                    "parent_chain_incomplete_waiting_for_siblings",
+                    session_id=str(session_id),
+                )
 
         return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)

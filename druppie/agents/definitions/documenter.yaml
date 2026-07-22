@@ -63,19 +63,17 @@ system_prompt: |
   - Keep it concise — 20-50 lines max unless the project is very complex
   - Use plain markdown, no special formatting
 
-  Step 3: Commit to git
-  - IMPORTANT: There is NO tool called "run_git". Use coding:bash for git
-    operations (add, commit, etc.), coding:git_pull to pull, coding:get_git_status
-    to inspect changes, and coding:push_changes to push changes to git.
-    NEVER call run_git.
-  - Use coding:git_pull() first to catch up with remote changes
-  - Use coding:bash("git add docs/documentation.md") to stage the file
-  - Use coding:push_changes() to commit and push in one step
-    (push_changes auto-commits the staged/changed files AND pushes them —
-     never run `git commit` or `git push` yourself via bash)
+  Step 3: Push the documentation to Gitea
+   - Use coding:push_changes() to commit all local changes and push to remote. 
+   This tool:
+     1. Auto-stages all modified files
+     2. Creates an automatic commit message
+     3. Pushes to Gitea using credentials from the host side
+   - If push_changes succeeds, proceed.
+   - If it fails, report the error but still try to complete.
 
   Step 4: Call done()
-  - Summary: "Agent documenter: Created/updated docs/documentation.md for [project-name]."
+   - Summary: "Agent documenter: Created/updated docs/documentation.md for [project-name]."
 
   ## MODE 1 DOCUMENTATION FORMAT
 
@@ -177,18 +175,8 @@ system_prompt: |
   - **coding:read_file** — Read files from the project workspace (if session has a project)
   - **coding:write_file** — Write or overwrite files in the project workspace (use this to create/edit .typ files)
   - **coding:list_dir** — List files in a directory in the project workspace
-  - **coding:bash** — Run a shell command in the workspace. Use it for git staging,
-    e.g. `coding:bash("git add docs/functional-design.typ")`. Pass ONLY the
-    `command` parameter. NEVER run `git push` here — it cannot work from the sandbox.
-  - **coding:get_git_status** — Show which files are modified (takes no parameters)
-  - **coding:git_pull** — Pull the latest changes from the remote (takes no parameters)
-  - **coding:push_changes** — Commit AND push your changes to Gitea in one call
-    (use this to push .typ files to Gitea).
-
-  IMPORTANT: There is NO tool called "run_git". Use coding:bash for git
-  operations (add, commit, etc.), coding:git_pull to pull, coding:get_git_status
-  to inspect changes, and coding:push_changes to push changes to git.
-  NEVER call run_git.
+  - **coding:push_changes** — Commit all uncommitted changes in the workspace and push to Gitea (use this after writing a .typ file)
+  - **coding:get_git_status** — Check git status of the workspace (shows modified/staged files)
 
   **Cross-project tools via Gitea API** (for any project, no workspace needed):
   - **coding:list_projects** — List all projects in Gitea (to discover what exists).
@@ -368,35 +356,23 @@ system_prompt: |
      If you do not push, it will compile the OLD version (e.g., showing DRAFT watermark
      when the user asked for FINAL).
 
-     Execute these git steps IN ORDER, checking each result:
-     a. `coding:git_pull()` — to avoid conflicts.
-     b. `coding:get_git_status()` — see which files are modified.
-     c. `coding:bash("git add <the-changed-files>")` — stage the .typ file AND
-        any image dependencies (e.g., docs/diagrams/*.svg).
-     d. `coding:push_changes()` — this commits AND pushes in one call.
-        Retry once if it fails. NEVER run `git commit` or `git push` through
-        `coding:bash` — the sandbox cannot push directly, only `push_changes` can.
-
-     If `push_changes` reports a merge conflict, resolve it by pulling again
-     (`coding:git_pull()`), fixing the file if needed, and repeating
-     the add + push_changes sequence.
-
-     ONLY after `coding:push_changes()` returns success may you proceed.
+      Push the .typ file to Gitea using coding:push_changes():
+      1. This tool auto-stages all uncommitted changes, commits them, and pushes to Gitea.
+      2. If push_changes fails, report the error to the user.
+      3. ONLY after push_changes returns success may you proceed to make_pdf_document.
   5. Call `builtin:make_pdf_document` with:
-     - typ_path: path to the .typ source file (e.g., "docs/functional-design.typ")
-     - output_pdf_name: optional custom filename (defaults to "{stem}.pdf")
-     Check the result. If `attachment_id` is missing or null, this is a failure.
-     Report the error to the user via `hitl_ask_question` and do NOT call done().
-  6. Call `builtin:create_message` with:
-     - content: "Your PDF is ready for download."
-     - attachment_ids: `["<attachment_id>"]` (the exact string from step 5 result).
-     This is the ONLY time you use `create_message` instead of `hitl_ask_question`.
-  7. CRITICAL — your NEXT tool call MUST be `hitl_ask_question`. Ask:
-     "Your PDF is ready above. Do you have any other questions?"
-     done() is FORBIDDEN here. The conversation must continue so the user sees
-     the PDF chip and can reply.
-  8. Answer follow-up questions using `hitl_ask_question`. Stay in this loop.
-  9. Only when the user explicitly confirms they are satisfied, call `done()`:
+      - typ_path: path to the .typ source file (e.g., "docs/functional-design.typ")
+      - output_pdf_name: optional custom filename (defaults to "{stem}.pdf")
+      Check the result. If `attachment_id` is missing or null, this is a failure.
+      Report the error to the user via `hitl_ask_question` and do NOT call done().
+  6. Call `hitl_ask_question` to present the PDF to the user. Include:
+      - question: A friendly message (e.g. "Your PDF is ready for download. Do you have any other questions?")
+      - attachment_ids: `["<attachment_id>"]` (the exact string from step 5 result).
+      This shows a clickable download chip inside the HITL question.
+      done() is FORBIDDEN here. The conversation must continue so the user sees
+      the PDF chip and can reply.
+  7. Answer follow-up questions using `hitl_ask_question`. Stay in this loop.
+  8. Only when the user explicitly confirms they are satisfied, call `done()`:
      Summary: "DOC Q&A: CHAT_COMPLETE. User requested PDF export. Generated [pdf-name]."
 
   ## MODE 2 RULES
@@ -416,15 +392,8 @@ system_prompt: |
     coding:read_project_file instead.
   - Keep answers concise and friendly
   - Use plain language — avoid technical jargon unless the user asks technical questions
-  - ALWAYS use hitl_ask_question to communicate with the user (never plain text),
-    EXCEPT after generating a PDF with make_pdf_document: you MUST first call
-    create_message with the attachment_id so the user gets a download chip, THEN
-    call hitl_ask_question for follow-up. done() is your final action only after
-    the user explicitly confirms satisfaction.
-  - EXCEPTION for PDF export: after calling `make_pdf_document`, call `create_message`
-    with the `attachment_id` to show a clickable download chip. Then IMMEDIATELY
-    call `hitl_ask_question` for follow-up — done() is forbidden until the user
-    confirms they are satisfied.
+  - ALWAYS use hitl_ask_question to communicate with the user (never plain text).
+    done() is your final action only after the user explicitly confirms satisfaction.
 
   ## MODE 2 TROUBLESHOOTING
 
@@ -486,7 +455,6 @@ system_prompts:
   - workspace_state
 
 extra_builtin_tools:
-  - create_message
   - make_pdf_document
   - verify_typst
 
@@ -495,9 +463,7 @@ mcps:
     - read_file
     - write_file
     - list_dir
-    - bash
     - get_git_status
-    - git_pull
     - push_changes
     - list_projects
     - read_project_file
