@@ -315,6 +315,7 @@ def build_helmrelease_yaml(
             "secretsSource": secrets_source,
             "gitBranch": branch,
             "codeServer": {"devHost": _workspace_host(host)},
+            "caConfigMap": "aigit-ca",
         },
     }
     if recovery_mode:
@@ -437,7 +438,43 @@ def _workspace_host(host: str) -> str:
     return f"{label}-dev.{rest}" if rest else f"{label}-dev"
 
 
-_ENV_FILES = ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml", "externalsecrets.yaml")
+def _read_aigit_ca() -> str | None:
+    """Read the corporate CA chain from the mounted file (if available)."""
+    if GITOPS_CA and Path(GITOPS_CA).is_file():
+        return Path(GITOPS_CA).read_text()
+    return None
+
+
+def build_aigit_ca_configmap_yaml(slug: str) -> str | None:
+    """Build the aigit-ca ConfigMap YAML for a branch env namespace.
+
+    Returns None if the CA chain is not available (local dev).
+    """
+    ca_chain = _read_aigit_ca()
+    if not ca_chain:
+        return None
+    return _dump(
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "aigit-ca",
+                "namespace": f"druppie-{slug}",
+            },
+            "data": {
+                "chain.pem": ca_chain,
+            },
+        }
+    )
+
+
+_ENV_FILES = (
+    "namespace.yaml",
+    "gitrepository.yaml",
+    "helmrelease.yaml",
+    "externalsecrets.yaml",
+    "configmap-aigit-ca.yaml",
+)
 
 
 # -----------------------------------------------------------------------------
@@ -1059,6 +1096,17 @@ class BranchEnvironmentService:
                 "content": build_externalsecrets_yaml(slug),
             },
         ]
+        # Corporate CA ConfigMap — lets curl/httpx reach aigit.waterschap.org
+        # from inside the branch env without --insecure.
+        ca_cm = build_aigit_ca_configmap_yaml(slug)
+        if ca_cm:
+            files.append(
+                {
+                    "operation": "create",
+                    "path": self._env_path(slug, "configmap-aigit-ca.yaml"),
+                    "content": ca_cm,
+                }
+            )
         await self.gitea.change_files(
             f"branch-env: deploy {namespace} (branch {branch}, by {owner_id})", files
         )

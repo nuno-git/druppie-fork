@@ -260,6 +260,11 @@ devWorkspace:
   gitSslNoVerify: true
   # Optional K8s Secret (with key git-token) injected as DRUPPIE_GIT_TOKEN.
   gitTokenSecret: {}                  # {name: ..., key: git-token}
+  # Optional ConfigMap containing the corporate CA chain (key: chain.pem).
+  # When set, the workspace pod mounts it and sets CURL_CA_BUNDLE / SSL_CERT_FILE
+  # so curl, httpx, and other tools can reach aigit.waterschap.org without
+  # --insecure / GIT_SSL_NO_VERIFY.
+  caConfigMap: ""
   desktop:
     enabled: true
   workspace:
