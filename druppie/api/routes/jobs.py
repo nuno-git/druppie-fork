@@ -9,7 +9,7 @@ import structlog
 from druppie.api.deps import get_job_service, require_admin, get_current_user, get_user_roles
 from druppie.api.errors import NotFoundError
 from druppie.services import JobService
-from druppie.domain import JobDefinitionList, JobRunList, JobRunDetail
+from druppie.domain import JobDefinitionDetail, JobDefinitionList, JobRunList, JobRunDetail
 from druppie.domain.common import JobRunStatus
 
 logger = structlog.get_logger()
@@ -51,6 +51,29 @@ async def trigger_job(
     if run.session_id and run.status != JobRunStatus.WAITING_APPROVAL:
         service.execute_job_in_background(run.id, run.session_id)
     return run
+
+
+@router.post("/{job_definition_id}/pause")
+async def pause_job(
+    job_definition_id: UUID,
+    service: JobService = Depends(get_job_service),
+    user: dict = Depends(require_admin),
+) -> JobDefinitionDetail:
+    """Pause the schedule: the cron scheduler stops triggering this job.
+
+    Manual "Run Now" still works. Persists across redeploys.
+    """
+    return service.set_enabled(job_definition_id, False)
+
+
+@router.post("/{job_definition_id}/resume")
+async def resume_job(
+    job_definition_id: UUID,
+    service: JobService = Depends(get_job_service),
+    user: dict = Depends(require_admin),
+) -> JobDefinitionDetail:
+    """Resume a paused schedule so the cron scheduler triggers it again."""
+    return service.set_enabled(job_definition_id, True)
 
 
 @router.get("/runs")

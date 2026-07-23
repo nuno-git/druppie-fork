@@ -37,6 +37,11 @@ def _apply_job_env_overrides(data: dict) -> dict:
     enabled_raw = os.getenv(f"{prefix}ENABLED", "").strip().lower()
     if enabled_raw in _TRUTHY | _FALSY:
         data["enabled"] = enabled_raw in _TRUTHY
+        # Mark this as an ops kill-switch so it stays authoritative on every
+        # YAML re-sync. Without this marker a file's `enabled` only seeds a new
+        # definition and never overwrites a user pause/resume (see
+        # JobRepository.update_definition_from_yaml).
+        data["_enabled_from_env"] = True
         logger.info("job_enabled_env_override", job_id=data["id"], enabled=data["enabled"])
     elif enabled_raw:
         logger.warning(
@@ -179,6 +184,27 @@ class JobService:
         definition = self.job_repo.get_definition_by_id(definition_id)
         if not definition:
             return None
+        return self.job_repo.to_definition_detail(definition)
+
+    def set_enabled(self, definition_id: UUID, enabled: bool) -> JobDefinitionDetail:
+        """Pause (enabled=False) or resume (enabled=True) a schedule.
+
+        The scheduler skips definitions with enabled=False, so this is the
+        pause/resume for the cron trigger. Manual "Run Now" still works while
+        paused. Persists in the DB and survives redeploys (YAML re-sync no
+        longer overwrites a user-set value).
+        """
+        from ..api.errors import NotFoundError
+
+        definition = self.job_repo.set_definition_enabled(definition_id, enabled)
+        if not definition:
+            raise NotFoundError("job_definition", str(definition_id))
+        self.job_repo.commit()
+        logger.info(
+            "job_definition_enabled_changed",
+            job_definition_id=str(definition_id),
+            enabled=enabled,
+        )
         return self.job_repo.to_definition_detail(definition)
 
     def get_job_run(self, run_id: UUID) -> JobRunDetail | None:

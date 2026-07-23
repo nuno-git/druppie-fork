@@ -68,9 +68,27 @@ class JobRepository(BaseRepository):
         definition.prompt = data.get("prompt", definition.prompt)
         definition.approval_required = data.get("approval_required", definition.approval_required)
         definition.required_role = data.get("required_role", definition.required_role)
-        definition.enabled = data.get("enabled", True) if data.get("enabled") is not None else definition.enabled
+        # `enabled` is user-owned once a definition exists — the pause/resume
+        # buttons write it directly, and a YAML file value must NOT clobber that
+        # on the next startup re-sync (every git push redeploys here). The file
+        # value only seeds `enabled` at creation. The one exception is the ops
+        # kill-switch JOB_<ID>_ENABLED, flagged via `_enabled_from_env`, which
+        # stays authoritative per environment.
+        if data.get("_enabled_from_env"):
+            definition.enabled = data["enabled"]
         definition.yaml_path = yaml_path
         return True
+
+    def set_definition_enabled(
+        self, definition_id: UUID, enabled: bool
+    ) -> JobDefinition | None:
+        """Pause (enabled=False) or resume (enabled=True) a schedule. None if absent."""
+        definition = self.get_definition_by_id(definition_id)
+        if not definition:
+            return None
+        definition.enabled = enabled
+        self.db.flush()
+        return definition
 
     def get_definition_by_id(self, definition_id: UUID) -> JobDefinition | None:
         return self.db.query(JobDefinition).filter(JobDefinition.id == definition_id).first()
@@ -282,7 +300,21 @@ class JobRepository(BaseRepository):
             JobDefinition.id == definition_id
         ).update({"last_triggered_at": utcnow()})
 
+    @staticmethod
+    def _next_run_at(schedule: str) -> datetime | None:
+        """Next scheduled trigger in UTC (matches the scheduler's croniter
+        evaluation in JobSchedulerService._should_run). None on a bad cron."""
+        from datetime import timezone
+
+        from croniter import croniter
+
+        try:
+            return croniter(schedule, datetime.now(timezone.utc)).get_next(datetime)
+        except Exception:
+            return None
+
     def to_definition_detail(self, definition: JobDefinition) -> JobDefinitionDetail:
+        enabled = definition.enabled if definition.enabled is not None else True
         return JobDefinitionDetail(
             id=definition.id,
             job_id=definition.job_id,
@@ -293,9 +325,10 @@ class JobRepository(BaseRepository):
             approval_required=definition.approval_required or False,
             required_role=definition.required_role,
             prompt=definition.prompt,
-            enabled=definition.enabled if definition.enabled is not None else True,
+            enabled=enabled,
             yaml_path=definition.yaml_path,
             last_triggered_at=definition.last_triggered_at,
+            next_run_at=self._next_run_at(definition.schedule) if enabled else None,
             created_at=definition.created_at,
             updated_at=definition.updated_at,
         )

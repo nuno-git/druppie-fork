@@ -20,6 +20,7 @@ class JobDefinitionSummary(BaseModel):
     required_role: str | None = None
     enabled: bool
     last_triggered_at: datetime | None = None
+    next_run_at: datetime | None = None
     created_at: datetime
 
 

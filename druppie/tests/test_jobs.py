@@ -318,6 +318,65 @@ class TestJobServiceYamlLoading:
         assert result.total == 1
         assert result.items[0].name == "New Name"
 
+    def test_set_enabled_pauses_and_resumes(self, job_service: JobService):
+        definition = job_service.job_repo.create_definition(
+            job_id="toggle", name="Toggle", description=None,
+            schedule="0 0 * * *", agent_id="summarizer", prompt="Hi",
+            approval_required=False, required_role=None, enabled=True,
+            yaml_path=None,
+        )
+        job_service.job_repo.commit()
+
+        paused = job_service.set_enabled(definition.id, False)
+        assert paused.enabled is False
+
+        resumed = job_service.set_enabled(definition.id, True)
+        assert resumed.enabled is True
+
+    def test_set_enabled_unknown_definition_raises(self, job_service: JobService):
+        from druppie.api.errors import NotFoundError
+
+        with pytest.raises(NotFoundError):
+            job_service.set_enabled(uuid.uuid4(), False)
+
+    def test_pause_survives_yaml_resync(self, job_service: JobService, tmp_path):
+        """A user pause must not be clobbered when YAML re-syncs on startup."""
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "p.yaml").write_text(
+            "id: p\nname: P\nschedule: '0 0 * * *'\n"
+            "agent_id: summarizer\nprompt: Do\nenabled: true\n"
+        )
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            created = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        # User pauses the schedule.
+        job_service.set_enabled(created.items[0].id, False)
+
+        # A redeploy re-runs the YAML sync; the file still says enabled: true.
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is False  # pause preserved
+
+    def test_env_override_still_wins_over_pause(self, job_service: JobService, tmp_path):
+        """The ops kill-switch JOB_<ID>_ENABLED stays authoritative."""
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "e.yaml").write_text(
+            "id: e\nname: E\nschedule: '0 0 * * *'\n"
+            "agent_id: summarizer\nprompt: Do\nenabled: true\n"
+        )
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            created = job_service.load_definitions_from_yaml(str(defs_dir))
+        job_service.set_enabled(created.items[0].id, False)
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)), \
+                patch.dict(os.environ, {"JOB_E_ENABLED": "true"}):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is True  # env override re-enables
+
     def test_load_definitions_removes_orphans(self, job_service: JobService, tmp_path):
         defs_dir = tmp_path / "defs"
         defs_dir.mkdir()

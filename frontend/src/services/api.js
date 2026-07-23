@@ -565,6 +565,11 @@ export const getDocumentation = () => request("/api/documentation")
 export const getJobs = () => request('/api/jobs')
 export const triggerJob = (jobDefinitionId) =>
   request(`/api/jobs/${jobDefinitionId}/trigger`, { method: 'POST' })
+export const pauseJob = (jobDefinitionId) =>
+  request(`/api/jobs/${jobDefinitionId}/pause`, { method: 'POST' })
+export const resumeJob = (jobDefinitionId) =>
+  request(`/api/jobs/${jobDefinitionId}/resume`, { method: 'POST' })
+export const getJobRun = (jobRunId) => request(`/api/jobs/runs/${jobRunId}`)
 export const getJobRuns = (jobDefinitionId = null, status = null, page = 1, limit = 20) => {
   const params = new URLSearchParams({ page, limit })
   if (status) params.append('status', status)
