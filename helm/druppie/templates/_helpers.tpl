@@ -200,9 +200,10 @@ Usage: {{ $emb := include "druppie.moduleEmbedded" (dict "root" . "mod" "coding"
 {{- end -}}
 
 {{/*
-Dockerconfigjson template for ExternalSecret.
-Renders the JSON structure for a Kubernetes dockerconfigjson secret.
+ESO dockerconfigjson template string for harbor-regcred ExternalSecret.
+Outputs the literal ESO template (with {{ .username }} etc.) without Helm
+interpreting the inner {{ }} as Helm expressions.
 */}}
 {{- define "druppie.eso-dockerconfigjson" -}}
-{{- `{"auths":{"{{ .registry }}":{"username":"{{ .username }}","password":"{{ .password }}","auth":"{{ printf "%s:%s" .username .password | b64enc }}"}}}` -}}
+{"auths":{"{{ "{{" }} .registry {{ "}}" }}":{"username":"{{ "{{" }} .username {{ "}}" }}","password":"{{ "{{" }} .password {{ "}}" }}","auth":"{{ "{{" }} printf "%s:%s" .username .password | b64enc {{ "}}" }}"}}}
 {{- end -}}
