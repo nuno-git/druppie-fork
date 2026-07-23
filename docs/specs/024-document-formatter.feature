@@ -73,3 +73,35 @@ Feature: Document Formatter (PDF Generation)
     And the system returns a graceful error message to the agent
     And the error message includes the Typst compiler output for debugging
     And the cache is not updated
+
+  Scenario: New project defaults to the Rijnland house style
+    Given a newly created project with no house style explicitly set
+    When the project's detail is retrieved
+    Then the project's house style is "rijnland"
+    And documents rendered for the project use the Rijnland template
+
+  Scenario: Owner sets a project's house style to HHSK via the API
+    Given a project owned by the current user
+    When the owner sends PUT to "/api/projects/{id}/house-style" with house style "hhsk"
+    Then the project's house style is updated to "hhsk"
+    And the Documenter agent renders documents for the project with the HHSK template
+    And the rendered PDF uses the HHSK palette, Ruda font, and HHSK logo
+
+  Scenario: Non-owner cannot change a project's house style
+    Given a project the current user does not own and is not an admin of
+    When the user sends PUT to "/api/projects/{id}/house-style" with house style "hhsk"
+    Then the request is rejected as unauthorized
+    And the project's house style is unchanged
+
+  Scenario: Explicit house style in the request overrides the project setting
+    Given a project whose house style is set to "rijnland"
+    When the Documenter agent receives a task explicitly requesting the HHSK house style
+    Then the agent resolves the house style to "hhsk"
+    And the document is rendered with the HHSK template instead of the project's Rijnland setting
+
+  Scenario: Both house styles produce identically-structured documents
+    Given the same source document rendered once with the Rijnland style and once with the HHSK style
+    When both PDFs are compared
+    Then both contain a title page, table of contents, page numbers, and watermark
+    And both render tables, code blocks, blockquotes, and embedded diagrams the same way
+    And only the visual identity — palette, fonts, logo, and layout — differs between them
