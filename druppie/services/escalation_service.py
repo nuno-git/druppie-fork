@@ -64,6 +64,11 @@ class EscalationService:
         self._check_authorization(session, user_id, user_roles, level="ba_hitl")
         self._assert_status(session, SessionStatus.PAUSED_BA_HITL)
 
+        # Rationale: keep the automated architect in the loop for one
+        # post-escalation round before involving a human architect — the gate
+        # unlocks once the automated architect has rejected a post-escalation
+        # FD revision.
+        #
         # Escalation precondition: a human may only escalate to the architect
         # HITL after at least one post-HITL rejection. Enforced synchronously
         # here so the API returns 409 (the orchestrator re-checks in the

@@ -65,6 +65,7 @@ class EscalationEventType(str, Enum):
     """Escalation event types for HITL workflows."""
     BA_HITL_ENTERED = "ba_hitl_entered"
     BA_HITL_ITERATE = "ba_hitl_iterate"
+    BA_HITL_STICKY_REENTER = "ba_hitl_sticky_reenter"
     BA_HITL_READY = "ba_hitl_ready"
     BA_HITL_ESCALATE = "ba_hitl_escalate"
     ARCHITECT_HITL_ENTERED = "architect_hitl_entered"

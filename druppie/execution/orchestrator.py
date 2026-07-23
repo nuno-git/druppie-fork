@@ -2046,7 +2046,7 @@ class Orchestrator:
                 session_id,
                 rejection_count=session.fd_rejection_count or 0,
                 cancel_pending=True,
-                event_type=EscalationEventType.BA_HITL_ITERATE.value,
+                event_type=EscalationEventType.BA_HITL_STICKY_REENTER.value,
             )
             return True
 
@@ -2215,6 +2215,7 @@ class Orchestrator:
 
         match decision:
             case "approve":
+                session.fd_escalation_mode = False
                 seq = self.execution_repo.get_next_sequence_number(session_id)
                 self.execution_repo.create_agent_run(
                     session_id=session_id,
@@ -2232,6 +2233,12 @@ class Orchestrator:
                     case "ba_hitl":
                         self._cancel_all_pending(session_id)
                         self.session_repo.update_status(session_id, SessionStatus.PAUSED_BA_HITL)
+                        self._get_escalation_repo().create(
+                            session_id=session_id,
+                            event_type=EscalationEventType.BA_HITL_ENTERED.value,
+                            actor_user_id=user_id,
+                            rejection_count_at_event=session.fd_rejection_count or 0,
+                        )
                         self.session_repo.commit()
                     case "terminate":
                         self.terminate_session(

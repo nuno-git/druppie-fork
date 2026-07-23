@@ -47,6 +47,7 @@ class TestEscalationEventType:
         expected = [
             "BA_HITL_ENTERED",
             "BA_HITL_ITERATE",
+            "BA_HITL_STICKY_REENTER",
             "BA_HITL_READY",
             "BA_HITL_ESCALATE",
             "ARCHITECT_HITL_ENTERED",

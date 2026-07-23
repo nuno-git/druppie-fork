@@ -207,7 +207,7 @@ class TestStickySupervisedBaLoop:
         orch.session_repo.update_status.assert_any_call(session.id, SessionStatus.PAUSED_BA_HITL)
         orch._escalation_repo.create.assert_called_once()
         call_kwargs = orch._escalation_repo.create.call_args.kwargs
-        assert call_kwargs["event_type"] == EscalationEventType.BA_HITL_ITERATE.value
+        assert call_kwargs["event_type"] == EscalationEventType.BA_HITL_STICKY_REENTER.value
 
     def test_ba_completing_when_not_in_escalation_does_not_pause(self):
         orch = _make_orchestrator()
@@ -373,7 +373,7 @@ class TestResumeAfterArchitectHitl:
     @pytest.mark.asyncio
     async def test_approve_creates_architect_run(self):
         orch = _make_orchestrator()
-        session = _make_session(status=SessionStatus.PAUSED_ARCHITECT_HITL)
+        session = _make_session(status=SessionStatus.PAUSED_ARCHITECT_HITL, fd_escalation_mode=True)
         _wire_session(orch, session)
         orch.execution_repo.get_next_sequence_number.return_value = 7
 
@@ -385,6 +385,7 @@ class TestResumeAfterArchitectHitl:
         call_kwargs = orch.execution_repo.create_agent_run.call_args.kwargs
         assert call_kwargs["agent_id"] == "architect"
         mock_exec.assert_awaited_once()
+        assert session.fd_escalation_mode is False
 
     @pytest.mark.asyncio
     async def test_reject_to_ba_hitl(self):
@@ -397,6 +398,10 @@ class TestResumeAfterArchitectHitl:
         )
 
         orch.session_repo.update_status.assert_any_call(session.id, SessionStatus.PAUSED_BA_HITL)
+        create_kwargs = orch._escalation_repo.create.call_args.kwargs
+        assert create_kwargs["event_type"] == EscalationEventType.BA_HITL_ENTERED.value
+        assert create_kwargs["session_id"] == session.id
+        assert create_kwargs["rejection_count_at_event"] == session.fd_rejection_count or 0
 
     @pytest.mark.asyncio
     async def test_reject_terminate(self):

@@ -287,7 +287,7 @@ const BAHitlCard = ({ sessionId, session }) => {
 
       {!canEscalate && !confirmTerminate && (
         <p className="ml-6 mt-2 text-xs text-amber-700/80">
-          Escalate becomes available once the architect has rejected the revised FD.
+          Use Iterate or Ready to send a revised FD to the architect — Escalate to a human architect unlocks after the architect rejects it.
         </p>
       )}
 

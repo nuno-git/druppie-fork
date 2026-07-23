@@ -10,6 +10,7 @@ import { getEscalationHistory } from '../../services/api'
 const EVENT_LABELS = {
   ba_hitl_entered: { label: 'BA review started', tone: 'bg-amber-100 text-amber-800' },
   ba_hitl_iterate: { label: 'BA iterate', tone: 'bg-blue-100 text-blue-800' },
+  ba_hitl_sticky_reenter: { label: 'Re-entered BA review (sticky)', tone: 'bg-amber-100 text-amber-800' },
   ba_hitl_ready: { label: 'BA marked ready', tone: 'bg-green-100 text-green-800' },
   ba_hitl_escalate: { label: 'BA escalated to architect', tone: 'bg-purple-100 text-purple-800' },
   architect_hitl_entered: { label: 'Architect review started', tone: 'bg-indigo-100 text-indigo-800' },
