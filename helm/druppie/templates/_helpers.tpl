@@ -183,20 +183,31 @@ otherwise falls back to the configured persistence.storageClass.
 {{- end -}}
 
 {{/*
-Module-embedded predicate: returns the string "true" (empty otherwise) when
-devWorkspace is enabled AND the given module key (arg `mod`) appears in
-devWorkspace.embedModules — i.e. that module should run inside the workspace
-pod under uvicorn --reload instead of as its own baked-image Deployment.
+Module dev-mode predicate: returns "true" when devWorkspace is enabled AND
+the given module key appears in devWorkspace.embedModules — i.e. that module
+should run from source on the workspace PVC (uvicorn --reload) instead of as
+a baked-image Deployment. Always rendered as a separate pod (never embedded
+into the workspace container).
 
-Returns "true" / "" (not a raw bool) so it composes correctly under `{{ if }}`:
-Go-template `if` treats every non-empty string — including "false" — as truthy,
-so a boolean-returning helper would always read as true at the call site.
+Returns "true" / "" (not a raw bool) so it composes correctly under `{{ if }}`.
 
-Usage: {{ $emb := include "druppie.moduleEmbedded" (dict "root" . "mod" "coding") }}
-       {{- if $emb }} ... {{- end }}
+Usage: {{ $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "coding") }}
+       {{- if $dev }} ... {{- end }}
 */}}
-{{- define "druppie.moduleEmbedded" -}}
+{{- define "druppie.moduleDevMode" -}}
 {{- if and .root.Values.devWorkspace.enabled (has .mod .root.Values.devWorkspace.embedModules) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Resolve module image: dev-workspace image when dev mode, else baked module image.
+Usage: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.coding.image) }}
+*/}}
+{{- define "druppie.moduleDevImage" -}}
+{{- if .root.Values.devWorkspace.enabled -}}
+{{- printf "%s/%s:%s" .root.Values.global.imageRegistry .root.Values.devWorkspace.image.repository (.root.Values.devWorkspace.image.tag | default .root.Values.global.imageTag | default "latest") -}}
+{{- else -}}
+{{- include "druppie.image" . -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
