@@ -28,7 +28,7 @@ def mock_config():
         "llm": {"url": "http://module-llm:9008/mcp", "type": "both"},
         "web": {"url": "http://module-web:9009/mcp", "type": "module"},
         "coding": {"url": "http://module-coding:9001/mcp", "type": "core"},
-        "docker": {"url": "http://module-docker:9002/mcp", "type": "core"},
+        "docker": {"url": "http://module-deploy:9002/mcp", "type": "core"},
         "builtin": {"url": "", "type": "core"},
     }
 

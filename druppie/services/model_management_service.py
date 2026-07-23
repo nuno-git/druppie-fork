@@ -19,7 +19,7 @@ from druppie.domain.model_override import (
 )
 from druppie.llm.base import clean_llm_error
 from druppie.llm.litellm_provider import PROVIDER_CONFIGS, has_api_key
-from druppie.llm.resolver import resolve_model, set_db_overrides
+from druppie.llm.resolver import resolve_model
 from druppie.repositories.model_override_repository import ModelOverrideRepository
 
 logger = structlog.get_logger()
@@ -294,8 +294,9 @@ class ModelManagementService:
         if provider not in PROVIDER_CONFIGS:
             return {"provider": provider, "model": model, "valid": False, "error": "Unknown provider", "latency_ms": 0}
 
+        config = PROVIDER_CONFIGS[provider]
+
         if not has_api_key(provider):
-            config = PROVIDER_CONFIGS[provider]
             env_var = config.get("api_key_env", "")
             return {
                 "provider": provider,
@@ -304,6 +305,21 @@ class ModelManagementService:
                 "error": f"{env_var} is not set",
                 "latency_ms": 0,
             }
+
+        # llmkube: skip live LLM call because the model router may return 503
+        # when the requested model isn't the active mode. Just validate
+        # the model is known.
+        if provider == "llmkube":
+            known = config.get("known_models", [])
+            if model and model not in known:
+                return {
+                    "provider": provider,
+                    "model": model,
+                    "valid": False,
+                    "error": f"Unknown model '{model}'. Available: {', '.join(known)}",
+                    "latency_ms": 0,
+                }
+            return {"provider": provider, "model": model, "valid": True, "error": None, "latency_ms": 0}
 
         from druppie.llm.litellm_provider import ChatLiteLLM
 
@@ -344,7 +360,7 @@ class ModelManagementService:
         if overrides is None:
             overrides = self.override_repo.get_agent_overrides()
 
-        override_map = {}
+        valid_count = 0
         for o in overrides:
             if o.target_type != "agent" or not o.enabled:
                 continue
@@ -356,10 +372,9 @@ class ModelManagementService:
                     hint="Provider was removed from PROVIDER_CONFIGS; override is ignored.",
                 )
                 continue
-            override_map[o.target_id] = (o.provider, o.model, o.fallback_provider, o.fallback_model)
-        set_db_overrides(override_map)
+            valid_count += 1
 
-        logger.info("resolver_cache_refreshed", override_count=len(override_map))
+        logger.info("db_overrides_validated", override_count=valid_count)
 
     async def get_local_status(self) -> dict:
         """Fetch live status from the in-cluster model router."""

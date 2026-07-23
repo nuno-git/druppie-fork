@@ -598,7 +598,7 @@ Aanmaken: helm/druppie/templates/nfs-client-installer.yaml (DaemonSet in kube-sy
 
 **Story points:** 1 | **Priority:** P1 | **Status:** ✅ Opgelost via cloud-init
 
-**Waarom nodig:** Backend module-docker heeft `/var/run/docker.sock` voor compose_up sandbox. CA-provisioned nodes hebben Docker niet voorgeïnstalleerd.
+**Waarom nodig:** Backend module-deploy heeft `/var/run/docker.sock` voor compose_up sandbox. CA-provisioned nodes hebben Docker niet voorgeïnstalleerd.
 
 **Oplossing:** `docker.io` toegevoegd aan `additional_packages` in `iac/cluster.yaml`. Nieuw gemaakte CA nodes installeren Docker via cloud-init (samen met `nfs-common`). De DaemonSet (`druppie-docker-installer`) blijft als fallback voor bestaande nodes.
 

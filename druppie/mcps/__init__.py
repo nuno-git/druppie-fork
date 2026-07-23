@@ -2,7 +2,7 @@
 
 Every MCP server is a Druppie module (mcp-servers/module-<name>/):
   - module-coding (port 9001) - File operations + git
-  - module-docker (port 9002) - Docker container operations
+  - module-deploy (port 9002) - Docker container operations
   - module-filesearch (port 9004) - Local file search
   - module-web (port 9005) - File search + web browsing
   - module-archimate (port 9006) - ArchiMate architecture reference

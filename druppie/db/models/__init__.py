@@ -77,6 +77,12 @@ from .job import JobDefinition, JobRun
 # Model override (runtime LLM configuration)
 from .model_override import ModelOverride
 
+# Fallback approval (cross-worker state)
+from .fallback_approval import FallbackApproval
+
+# Session notification (cross-worker state)
+from .session_notification import SessionNotification
+
 # Sandbox session model
 from .sandbox_session import SandboxSession
 
@@ -136,5 +142,8 @@ __all__ = [
     "JobRun",
     # Model override
     "ModelOverride",
+    # Cross-worker state
+    "FallbackApproval",
+    "SessionNotification",
     "SandboxSession",
 ]

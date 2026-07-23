@@ -38,10 +38,10 @@ tool-test:
         summary: "Agent planner: Planned deployer"
 
     - agent: deployer
-      tool: docker:list_containers
+      tool: docker:list_apps
 
     - agent: deployer
-      tool: docker:compose_up
+      tool: docker:deploy
       approval:
         status: approved
         by: developer

@@ -1,0 +1,13 @@
+Druppie app deployed via GitOps (Flux reconciles this HelmRelease).
+
+URL:    https://{{ .Values.ingress.host }}/
+Health: https://{{ .Values.ingress.host }}/health
+Image:  {{ .Values.image.repository }}:{{ .Values.image.tag }}
+
+Check status:
+  kubectl get hr -n {{ .Release.Namespace }}            # HelmRelease -> Ready
+  kubectl get pods -n {{ .Release.Namespace }}
+  curl -sk https://{{ .Values.ingress.host }}/health     # {"status":"ok"}
+
+DB PVC uses storageClass {{ .Values.database.storage.storageClass }} (Delete
+reclaim) so tearing down the namespace leaves no orphaned Longhorn volumes.

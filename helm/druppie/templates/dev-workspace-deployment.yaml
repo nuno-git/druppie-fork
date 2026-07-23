@@ -39,12 +39,11 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
-      {{- if has "kubernetes" .Values.devWorkspace.embedModules }}
       # module-kubernetes needs the k8s-readonly ClusterRoleBinding. Reuse its
       # ServiceAccount (the rbac template still renders the SA + binding when
-      # the module is embedded, just not the Deployment).
+      # the module is embedded, just not the Deployment). When agentSandbox is
+      # enabled, this SA also gets sandbox permissions in sandbox-runtime.
       serviceAccountName: {{ include "druppie.fullname" . }}-module-kubernetes
-      {{- end }}
       {{- with .Values.devWorkspace.ingressVIP }}
       # Resolve the public app domain to the in-cluster Traefik ClusterIP so
       # oauth2-proxy can reach Keycloak without hairpinning to the LB external IP.
@@ -99,6 +98,12 @@ spec:
               value: {{ .Values.devWorkspace.repoUrl | quote }}
             - name: GIT_SSL_NO_VERIFY
               value: {{ .Values.devWorkspace.gitSslNoVerify | quote }}
+            {{- if .Values.devWorkspace.caConfigMap }}
+            - name: CURL_CA_BUNDLE
+              value: /etc/aigit-ca/chain.pem
+            - name: SSL_CERT_FILE
+              value: /etc/aigit-ca/chain.pem
+            {{- end }}
             - name: DEV_STACK
               value: {{ .Values.devWorkspace.stackMode | quote }}
             - name: RECOVERY_MODE
@@ -163,12 +168,12 @@ spec:
               mountPath: /home/developer/.kube/config
               subPath: kubeconfig
               readOnly: true
-            {{- $needDocker := or (has "coding" $.Values.devWorkspace.embedModules) (has "docker" $.Values.devWorkspace.embedModules) }}
-            {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
-            # module-coding / module-docker talk to the host Docker daemon.
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
+            {{- if .Values.devWorkspace.caConfigMap }}
+            - name: aigit-ca
+              mountPath: /etc/aigit-ca
+              readOnly: true
             {{- end }}
+            
           resources:
             {{- toYaml .Values.devWorkspace.resources | nindent 12 }}
           readinessProbe:
@@ -232,14 +237,12 @@ spec:
           secret:
             secretName: {{ include "druppie.fullname" . }}-kubeconfig
             optional: true
-        {{- $needDocker := or (has "coding" .Values.devWorkspace.embedModules) (has "docker" .Values.devWorkspace.embedModules) }}
-        {{- if and $needDocker .Values.backend.dockerSocket.enabled }}
-        # Host Docker socket for embedded module-coding / module-docker.
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
+        {{- if .Values.devWorkspace.caConfigMap }}
+        - name: aigit-ca
+          configMap:
+            name: {{ .Values.devWorkspace.caConfigMap }}
         {{- end }}
+        
       {{- with .Values.devWorkspace.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

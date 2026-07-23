@@ -108,29 +108,6 @@ ALL_MODULES = [
     "layout_service",
     "azuredevops",
 ]
-# MCP modules embeddable into the dev-workspace pod: they run under
-# `uvicorn --reload` inside the workspace container instead of as separate
-# baked-image Deployments. Mirrors the chart's valid keys
-# (helm/druppie/values.yaml devWorkspace.embedModules) and the default set in
-# scripts/deploy-branch-env.sh. Embedding skips the per-module Deployments,
-# which avoids (a) pulling per-module images on the chart-default :latest tag
-# that CI never publishes, and (b) the RWO-PVC co-location that otherwise leaves
-# module-coding/module-docker Pending on the CPU-full shared node.
-EMBEDDABLE_MODULES = [
-    "coding",
-    "docker",
-    "filesearch",
-    "web",
-    "archimate",
-    "registry",
-    "llm",
-    "kubernetes",
-    "vision",
-    "searxng",
-    "browser",
-    "data_access",
-    "azuredevops",
-]
 # Dev-profile CPU requests: a whole env must fit on the shared pinned node, so
 # request little and burst up to the chart's default limits. Memory requests
 # stay at chart defaults (the node is CPU-request-bound, not memory-bound).
@@ -338,17 +315,20 @@ def build_helmrelease_yaml(
             "secretsSource": secrets_source,
             "gitBranch": branch,
             "codeServer": {"devHost": _workspace_host(host)},
-            # Embed every MCP module into the workspace pod so their separate
-            # Deployments are skipped: no per-module image pulls (chart-default
-            # :latest that CI never publishes) and no RWO-PVC co-location CPU
-            # crunch that leaves module-coding/module-docker Pending on the full
-            # shared node. Recovery mode disables modules, and a disabled
-            # workspace has no pod to host them, so embed nothing in both cases.
-            "embedModules": (
-                []
-                if (recovery_mode or not workspace_enabled)
-                else list(EMBEDDABLE_MODULES)
-            ),
+            "caConfigMap": "aigit-ca",
+            # All MCP modules run inside the workspace pod under uvicorn --reload
+            # so edits in code-server hot-reload instantly (no push needed).
+            # layout_service is excluded — it's not an MCP module.
+            "embedModules": [m for m in ALL_MODULES if m != "layout_service"],
+        },
+        # Per-instance sandbox: each branch env gets its own sandbox namespace,
+        # SandboxTemplate, WarmPool, and RBAC — no shared infrastructure.
+        # (2 warm replicas instead of the chart-default 5: branch envs are
+        # single-developer, and 5 warm gVisor pods per env would crowd the
+        # shared node.)
+        "agentSandbox": {
+            "enabled": True,
+            "warmPool": {"replicas": 2},
         },
     }
     if recovery_mode:
@@ -471,7 +451,43 @@ def _workspace_host(host: str) -> str:
     return f"{label}-dev.{rest}" if rest else f"{label}-dev"
 
 
-_ENV_FILES = ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml", "externalsecrets.yaml")
+def _read_aigit_ca() -> str | None:
+    """Read the corporate CA chain from the mounted file (if available)."""
+    if GITOPS_CA and Path(GITOPS_CA).is_file():
+        return Path(GITOPS_CA).read_text()
+    return None
+
+
+def build_aigit_ca_configmap_yaml(slug: str) -> str | None:
+    """Build the aigit-ca ConfigMap YAML for a branch env namespace.
+
+    Returns None if the CA chain is not available (local dev).
+    """
+    ca_chain = _read_aigit_ca()
+    if not ca_chain:
+        return None
+    return _dump(
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "aigit-ca",
+                "namespace": f"druppie-{slug}",
+            },
+            "data": {
+                "chain.pem": ca_chain,
+            },
+        }
+    )
+
+
+_ENV_FILES = (
+    "namespace.yaml",
+    "gitrepository.yaml",
+    "helmrelease.yaml",
+    "externalsecrets.yaml",
+    "configmap-aigit-ca.yaml",
+)
 
 
 # -----------------------------------------------------------------------------
@@ -1093,6 +1109,17 @@ class BranchEnvironmentService:
                 "content": build_externalsecrets_yaml(slug),
             },
         ]
+        # Corporate CA ConfigMap — lets curl/httpx reach aigit.waterschap.org
+        # from inside the branch env without --insecure.
+        ca_cm = build_aigit_ca_configmap_yaml(slug)
+        if ca_cm:
+            files.append(
+                {
+                    "operation": "create",
+                    "path": self._env_path(slug, "configmap-aigit-ca.yaml"),
+                    "content": ca_cm,
+                }
+            )
         await self.gitea.change_files(
             f"branch-env: deploy {namespace} (branch {branch}, by {owner_id})", files
         )

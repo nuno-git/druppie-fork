@@ -2,7 +2,7 @@
 
 from module_router import create_module_app, run_module
 
-app = create_module_app("docker", default_port=9002)
+app = create_module_app("deploy", default_port=9002)
 
 if __name__ == "__main__":
-    run_module("docker", default_port=9002)
+    run_module("deploy", default_port=9002)

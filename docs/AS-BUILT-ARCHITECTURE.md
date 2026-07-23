@@ -84,7 +84,7 @@ flowchart TB
 
                 subgraph Modules["MCP Modules (pinned to infra)"]
                     MC["module-coding :9001"]
-                    MD["module-docker :9002"]
+                    MD["module-deploy :9002"]
                     MR["module-registry :9007"]
                     MA["module-archimate :9006"]
                     MDA["module-data-access :9010"]
@@ -205,7 +205,7 @@ flowchart TB
 ```yaml
 additional_packages:
   - nfs-common      # NFS RWX volumes
-  - docker.io       # compose_up sandbox (module-docker)
+  - docker.io       # compose_up sandbox (module-deploy)
 ```
 
 ---
@@ -240,7 +240,7 @@ additional_packages:
 | `druppie-gitea` | Deployment | 1 (Recreate) | `gitea/gitea:1.21` | `pool: infra` | 250m/512Mi → 1/1Gi |
 | `druppie-layout-service` | Deployment | 1 | `registry.druppie.rijnland.dev/druppie/druppie-layout-service:latest` | `pool: infra` | 100m/128Mi → 500m/256Mi |
 | `druppie-module-coding` | Deployment | 1 | `registry.druppie.rijnland.dev/druppie/druppie-module-coding:latest` | `pool: infra` | 250m/512Mi → 2/2Gi |
-| `druppie-module-docker` | Deployment | 1 | `registry.druppie.rijnland.dev/druppie/druppie-module-docker:latest` | `pool: infra` | 250m/512Mi → 2/2Gi |
+| `druppie-module-deploy` | Deployment | 1 | `registry.druppie.rijnland.dev/druppie/druppie-module-deploy:latest` | `pool: infra` | 250m/512Mi → 2/2Gi |
 | `druppie-module-registry` | Deployment | 1 | `registry.druppie.rijnland.dev/druppie/druppie-module-registry:latest` | `pool: infra` | 250m/256Mi → 1/512Mi |
 | `druppie-module-archimate` | Deployment | 1 | `registry.druppie.rijnland.dev/druppie/druppie-module-archimate:latest` | `pool: infra` | 250m/256Mi → 1/512Mi |
 | `druppie-module-data-access` | Deployment | 1 | `registry.druppie.rijnland.dev/druppie/druppie-module-data-access:latest` | `pool: infra` | 250m/256Mi → 1/512Mi |
@@ -415,7 +415,7 @@ De pipeline draait op een **self-hosted GitHub Actions runner** binnen het clust
 │  4.  Frontend       → frontend/Dockerfile frontend/                  │
 │  5.  Init           → Dockerfile.init .                              │
 │  6.  module-archimate                                                  │
-│  7.  module-docker                                                     │
+│  7.  module-deploy                                                     │
 │  8.  module-registry                                                   │
 │  9.  module-coding                                                      │
 │  10. module-data-access                                                 │
@@ -558,7 +558,7 @@ druppie/druppie-layout-service
 druppie/druppie-module-archimate
 druppie/druppie-module-coding
 druppie/druppie-module-data-access
-druppie/druppie-module-docker
+druppie/druppie-module-deploy
 druppie/druppie-module-filesearch
 druppie/druppie-module-llm
 druppie/druppie-module-registry

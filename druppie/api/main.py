@@ -140,23 +140,18 @@ def _recover_orphaned_batch_runs() -> None:
 
 
 def _load_model_override_cache():
-    """Populate the resolver's DB override cache and translation override on startup."""
+    """Configure translation override on startup.
+
+    Agent model overrides are now read directly from the DB on each
+    resolution (stateless, multi-worker safe).
+    """
     from druppie.db.database import SessionLocal
     from druppie.repositories.model_override_repository import ModelOverrideRepository
-    from druppie.llm.resolver import set_db_overrides
     from druppie.core.translation import get_translation_service
 
     db = SessionLocal()
     try:
         repo = ModelOverrideRepository(db)
-
-        agent_overrides = repo.get_agent_overrides()
-        override_map = {
-            o.target_id: (o.provider, o.model, o.fallback_provider, o.fallback_model)
-            for o in agent_overrides
-            if o.target_type == "agent" and o.enabled
-        }
-        set_db_overrides(override_map)
 
         translation_override = repo.get_translation_override()
         if translation_override and translation_override.enabled:
@@ -169,7 +164,6 @@ def _load_model_override_cache():
 
         logger.info(
             "model_overrides_loaded",
-            agent_overrides=len(override_map),
             translation_override=translation_override is not None,
         )
     except Exception as e:

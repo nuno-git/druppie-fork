@@ -114,7 +114,7 @@ ASK_EXPERT_CHOICE_TOOLS = {
 LONG_RUNNING_TOOLS = {
     "run_tests",
     "install_test_dependencies",
-    "compose_up",
+    "deploy",
 }
 LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
 

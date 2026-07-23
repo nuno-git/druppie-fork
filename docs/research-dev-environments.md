@@ -146,7 +146,7 @@ EOF
 │  │ backend          :8000  (uvicorn --reload --host 0.0.0.0)   ││
 │  │ frontend         :5273  (npm run dev -- --host 0.0.0.0)    ││
 │  │ module-coding    :9001  (python server.py)                  ││
-│  │ module-docker    :9002                                      ││
+│  │ module-deploy    :9002                                      ││
 │  │ module-registry  :9007                                      ││
 │  │ module-archimate :9006                                      ││
 │  │ module-data-access :9010                                    ││

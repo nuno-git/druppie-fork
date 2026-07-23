@@ -1,12 +1,14 @@
 {{- if .Values.agentSandbox.enabled }}
 # SandboxTemplate: dev-environment — code-server + Druppie stack for developers.
 # Plain runc (trusted developers), persistent, hibernatable.
+# Per-instance: each Druppie instance gets its own SandboxTemplate in its own
+# sandbox namespace (e.g. druppie-sandbox, druppie-colab-dev-sandbox).
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
-  name: dev-environment-template
-  namespace: sandbox-runtime
+  name: "{{ .Values.global.instance }}-dev-environment-template"
+  namespace: "{{ .Values.global.instance }}-sandbox"
 spec:
   podTemplate:
     spec:

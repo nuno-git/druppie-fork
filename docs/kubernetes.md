@@ -211,7 +211,7 @@ kubectl wait --namespace ingress-nginx \
 # rm /path/to/backend.tar
 
 for img in druppie-backend druppie-frontend druppie-init \
-  druppie-module-coding druppie-module-docker druppie-module-filesearch \
+  druppie-module-coding druppie-module-deploy druppie-module-filesearch \
   druppie-module-llm druppie-module-registry druppie-module-vision \
   druppie-module-web druppie-module-archimate; do
   kind load docker-image ${img}:latest --name druppie

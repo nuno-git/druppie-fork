@@ -12,7 +12,7 @@
 ##
 ## Prerequisites:
 ##   - Dev stack running (module-llm with embedding provider configured)
-##   - Docker available for compose_up
+##   - Docker available for deploy
 
 tool-test:
   name: rag-app-deploy-e2e
@@ -54,10 +54,10 @@ tool-test:
         summary: "Agent planner: Planned deployer for rag-e2e-test"
 
     - agent: deployer
-      tool: docker:list_containers
+      tool: docker:list_apps
 
     - agent: deployer
-      tool: docker:compose_up
+      tool: docker:deploy
       approval:
         status: approved
         by: developer
@@ -195,7 +195,7 @@ tool-test:
     # Step 6: Cleanup — tear down the deployed app
     # =========================================================================
     - agent: deployer
-      tool: docker:compose_down
+      tool: docker:teardown
       approval:
         status: approved
         by: developer

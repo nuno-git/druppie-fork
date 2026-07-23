@@ -1,0 +1,25 @@
+{{- if and .Values.ingress.enabled .Values.ingress.tls.enabled }}
+# Mirror the cluster-wide *.<domain> wildcard TLS secret (druppie-tls, ns
+# druppie) into this namespace so the Ingress can terminate TLS. Reuses the
+# existing druppie-tls-mirror ClusterSecretStore + reader SA defined in
+# ai/k8s infra/branch-envs/tls-mirror.yaml — no new infra needed.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.ingress.tls.secretName }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: druppie-tls-mirror
+    kind: ClusterSecretStore
+  target:
+    name: {{ .Values.ingress.tls.secretName }}
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/tls
+  dataFrom:
+    - extract:
+        key: druppie-tls
+{{- end }}

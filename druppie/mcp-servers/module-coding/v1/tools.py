@@ -55,7 +55,8 @@ mcp = FastMCP(
 # CONFIGURATION
 # =============================================================================
 
-GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
+GITEA_INTERNAL_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
+GITEA_URL = os.getenv("GITEA_URL", GITEA_INTERNAL_URL)
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
@@ -361,6 +362,8 @@ async def _is_container_running(container_id: str) -> bool:
 
 async def _get_container_death_reason(container_id: str) -> str | None:
     """If a container has exited, return a human-readable reason. None if still running."""
+    if SANDBOX_MODE == "k8s":
+        return "sandbox terminated (k8s mode)"
     rc, stdout, _ = await _docker_run(
         ["docker", "inspect", "--format",
          "{{.State.Running}}|{{.State.OOMKilled}}|{{.State.ExitCode}}|{{.State.Status}}",
@@ -461,15 +464,21 @@ async def _create_sandbox_container(
         repo_owner = DRUPPIE_CORE_REPO_OWNER
         effective_gitea_url = DRUPPIE_CORE_GITEA_URL
     else:
-        effective_gitea_url = GITEA_URL
+        effective_gitea_url = GITEA_INTERNAL_URL if SANDBOX_MODE == "k8s" else GITEA_URL
 
     # ── K8s mode: use agent-sandbox SDK ──────────────────────────────────
+    # In k8s mode the host-side clone + push run from the workspace pod (or
+    # module-coding pod), which can only reach the *internal* Gitea service
+    # (ClusterIP). The external Gitea URL is unreachable from inside the cluster
+    # (blocked by NetworkPolicy / no route). Use GITEA_INTERNAL_URL for all
+    # in-cluster git operations. The external URL is only needed for the
+    # update_core scope (aigit.waterschap.org), which has its own CNP.
     if SANDBOX_MODE == "k8s":
         scope = git_scope or "current_project"
         clone_url = None
         branch = "main"
         if scope == "current_project" and repo_name:
-            clone_url = _get_gitea_clone_url(repo_name, repo_owner)
+            clone_url = _get_gitea_clone_url(repo_name, repo_owner, GITEA_INTERNAL_URL)
         elif scope == "update_core":
             clone_url = _get_gitea_clone_url(DRUPPIE_CORE_REPO_NAME, DRUPPIE_CORE_REPO_OWNER, DRUPPIE_CORE_GITEA_URL)
             branch = DRUPPIE_CORE_REPO_BRANCH
@@ -612,7 +621,7 @@ async def _create_sandbox_container(
         if rc == 0:
             await _docker_run(
                 ["git", "-C", tmp_dir, "remote", "set-url", "origin",
-                 f"http://gitea:3000/{owner}/{repo_name}.git"],
+                 f"{GITEA_URL}/{owner}/{repo_name}.git"],
                 timeout=10,
             )
 
@@ -3238,6 +3247,7 @@ async def _internal_revert_to_commit(
         # Force push via bundle mechanism (same as push_changes but force)
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+        resolved_gitea_url = entry.get("gitea_url", GITEA_URL)
 
         force_pushed = False
         if resolved_repo_name and branch != "main" and _is_gitea_configured():

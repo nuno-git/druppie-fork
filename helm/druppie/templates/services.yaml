@@ -217,15 +217,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "druppie.fullname" . }}-module-docker
+  name: {{ include "druppie.fullname" . }}-module-deploy
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-docker
+    app.kubernetes.io/component: module-deploy
 spec:
   type: ClusterIP
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "docker") }}dev-workspace{{ else }}module-docker{{ end }}
+    app.kubernetes.io/component: {{ if include "druppie.moduleEmbedded" (dict "root" . "mod" "docker") }}dev-workspace{{ else }}module-deploy{{ end }}
   ports:
     - name: http
       port: {{ .Values.modules.docker.port }}

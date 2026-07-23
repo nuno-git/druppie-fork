@@ -162,7 +162,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: sandbox-runtime
+              kubernetes.io/metadata.name: "{{ .Values.global.instance }}-sandbox"
       ports:
         - port: 8888
           protocol: TCP
@@ -178,7 +178,7 @@ spec:
   podSelector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: module-docker
+      app.kubernetes.io/component: module-deploy
   policyTypes:
     - Ingress
   ingress:

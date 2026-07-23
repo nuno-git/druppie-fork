@@ -13,13 +13,10 @@ clear errors instead of silently serving untranslated text.
 """
 
 import os
-import time
 
 import structlog
 
 logger = structlog.get_logger()
-
-_EVICTION_TTL = 86400  # 24 hours
 
 
 class TranslationNotAvailableError(RuntimeError):
@@ -51,11 +48,9 @@ def _has_api_key_for_provider(provider: str) -> bool:
 class TranslationService:
     """Translates text between languages using a configurable LLM provider.
 
-    Process-local state — requires single-worker deployment (Dockerfile).
-    Entries are evicted after 24 hours to prevent unbounded growth.
+    Notification state is stored in the ``session_notifications`` DB table
+    so it is shared across all backend workers.
     """
-
-    _notified_sessions: dict[str, float] = {}
 
     def __init__(self):
         self._llm = None
@@ -65,29 +60,52 @@ class TranslationService:
         self._configured_fallback_model: str | None = None
 
     @classmethod
-    def _evict(cls) -> None:
-        cutoff = time.monotonic() - _EVICTION_TTL
-        stale = [k for k, ts in cls._notified_sessions.items() if ts < cutoff]
-        for k in stale:
-            del cls._notified_sessions[k]
-
-    @classmethod
     def mark_notified(cls, session_id: str) -> bool:
         """Mark a session as notified about translation failure.
 
         Returns True if this is the first notification (caller should post
         the message). Returns False if already notified (skip).
+
+        State is stored in the DB so it is shared across all workers.
         """
-        cls._evict()
-        if session_id in cls._notified_sessions:
+        from druppie.db.database import SessionLocal
+        from druppie.db.models.session_notification import SessionNotification
+
+        db = SessionLocal()
+        try:
+            existing = (
+                db.query(SessionNotification)
+                .filter(SessionNotification.session_id == session_id)
+                .first()
+            )
+            if existing:
+                return False
+            db.add(SessionNotification(session_id=session_id))
+            db.commit()
+            return True
+        except Exception:
+            db.rollback()
             return False
-        cls._notified_sessions[session_id] = time.monotonic()
-        return True
+        finally:
+            db.close()
 
     @classmethod
     def clear_session(cls, session_id: str) -> None:
         """Remove notification state for a completed/failed session."""
-        cls._notified_sessions.pop(session_id, None)
+        from druppie.db.database import SessionLocal
+        from druppie.db.models.session_notification import SessionNotification
+
+        db = SessionLocal()
+        try:
+            db.query(SessionNotification).filter(
+                SessionNotification.session_id == session_id
+            ).delete(synchronize_session="fetch")
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def configure(
         self,

@@ -29,7 +29,7 @@ class DeploymentService:
         for project in projects:
             result = await self.mcp_http.call(
                 "docker",
-                "list_containers",
+                "list_apps",
                 {"project_id": str(project.id)},
             )
             if result.get("success") and result.get("containers"):

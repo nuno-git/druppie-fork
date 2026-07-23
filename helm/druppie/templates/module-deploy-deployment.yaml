@@ -2,21 +2,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "druppie.fullname" . }}-module-docker
+  name: {{ include "druppie.fullname" . }}-module-deploy
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-docker
+    app.kubernetes.io/component: module-deploy
 spec:
   replicas: {{ .Values.modules.docker.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: module-docker
+      app.kubernetes.io/component: module-deploy
   template:
     metadata:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: module-docker
+        app.kubernetes.io/component: module-deploy
         {{- if not .Values.persistence.rwx }}
         druppie.io/shared-storage: "true"
         {{- end }}
@@ -24,13 +24,14 @@ spec:
         reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
+      serviceAccountName: {{ include "druppie.fullname" . }}-module-deploy
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
-        - name: module-docker
+        - name: module-deploy
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           env:
@@ -38,9 +39,35 @@ spec:
               value: {{ .Values.modules.docker.port | quote }}
             - name: DRUPPIE_URL
               value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
-            {{- if .Values.backend.dockerSocket.enabled }}
-            - name: DOCKER_HOST
-              value: "unix:///var/run/docker.sock"
+            {{- with .Values.modules.docker.userApps }}
+            # User-app GitOps deployer: module-deploy commits the app's
+            # Flux GitRepository+HelmRelease to the GitOps repo; Flux deploys.
+            # Reads live status read-only (module-deploy-rbac.yaml).
+            - name: USERAPPS_GITOPS_URL
+              value: {{ .gitops.url | quote }}
+            - name: USERAPPS_GITOPS_REPO
+              value: {{ .gitops.repo | quote }}
+            - name: USERAPPS_GITOPS_BRANCH
+              value: {{ .gitops.branch | quote }}
+            - name: USERAPPS_GITOPS_PATH
+              value: {{ .gitops.path | quote }}
+            - name: USERAPPS_APP_REPO_ORG
+              value: {{ .gitops.appRepoOrg | quote }}
+            - name: USERAPPS_GITOPS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .gitops.tokenSecret.name }}
+                  key: {{ .gitops.tokenSecret.key }}
+            {{- if .gitops.caConfigMap }}
+            - name: USERAPPS_GITOPS_CA
+              value: /app/gitops-ca/chain.pem
+            {{- end }}
+            - name: USERAPPS_DOMAIN
+              value: {{ .domain | quote }}
+            - name: HARBOR_REGISTRY
+              value: {{ .harbor.registry | quote }}
+            - name: HARBOR_PROJECT
+              value: {{ .harbor.project | quote }}
             {{- end }}
           envFrom:
             - configMapRef:
@@ -61,9 +88,10 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspaces
-            {{- if .Values.backend.dockerSocket.enabled }}
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
+            {{- if .Values.modules.docker.userApps.gitops.caConfigMap }}
+            - name: gitops-ca
+              mountPath: /app/gitops-ca
+              readOnly: true
             {{- end }}
           livenessProbe:
             httpGet:
@@ -94,10 +122,9 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
-        {{- if .Values.backend.dockerSocket.enabled }}
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
+        {{- if .Values.modules.docker.userApps.gitops.caConfigMap }}
+        - name: gitops-ca
+          configMap:
+            name: {{ .Values.modules.docker.userApps.gitops.caConfigMap }}
         {{- end }}
 {{- end }}

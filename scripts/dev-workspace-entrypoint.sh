@@ -85,7 +85,7 @@ EMBED_MODULES="${EMBED_MODULES:-}"
 # start_mcp_module fall back to a runtime venv build, or skip with a warning.
 declare -A MCP_MODULES=(
     [coding]="module-coding 9001"
-    [docker]="module-docker 9002"
+    [docker]="module-deploy 9002"
     [filesearch]="module-filesearch 9004"
     [web]="module-web 9005"
     [archimate]="module-archimate 9006"
@@ -166,12 +166,21 @@ checkout_branch() {
     log "fetching branch '${branch}' from origin"
     # shellcheck disable=SC2086
     if git -C "${REPO_DIR}" ${git_opts} fetch --depth=1 "${fetch_url}" "${branch}" 2>>"${LOGS}/git.log"; then
-        # reset --hard overwrites the seeded working tree to the branch content
-        # without the "untracked file would be overwritten" errors that plague
-        # `git checkout` when the dir was pre-populated by the seed step.
-        git -C "${REPO_DIR}" reset --hard FETCH_HEAD >>"${LOGS}/git.log" 2>&1
-        git -C "${REPO_DIR}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
-        log "checked out '${branch}' at $(git -C "${REPO_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?')"
+        local local_head remote_head
+        local_head=$(git -C "${REPO_DIR}" rev-parse HEAD 2>/dev/null || echo "")
+        remote_head=$(git -C "${REPO_DIR}" rev-parse FETCH_HEAD 2>/dev/null || echo "")
+        if [ "${local_head}" != "${remote_head}" ]; then
+            # Remote changed (someone else pushed, or branch switched).
+            # Stash local changes, reset, then re-apply to preserve edits.
+            git -C "${REPO_DIR}" stash --include-untracked --quiet >>"${LOGS}/git.log" 2>&1 || true
+            git -C "${REPO_DIR}" reset --hard FETCH_HEAD >>"${LOGS}/git.log" 2>&1
+            git -C "${REPO_DIR}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
+            git -C "${REPO_DIR}" stash pop --quiet >>"${LOGS}/git.log" 2>&1 || true
+            log "checked out '${branch}' at $(git -C "${REPO_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?') (remote changed, local edits preserved)"
+        else
+            git -C "${REPO_DIR}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
+            log "branch '${branch}' already at $(git -C "${REPO_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?') — no reset needed"
+        fi
     else
         warn "git fetch failed (offline or auth/TLS issue) — continuing with the baked snapshot; see ${LOGS}/git.log"
     fi
@@ -500,9 +509,54 @@ log "workspace boot: branch=${DRUPPIE_GIT_BRANCH} repo=${DRUPPIE_REPO_URL}"
 # refuses the repo with "dubious ownership" unless it is marked safe.
 git config --global --add safe.directory "${REPO_DIR}"
 
+# ---------------------------------------------------------------------------
+# Persist user data to PVC so it survives pod restarts.
+# /home/developer/ is ephemeral (container filesystem). Symlink each data
+# directory to /workspace/ so conversations, workspace layout, and desktop
+# state survive restarts.
+# ---------------------------------------------------------------------------
+persist_dir() {
+    # $1 = PVC path, $2 = home path (relative to $HOME)
+    local pvc="${WORKSPACE}/$1" home="$2"
+    mkdir -p "${pvc}"
+    if [ -d "${HOME}/${home}" ] && [ ! -L "${HOME}/${home}" ]; then
+        mv "${HOME}/${home}" "${pvc}" 2>/dev/null || true
+    fi
+    rm -f "${HOME}/${home}"
+    ln -s "${pvc}" "${HOME}/${home}"
+}
+
 # Claude Code: keep login/config on the PVC so it survives pod restarts.
 export CLAUDE_CONFIG_DIR="${WORKSPACE}/.claude"
 mkdir -p "${CLAUDE_CONFIG_DIR}"
+
+# opencode: conversations + config
+persist_dir ".opencode" ".config/opencode"
+
+# Claude Code: conversations + config (in addition to CLAUDE_CONFIG_DIR)
+persist_dir ".config-claude" ".config/claude"
+
+# code-server: workspace layout, extensions, settings
+persist_dir ".code-server" ".local/share/code-server"
+
+# XFCE: desktop panel config, window positions
+persist_dir ".config-xfce4" ".config/xfce4"
+
+# XFCE session cache
+persist_dir ".cache-sessions" ".cache/sessions"
+
+# Setup .bashrc.d for persisting env vars to desktop terminals
+OPENCODE_BASHRC_D="${HOME}/.bashrc.d"
+install -d -m 755 "${OPENCODE_BASHRC_D}"
+# Ensure .bashrc sources .bashrc.d/ (idempotent — only adds once).
+if ! grep -q 'source.*\.bashrc\.d' "${HOME}/.bashrc" 2>/dev/null; then
+    printf '\nfor f in "${HOME}/.bashrc.d/"*; do [ -r "$f" ] && source "$f"; done\n' >> "${HOME}/.bashrc"
+fi
+OPENCODE_ENV_FILE="${OPENCODE_BASHRC_D}/opencode-env"
+: > "${OPENCODE_ENV_FILE}"  # clear stale entries on restart
+
+# Persist CLAUDE_CONFIG_DIR to .bashrc.d so desktop terminals inherit it
+printf 'export CLAUDE_CONFIG_DIR="%s"\n' "${CLAUDE_CONFIG_DIR}" >> "${OPENCODE_ENV_FILE}"
 
 # Claude Code: route through Azure AI Foundry using FOUNDRY_API_KEY (from
 # envFrom). The Azure resource only deploys claude-opus-4-8, so all model
@@ -523,17 +577,6 @@ fi
 #   ZAI_API_KEY    -> ZHIPU_API_KEY            (Z.AI + Z.AI Coding Plan share it)
 #   FOUNDRY_API_KEY -> AZURE_API_KEY + AZURE_RESOURCE_NAME   (Azure / Foundry)
 #
-# Also persist the aliases to ~/.bashrc.d/opencode-env so desktop terminals
-# (which are not direct children of this entrypoint) inherit them.
-OPENCODE_BASHRC_D="${HOME}/.bashrc.d"
-install -d -m 755 "${OPENCODE_BASHRC_D}"
-# Ensure .bashrc sources .bashrc.d/ (idempotent — only adds once).
-if ! grep -q 'source.*\.bashrc\.d' "${HOME}/.bashrc" 2>/dev/null; then
-    printf '\nfor f in "${HOME}/.bashrc.d/"*; do [ -r "$f" ] && source "$f"; done\n' >> "${HOME}/.bashrc"
-fi
-OPENCODE_ENV_FILE="${OPENCODE_BASHRC_D}/opencode-env"
-: > "${OPENCODE_ENV_FILE}"  # clear stale entries on restart
-
 if [ -n "${ZAI_API_KEY:-}" ]; then
     export ZHIPU_API_KEY="${ZAI_API_KEY}"
     printf 'export ZHIPU_API_KEY="%s"\n' "${ZAI_API_KEY}" >> "${OPENCODE_ENV_FILE}"
@@ -581,13 +624,14 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
           "tool_call": true,
           "limit": { "context": 262144, "output": 32768 },
           "options": {
-            "temperature": 0.1,
+            "temperature": 0.6,
             "top_p": 0.95,
             "extraBody": {
               "top_k": 20,
+              "min_p": 0.0,
               "presence_penalty": 0.0,
               "repetition_penalty": 1.0,
-              "chat_template_kwargs": { "enable_thinking": true }
+              "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }
             }
           }
         },
@@ -598,13 +642,14 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
           "tool_call": true,
           "limit": { "context": 262144, "output": 32768 },
           "options": {
-            "temperature": 0.1,
+            "temperature": 0.6,
             "top_p": 0.95,
             "extraBody": {
               "top_k": 20,
+              "min_p": 0.0,
               "presence_penalty": 0.0,
               "repetition_penalty": 1.0,
-              "chat_template_kwargs": { "enable_thinking": true }
+              "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }
             }
           }
         }
@@ -614,6 +659,29 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
 }
 OPENCODE_CFG
 log "opencode: Waterschap LLM provider configured (qwen3.6-27b, qwen3.6-35b-a3b)"
+
+# ---------------------------------------------------------------------------
+# 2d. Patch kubeconfig to use internal API server endpoint.
+# ---------------------------------------------------------------------------
+# The Vault-provided kubeconfig points to the external endpoint
+# (kubeapi.rijnland.dev:6443), but the CiliumNetworkPolicy only allows
+# traffic to the kube-apiserver entity (internal endpoints). The mount is
+# read-only, so we copy to a writable location and rewrite the server URL.
+fix_kubeconfig() {
+    local src="${HOME}/.kube/config"
+    local dst="${WORKSPACE}/.kube/config"
+    if [ -f "${src}" ]; then
+        mkdir -p "$(dirname "${dst}")"
+        cp "${src}" "${dst}"
+        sed -i 's|server: https://kubeapi\.rijnland\.dev:6443|server: https://kubernetes.default.svc:443|' "${dst}"
+        export KUBECONFIG="${dst}"
+        log "kubeconfig patched to use internal API server endpoint"
+    else
+        warn "no kubeconfig found at ${src} — skipping patch"
+    fi
+}
+
+fix_kubeconfig
 
 seed_workspace
 
