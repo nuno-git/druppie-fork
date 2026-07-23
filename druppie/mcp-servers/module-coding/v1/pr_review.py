@@ -273,8 +273,13 @@ class PrReviewModule:
                         "url": pull.get("html_url"),
                     })
             except Exception as exc:
-                logger.warning("list_prs_needing_review failed for %s: %s", repo, exc)
-                errors.append(f"{repo}: {exc}")
+                # Include the exception type: transport failures like a TLS
+                # trust error or ConnectTimeout stringify to "", which would
+                # otherwise surface as a blank "<repo>: " and read as "no PRs".
+                logger.warning(
+                    "list_prs_needing_review failed for %s: %r", repo, exc
+                )
+                errors.append(f"{repo}: {type(exc).__name__}: {exc}")
 
         capped = needing[: self._max_prs_per_run]
         result = {

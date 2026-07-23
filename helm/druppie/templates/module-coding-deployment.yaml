@@ -84,6 +84,11 @@ spec:
             - name: docker-sock
               mountPath: /var/run/docker.sock
             {{- end }}
+            {{- if and .Values.prReview.repos .Values.prReview.caConfigMap }}
+            - name: prreview-ca
+              mountPath: /etc/prreview-ca
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -118,5 +123,12 @@ spec:
           hostPath:
             path: /var/run/docker.sock
             type: Socket
+        {{- end }}
+        {{- if and .Values.prReview.repos .Values.prReview.caConfigMap }}
+        # Private Waterschap CA for the scheduled PR reviewer's aigit HTTPS calls
+        # (same aigit-ca ConfigMap the backend's GitOps deployer uses).
+        - name: prreview-ca
+          configMap:
+            name: {{ .Values.prReview.caConfigMap }}
         {{- end }}
 {{- end }}

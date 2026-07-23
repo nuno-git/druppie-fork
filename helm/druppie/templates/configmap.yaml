@@ -82,6 +82,11 @@ data:
   {{- if .Values.prReview.jobSchedule }}
   JOB_PR_REVIEW_JOB_SCHEDULE: {{ .Values.prReview.jobSchedule | quote }}
   {{- end }}
+  {{- if .Values.prReview.caConfigMap }}
+  # Private Waterschap CA so the reviewer's Gitea HTTPS calls verify — aigit's
+  # internal CA is absent from the system trust store. Mounted by module-coding.
+  PRREVIEW_SSL_CA_BUNDLE: /etc/prreview-ca/chain.pem
+  {{- end }}
   {{- end }}
 
   # CORS

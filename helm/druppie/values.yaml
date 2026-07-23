@@ -523,6 +523,14 @@ prReview:
   jobSchedule: ''
   maxPrsPerRun: 5
   maxDiffLines: 3000
+  # ConfigMap (key chain.pem) with the private Waterschap CA chain, mounted into
+  # module-coding so the reviewer's HTTPS calls to aigit.waterschap.org verify
+  # (emitted as PRREVIEW_SSL_CA_BUNDLE). Without it httpx rejects aigit's
+  # internal CA and every list_prs_needing_review fails with a TLS error that
+  # reads as "0 PRs". The ai/k8s branch-env + colab-dev manifests already create
+  # this ConfigMap in every druppie namespace (same one the backend uses).
+  # Empty = rely on the system trust store, which does NOT contain this CA.
+  caConfigMap: aigit-ca
 init:
   enabled: true
   image:
