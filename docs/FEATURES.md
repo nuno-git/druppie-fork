@@ -288,9 +288,9 @@ The Business Analyst (BA) ↔ Architect design loop can spin indefinitely: the a
 1. Each time the architect sends `DESIGN_FEEDBACK`, a rejection is counted (`session.fd_rejection_count`).
 2. When the count reaches the **escalation threshold** (default **3**, set in `architect.yaml`), the session enters **BA HITL** (`paused_ba_hitl`): a human business analyst takes over the FD revision loop.
 3. The human BA can: **iterate** (revise the FD, return to human review), **ready** (hand the FD to the architect for review), **escalate** (step up to a human architect for final review), or **terminate** (hard end).
-4. The escalation is **sticky** (`session.fd_escalation_mode`): once active, every subsequent FD revision routes back to the human BA, never to the automated BA.
+4. The escalation is **sticky within the current FD cycle** (`session.fd_escalation_mode`): while active, every subsequent FD revision routes back to the human BA, never to the automated BA. The automated loop already failed to converge once, so it isn't trusted again for the same FD.
 5. The human BA may **escalate to a human architect** only after at least one post-HITL rejection (`fd_post_hitl_rejection_count >= 1`).
-6. The human architect can **approve** (design accepted) or **reject** — routing back to the BA HITL or terminating.
+6. The human architect can **approve** (design accepted) or **reject** — routing back to the BA HITL or terminating. **Approve resets escalation**: `fd_escalation_mode` flips back to `False` and both rejection counters return to 0, so the next FD cycle starts fresh rather than staying escalated.
 7. **Terminated** (`terminated`) is a hard terminal state: pending runs are cancelled and the session cannot be resumed.
 
 The Planner is the primary trigger (it counts `DESIGN_FEEDBACK` and routes to the reserved pseudo-agent `ba_hitl`). The orchestrator runs an autonomous **backstop** that independently counts rejections and forces the HITL pause if the Planner mis-routes, so the loop is guaranteed to break even on LLM routing errors.
@@ -317,9 +317,9 @@ The Planner is the primary trigger (it counts `DESIGN_FEEDBACK` and routes to th
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `fd_rejection_count` | Integer | Number of architect `DESIGN_FEEDBACK` rejections for the current FD |
-| `fd_escalation_mode` | Boolean | Sticky latch — once True, all FD revisions route to the human BA |
-| `fd_post_hitl_rejection_count` | Integer | Rejections that occurred after escalation; gates the escalate-to-architect option |
+| `fd_rejection_count` | Integer | Number of architect `DESIGN_FEEDBACK` rejections for the current FD; resets to 0 on architect approve |
+| `fd_escalation_mode` | Boolean | Sticky within an FD cycle: while True, all FD revisions route to the human BA; resets to False on architect approve so a new FD cycle starts fresh |
+| `fd_post_hitl_rejection_count` | Integer | Rejections that occurred after escalation; gates the escalate-to-architect option; resets to 0 on architect approve |
 
 ### Notifications
 

@@ -59,7 +59,7 @@ Last updated: 2026-07-15
 - ~~Document Formatter — Replace Lato with Neusa Next Std (if licensed)~~ ✅ DONE (Neusa Next Pro fonts added alongside Lato)
 - FD Escalation — DB Column Widening Has No Migration (`sessions.status` widened to `varchar(30)`, dev DBs need `reset-db`)
 - FD Escalation — Notifications Are Poll-Based Only (no WebSocket/push; unread-badge/bell UI not wired beyond the cards)
-- FD Escalation — `fd_escalation_mode` Latch Never Reset (once escalated, always escalated)
+- ~~FD Escalation — `fd_escalation_mode` Latch Never Reset (once escalated, always escalated)~~ ✅ DONE (latch + rejection counters now reset on architect approve; sticky only within an FD cycle)
 - FD Escalation — Planner Routing Relies on LLM Counting `DESIGN_FEEDBACK` (orchestrator backstop is the safety net)
 - ~~FD Escalation — Undocumented~~ ✅ DONE (FEATURES.md / TECHNICAL.md updated)
 - ~~FD Escalation — Sticky loop bypassed on approval-resume~~ ✅ DONE (`_evaluate_escalation` now called in `_handle_agent_resume_result`, covering approval-gate and HITL-answer resume paths)
@@ -552,12 +552,10 @@ The FD-escalation HITL feature (branch `feature/fd-escalation-hitl`) ships on `c
 - **Current state:** HITL-pause notifications are persisted as `Notification` rows and surfaced via `GET /api/notifications`. There is no WebSocket/push channel (the platform is polling-only — see "No WebSocket Support" above).
 - **Impact:** The unread-badge / bell UI is not wired beyond the review cards. Recipients must poll or watch the session. A 2026-06 auth bug where `get_current_user` never synced roles (so `get_by_role` returned no recipients) was fixed in the same branch, but the delivery is still best-effort poll-based.
 
-### FD Escalation — `fd_escalation_mode` Latch Never Reset
+### ~~FD Escalation — `fd_escalation_mode` Latch Never Reset~~ (DONE)
 
-- **Location:** `druppie/execution/orchestrator.py:1967-1972`, `druppie/db/models/session.py:35`
-- **Current state:** `fd_escalation_mode` is set to `True` when the rejection count crosses the threshold, but it is never set back to `False` — not even after a human architect approves the FD.
-- **Impact:** Behavior is "once escalated, always escalated" for the rest of the session's FD cycle. This is currently intended (sticky supervision), but it means a session cannot fall back to the automated BA after a successful human approval.
-- **Decision needed:** Confirm whether the latch should reset on architect approval, or remain permanent by design.
+- **Resolved in:** `feature/fd-escalation-hitl` branch
+- **Resolution:** escalation is now **graduate-on-approve**. The approve branch of `resume_after_architect_hitl` sets `fd_escalation_mode = False` and resets both `fd_rejection_count` and `fd_post_hitl_rejection_count` to 0, so a subsequent FD cycle starts fresh. Stickiness is preserved *within* a single FD cycle: every BA revision still routes to the human BA until the architect approves, because the automated loop already failed to converge once and isn't trusted again for the same FD.
 
 ### FD Escalation — Planner Routing Relies on LLM Counting `DESIGN_FEEDBACK`
 

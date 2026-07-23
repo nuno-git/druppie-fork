@@ -1649,7 +1649,7 @@ API routes
                               NotificationRepository ──► Notification
 ```
 
-Every human decision flows through two phases: **EscalationService** authorizes the actor and records an `EscalationEvent` (audit), then the **Orchestrator** performs the actual session state transition / resume (a separate phase, dispatched as a background task — the same pattern as the approvals route). EscalationService owns human-decision audit events; the orchestrator owns only automated state-machine events (`ba_hitl_entered`, sticky `ba_hitl_iterate`).
+Every human decision flows through two phases: **EscalationService** authorizes the actor and records an `EscalationEvent` (audit), then the **Orchestrator** performs the actual session state transition / resume (a separate phase, dispatched as a background task — the same pattern as the approvals route). EscalationService owns human-decision audit events (`ba_hitl_iterate`, `ba_hitl_ready`, `ba_hitl_escalate`, and the architect decisions); the orchestrator owns only automated state-machine events (`ba_hitl_entered`, `ba_hitl_sticky_reenter`).
 
 ### 13.2 Orchestrator Enforcement
 
@@ -1657,7 +1657,7 @@ The orchestrator (`druppie/execution/orchestrator.py`) enforces the state machin
 
 - **Pseudo-agent interception** (`_intercept_reserved_agent`, `orchestrator.py:1818`): before any agent is loaded, reserved ids `ba_hitl` and `architect_hitl` are intercepted and mapped to `PAUSED_BA_HITL` / `PAUSED_ARCHITECT_HITL`.
 - **Backstop rejection counter** (`_evaluate_escalation` / `_handle_rejection_routing`, `orchestrator.py:1916`): when an `architect` or `planner` run completes and a pending `business_analyst` revision exists (and an architect has already run), `fd_rejection_count` increments. At the threshold the session is forced into `PAUSED_BA_HITL`. The `_has_completed_architect` guard avoids counting pure elicitation rounds.
-- **Sticky supervised BA loop**: when a `business_analyst` run completes while `fd_escalation_mode` is set, control returns to the human (`PAUSED_BA_HITL`) — it never auto-proceeds to the architect. The check runs in both `execute_pending_runs` (post-completion chokepoint) and `_handle_agent_resume_result` (covers approval-gate and HITL-answer resume paths — without the latter, a BA run that completed after an approval-gate pause would bypass the sticky loop and set the session to `completed`).
+- **Sticky supervised BA loop**: when a `business_analyst` run completes while `fd_escalation_mode` is set, control returns to the human (`PAUSED_BA_HITL`) — it never auto-proceeds to the architect. The check runs in both `execute_pending_runs` (post-completion chokepoint) and `_handle_agent_resume_result` (covers approval-gate and HITL-answer resume paths — without the latter, a BA run that completed after an approval-gate pause would bypass the sticky loop and set the session to `completed`). The stickiness is per-FD-cycle: the approve branch of `resume_after_architect_hitl` clears `fd_escalation_mode` and zeroes both rejection counters, so a subsequent FD cycle starts un-escalated.
 - **Post-HITL rejection gate**: once escalated, a further rejection increments `fd_post_hitl_rejection_count` and returns to the human BA. Escalate-to-architect is gated on `fd_post_hitl_rejection_count >= 1`, enforced synchronously by `EscalationService` (returns 409) and re-checked by the orchestrator as defense in depth.
 - **Hard TERMINATED guard**: `terminate_session` cancels all pending runs and sets `terminated`; `_assert_not_terminated` guards both execute and resume paths.
 
@@ -1693,7 +1693,7 @@ _DEFAULT_ESCALATION_THRESHOLD = 3
 | GET | `/api/notifications` | Current user's notifications |
 | POST | `/api/notifications/{id}/read` | Mark a notification read (404 if not owned) |
 
-Request bodies use `Literal` decision enums; service errors map to 403 (auth) / 404 (not found) / 409 (wrong state or gate not met) / 422 (schema, e.g. `reject` without `next_on_reject`). `ArchitectHitlRequest` carries a `model_validator` so `reject` requires `next_on_reject` at the schema boundary.
+Request bodies use `Literal` decision enums; service errors map to 403 (auth) / 404 (not found) / 409 (wrong state, gate not met, or task conflict) / 422 (schema, e.g. `reject` without `next_on_reject`). The escalation and approvals resume routes acquire a session task via `create_session_task` and return 409 on `SessionTaskConflict`, matching the chat/sessions resume pattern. `ArchitectHitlRequest` carries a `model_validator` so `reject` requires `next_on_reject` at the schema boundary.
 
 ### 13.5 Session Model Changes
 
@@ -1734,7 +1734,7 @@ id: architect
 escalation_threshold: 3
 ```
 
-The **Planner** (`planner.yaml`) counts `DESIGN_FEEDBACK` occurrences in the accumulated summary; below the threshold it routes back to `business_analyst`; at/above the threshold it routes to the reserved pseudo-agent `ba_hitl`. The routing is **sticky** — once escalation is active, all subsequent FD revisions route to `ba_hitl`, never back to the automated BA.
+The **Planner** (`planner.yaml`) counts `DESIGN_FEEDBACK` occurrences in the accumulated summary; below the threshold it routes back to `business_analyst`; at/above the threshold it routes to the reserved pseudo-agent `ba_hitl`. The routing is **sticky within an FD cycle**: while escalation is active, all FD revisions route to `ba_hitl`, never back to the automated BA, until the architect approves (which clears escalation mode).
 
 The **Business Analyst** (`business_analyst.yaml`) declares a "Supervised BA HITL Mode" prompt note: when operating under human supervision, it revises the FD on the human's input and returns control to the human BA via `done()` rather than auto-proceeding to the architect, while still emitting its normal status signals so the Planner can track progress.
 
@@ -1746,8 +1746,9 @@ Per `CLAUDE.md:251`, agent definitions live in YAML files — the database is no
 
 | Event type | Triggered by |
 |------------|--------------|
-| `ba_hitl_entered` | Session first enters BA HITL (orchestrator) |
-| `ba_hitl_iterate` | Human BA iterates / sticky loop returns to human |
+| `ba_hitl_entered` | Session enters BA HITL (orchestrator); covers initial entry and re-entry from architect-reject |
+| `ba_hitl_sticky_reenter` | System sticky-loop re-entry: a BA revision completes while escalated, routing back to the human (orchestrator, no actor) |
+| `ba_hitl_iterate` | Human BA chooses to iterate (EscalationService) |
 | `ba_hitl_ready` | Human BA marks FD ready for architect |
 | `ba_hitl_escalate` | Human BA escalates to architect HITL |
 | `architect_hitl_entered` | Session enters architect HITL (orchestrator) |
