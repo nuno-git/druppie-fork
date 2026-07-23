@@ -17,6 +17,7 @@ from druppie.api.deps import get_current_user, get_escalation_service, get_orche
 from druppie.api.errors import AuthorizationError, ConflictError, NotFoundError
 from druppie.api.main import create_app
 from druppie.api.routes import escalations as esc_mod
+from druppie.core.background_tasks import SessionTaskConflict
 from druppie.domain.common import EscalationEventType
 from druppie.domain.escalation import EscalationEventDetail, EscalationEventList
 
@@ -92,7 +93,9 @@ def mock_orchestrator():
 def as_admin(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(ADMIN_SUB, ["admin"])
     _override_deps(app, mock_service, mock_orchestrator)
-    with patch.object(esc_mod, "create_tracked_task"):
+    with patch.object(esc_mod, "create_session_task"), \
+         patch.object(esc_mod, "_resume_ba_hitl"), \
+         patch.object(esc_mod, "_resume_architect_hitl"):
         yield
     app.dependency_overrides.clear()
 
@@ -101,7 +104,9 @@ def as_admin(app, mock_service, mock_orchestrator):
 def as_ba(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(BA_SUB, ["business_analyst"])
     _override_deps(app, mock_service, mock_orchestrator)
-    with patch.object(esc_mod, "create_tracked_task"):
+    with patch.object(esc_mod, "create_session_task"), \
+         patch.object(esc_mod, "_resume_ba_hitl"), \
+         patch.object(esc_mod, "_resume_architect_hitl"):
         yield
     app.dependency_overrides.clear()
 
@@ -110,7 +115,9 @@ def as_ba(app, mock_service, mock_orchestrator):
 def as_architect(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(ARCHITECT_SUB, ["architect"])
     _override_deps(app, mock_service, mock_orchestrator)
-    with patch.object(esc_mod, "create_tracked_task"):
+    with patch.object(esc_mod, "create_session_task"), \
+         patch.object(esc_mod, "_resume_ba_hitl"), \
+         patch.object(esc_mod, "_resume_architect_hitl"):
         yield
     app.dependency_overrides.clear()
 
@@ -119,7 +126,9 @@ def as_architect(app, mock_service, mock_orchestrator):
 def as_owner(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(OWNER_SUB, ["user"])
     _override_deps(app, mock_service, mock_orchestrator)
-    with patch.object(esc_mod, "create_tracked_task"):
+    with patch.object(esc_mod, "create_session_task"), \
+         patch.object(esc_mod, "_resume_ba_hitl"), \
+         patch.object(esc_mod, "_resume_architect_hitl"):
         yield
     app.dependency_overrides.clear()
 
@@ -128,7 +137,9 @@ def as_owner(app, mock_service, mock_orchestrator):
 def as_plain(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(PLAIN_SUB, ["user"])
     _override_deps(app, mock_service, mock_orchestrator)
-    with patch.object(esc_mod, "create_tracked_task"):
+    with patch.object(esc_mod, "create_session_task"), \
+         patch.object(esc_mod, "_resume_ba_hitl"), \
+         patch.object(esc_mod, "_resume_architect_hitl"):
         yield
     app.dependency_overrides.clear()
 
@@ -207,6 +218,14 @@ class TestBaHitlRoute:
         r = client.post(self.BASE, json={"decision": "iterate"})
         assert r.status_code == 409
 
+    def test_409_task_already_running(self, client, as_admin, mock_service, mock_orchestrator):
+        mock_service.record_ba_hitl_decision.return_value = _fake_event(decision="iterate")
+        esc_mod.create_session_task.side_effect = SessionTaskConflict(
+            "A background task is already running"
+        )
+        r = client.post(self.BASE, json={"decision": "iterate"})
+        assert r.status_code == 409
+
     def test_422_invalid_decision(self, client, as_admin):
         r = client.post(self.BASE, json={"decision": "invalid_choice"})
         assert r.status_code == 422
@@ -258,7 +277,7 @@ class TestArchitectHitlRoute:
             decision="reject",
             event_type=EscalationEventType.ARCHITECT_HITL_REJECT_TERMINATE,
         )
-        # The orchestrator resume runs in a background task (create_tracked_task,
+        # The orchestrator resume runs in a background task (create_session_task,
         # patched out here); the synchronous contract is the service audit call.
         r = client.post(self.BASE, json={"decision": "reject", "next_on_reject": "terminate"})
         assert r.status_code == 200
@@ -288,6 +307,14 @@ class TestArchitectHitlRoute:
     def test_409_wrong_state(self, client, as_architect, mock_service, mock_orchestrator):
         mock_service.record_architect_hitl_decision.side_effect = ConflictError(
             "Session not in paused_architect_hitl (status=active)"
+        )
+        r = client.post(self.BASE, json={"decision": "approve"})
+        assert r.status_code == 409
+
+    def test_409_task_already_running(self, client, as_architect, mock_service, mock_orchestrator):
+        mock_service.record_architect_hitl_decision.return_value = _fake_event(decision="approve")
+        esc_mod.create_session_task.side_effect = SessionTaskConflict(
+            "A background task is already running"
         )
         r = client.post(self.BASE, json={"decision": "approve"})
         assert r.status_code == 409

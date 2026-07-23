@@ -42,7 +42,7 @@ from druppie.api.deps import (
     get_orchestrator,
     get_user_roles,
 )
-from druppie.core.background_tasks import create_tracked_task, run_session_task
+from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
 from druppie.domain import EscalationEventDetail, EscalationEventList
 from druppie.services import EscalationService
 
@@ -193,7 +193,8 @@ async def ba_hitl(
         message = "Session terminated"
     else:
         try:
-            create_tracked_task(
+            create_session_task(
+                session_id,
                 _resume_ba_hitl(
                     session_id=session_id,
                     decision=request.decision,
@@ -201,6 +202,11 @@ async def ba_hitl(
                     user_id=user_id,
                 ),
                 name=f"resume-ba-hitl-{session_id}",
+            )
+        except SessionTaskConflict:
+            raise HTTPException(
+                status_code=409,
+                detail="A task is already running for this session",
             )
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to start background task")
@@ -248,7 +254,8 @@ async def architect_hitl(
 
     # Step 2: Spawn background task to resume
     try:
-        create_tracked_task(
+        create_session_task(
+            session_id,
             _resume_architect_hitl(
                 session_id=session_id,
                 decision=request.decision,
@@ -256,6 +263,11 @@ async def architect_hitl(
                 user_id=user_id,
             ),
             name=f"resume-architect-hitl-{session_id}",
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
         )
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to start background task")
