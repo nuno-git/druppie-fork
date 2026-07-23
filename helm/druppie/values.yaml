@@ -126,6 +126,8 @@ backend:
       memory: 1Gi
       cpu: 2000m
   devMode: false
+  dockerSocket:
+    enabled: false
   serviceAccount:
     create: true
     name: ''

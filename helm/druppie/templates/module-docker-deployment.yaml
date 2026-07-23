@@ -1,4 +1,5 @@
-{{- if and .Values.modules.docker.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "docker"))) }}
+{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "docker") -}}
+{{- if .Values.modules.docker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,14 +32,25 @@ spec:
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
         - name: module-docker
+          {{- if $dev }}
+          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.docker.image) }}
+          imagePullPolicy: Always
+          command:
+            - bash
+            - /scripts/module-dev-entrypoint.sh
+            - "docker"
+            - "module-docker"
+            - {{ .Values.modules.docker.port | quote }}
+          {{- else }}
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- end }}
           env:
             - name: MCP_PORT
               value: {{ .Values.modules.docker.port | quote }}
             - name: DRUPPIE_URL
               value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
-            {{- if .Values.backend.dockerSocket.enabled }}
+            {{- if and .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
             - name: DOCKER_HOST
               value: "unix:///var/run/docker.sock"
             {{- end }}
@@ -48,8 +60,6 @@ spec:
             - secretRef:
                 name: {{ include "druppie.fullname" . }}-secrets
             {{- if .Values.global.extraEnvFromSecret }}
-            # Branch environments: Vault-sourced overrides (ESO-managed). Listed
-            # last so its keys win; optional so pods start while it syncs.
             - secretRef:
                 name: {{ .Values.global.extraEnvFromSecret }}
                 optional: true
@@ -59,12 +69,33 @@ spec:
               containerPort: {{ .Values.modules.docker.port }}
               protocol: TCP
           volumeMounts:
+            {{- if $dev }}
+            - name: workspace-dev
+              mountPath: /workspace
+            - name: module-dev-entrypoint
+              mountPath: /scripts
+              readOnly: true
+            {{- else }}
             - name: workspace
               mountPath: /workspaces
-            {{- if .Values.backend.dockerSocket.enabled }}
+            {{- end }}
+            {{- if and .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
             - name: docker-sock
               mountPath: /var/run/docker.sock
             {{- end }}
+          {{- if $dev }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.docker.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.docker.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- else }}
           livenessProbe:
             httpGet:
               path: /health
@@ -81,6 +112,7 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          {{- end }}
           resources:
             {{- toYaml .Values.modules.docker.resources | nindent 12 }}
       {{- with .Values.modules.docker.nodeSelector }}
@@ -91,10 +123,20 @@ spec:
         node-role.kubernetes.io/worker: "true"
       {{- end }}
       volumes:
+        {{- if $dev }}
+        - name: workspace-dev
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        - name: module-dev-entrypoint
+          configMap:
+            name: {{ include "druppie.fullname" . }}-module-dev-entrypoint
+            defaultMode: 0755
+        {{- else }}
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
-        {{- if .Values.backend.dockerSocket.enabled }}
+        {{- end }}
+        {{- if and .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
         - name: docker-sock
           hostPath:
             path: /var/run/docker.sock
