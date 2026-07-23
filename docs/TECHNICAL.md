@@ -1682,6 +1682,8 @@ _DEFAULT_ESCALATION_THRESHOLD = 3
 
 > **Authorization by decision (deliberate asymmetry):** the BA "terminate" decision routes through `EscalationService.terminate` (`escalation_service.py`), which enforces owner-only auth, because termination is the one irreversible transition in the state machine; the reversible revision decisions (iterate / ready / escalate) use the `ba_hitl` auth level, which accepts the `business_analyst` role OR the session owner. See `_check_authorization` in `escalation_service.py` and the route dispatch in `escalations.py:171`.
 
+> **Role-global trust model (deliberate):** the `ba_hitl` and `architect_hitl` auth levels are role-global, not project-scoped. Any user holding the `business_analyst` role can act on any session's BA HITL, and any `architect` on any architect HITL, regardless of project membership or ownership (only `terminate` and `history` are owner-only). This is a conscious trust-model choice for a small, trusted team (single waterschap, a handful of each role). Revisit by scoping `ba_hitl` / `architect_hitl` to project membership if the team grows or the deployment goes multi-tenant.
+
 ### 13.4 New API Routes
 
 | Method | Route | Purpose |
