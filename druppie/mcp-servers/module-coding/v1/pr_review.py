@@ -20,8 +20,10 @@ TLS: verification is always on. For instances with a private CA, point
 PRREVIEW_SSL_CA_BUNDLE at the CA file — there is no insecure off-switch.
 """
 
+import asyncio
 import logging
 import os
+import random
 import re
 
 import httpx
@@ -29,6 +31,16 @@ import httpx
 logger = logging.getLogger("coding-mcp")
 
 REQUEST_TIMEOUT = 30.0
+
+# Connection robustness: the reviewer runs unattended on a cron against a Gitea
+# that may briefly 5xx (restart/upgrade), rate-limit (429) or drop a connection.
+# Transient failures are retried with exponential backoff + jitter so a blip
+# does not cost a whole review round; non-transient errors (4xx, TLS trust)
+# still surface once the attempts are spent. Tunable via PRREVIEW_HTTP_ATTEMPTS.
+DEFAULT_HTTP_ATTEMPTS = 3
+BACKOFF_BASE_SECONDS = 0.5
+BACKOFF_MAX_SECONDS = 8.0
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 # Same default as tools.py's EXTERNAL_GITEA_URL: the coding module targets the
 # shared external Gitea (aigit) unless explicitly overridden. Keeping the
@@ -46,6 +58,23 @@ SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 VALID_VERDICTS = {"APPROVE", "REQUEST_CHANGES", "COMMENT", "SKIPPED_TOO_LARGE"}
 
 
+def _env_int(name: str, default: int) -> int:
+    """Parse an int env var, falling back to `default` on unset/blank/garbage.
+
+    A bad override (e.g. an empty string from an unquoted Helm value) must not
+    crash module construction — that would masquerade as "PR review is not
+    configured" and hide the real cause.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        logger.warning("invalid %s=%r; using default %d", name, raw, default)
+        return default
+
+
 def build_marker(sha: str, verdict: str) -> str:
     return f"<!-- druppie-pr-review sha:{sha} verdict:{verdict} -->"
 
@@ -59,11 +88,19 @@ def parse_marker(body: str | None) -> tuple[str, str] | None:
 class GiteaPRClient:
     """REST client bound to a single Gitea instance."""
 
-    def __init__(self, base_url: str, token: str, ca_bundle: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        ca_bundle: str | None = None,
+        max_attempts: int = DEFAULT_HTTP_ATTEMPTS,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token
         # httpx `verify`: True (system CAs) or a path to a private CA bundle.
         self._verify = ca_bundle if ca_bundle else True
+        # At least one attempt; retries are on top of the first try.
+        self._max_attempts = max(1, max_attempts)
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"token {self._token}"}
@@ -79,35 +116,67 @@ class GiteaPRClient:
             response=resp,
         )
 
-    async def _get(self, path: str, params: dict | None = None, *, raw: bool = False):
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, verify=self._verify) as client:
-            resp = await client.get(
-                f"{self._base_url}/api/v1/{path}",
-                params=params,
-                headers=self._headers(),
-            )
+    async def _sleep_backoff(self, attempt: int) -> None:
+        """Wait before the retry after `attempt` (1-based): exponential + jitter."""
+        delay = min(BACKOFF_MAX_SECONDS, BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)))
+        await asyncio.sleep(delay + random.uniform(0, delay / 2))
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | None = None,
+        raw: bool = False,
+    ):
+        """Issue one API request, retrying transient failures (transport errors,
+        5xx, 429) with backoff. Non-transient responses raise via
+        _raise_for_status; the last attempt always propagates its outcome."""
+        url = f"{self._base_url}/api/v1/{path}"
+        for attempt in range(1, self._max_attempts + 1):
+            is_last = attempt == self._max_attempts
+            try:
+                async with httpx.AsyncClient(
+                    timeout=REQUEST_TIMEOUT, verify=self._verify
+                ) as client:
+                    resp = await client.request(
+                        method,
+                        url,
+                        params=params,
+                        json=json_body,
+                        headers=self._headers(),
+                    )
+            except httpx.TransportError as exc:
+                # Timeouts, connect resets, protocol errors, TLS failures. Retry
+                # the transient ones; a genuine misconfig (e.g. a bad CA bundle)
+                # simply fails again and surfaces after the attempts are spent.
+                if is_last:
+                    raise
+                logger.warning(
+                    "gitea %s %s transport error %r (attempt %d/%d); retrying",
+                    method, path, exc, attempt, self._max_attempts,
+                )
+                await self._sleep_backoff(attempt)
+                continue
+            if resp.status_code in RETRYABLE_STATUS and not is_last:
+                logger.warning(
+                    "gitea %s %s -> %d (attempt %d/%d); retrying",
+                    method, path, resp.status_code, attempt, self._max_attempts,
+                )
+                await self._sleep_backoff(attempt)
+                continue
             self._raise_for_status(resp)
             return resp.text if raw else resp.json()
 
+    async def _get(self, path: str, params: dict | None = None, *, raw: bool = False):
+        return await self._request("GET", path, params=params, raw=raw)
+
     async def _post(self, path: str, json_body: dict) -> dict:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, verify=self._verify) as client:
-            resp = await client.post(
-                f"{self._base_url}/api/v1/{path}",
-                json=json_body,
-                headers=self._headers(),
-            )
-            self._raise_for_status(resp)
-            return resp.json()
+        return await self._request("POST", path, json_body=json_body)
 
     async def _patch(self, path: str, json_body: dict) -> dict:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, verify=self._verify) as client:
-            resp = await client.patch(
-                f"{self._base_url}/api/v1/{path}",
-                json=json_body,
-                headers=self._headers(),
-            )
-            self._raise_for_status(resp)
-            return resp.json()
+        return await self._request("PATCH", path, json_body=json_body)
 
     async def get_authenticated_user(self) -> dict:
         """Return the user the token belongs to (GET /user)."""
@@ -185,10 +254,15 @@ class PrReviewModule:
                     f"PRREVIEW_REPOS entry '{repo}' must be '<owner>/<repo>'"
                 )
 
-        self._max_prs_per_run = int(os.getenv("PRREVIEW_MAX_PRS_PER_RUN", "5"))
-        self._max_diff_lines = int(os.getenv("PRREVIEW_MAX_DIFF_LINES", "3000"))
+        self._max_prs_per_run = _env_int("PRREVIEW_MAX_PRS_PER_RUN", 5)
+        self._max_diff_lines = _env_int("PRREVIEW_MAX_DIFF_LINES", 3000)
         ca_bundle = os.getenv("PRREVIEW_SSL_CA_BUNDLE", "").strip()
-        self._client = GiteaPRClient(base_url, token, ca_bundle=ca_bundle or None)
+        self._client = GiteaPRClient(
+            base_url,
+            token,
+            ca_bundle=ca_bundle or None,
+            max_attempts=_env_int("PRREVIEW_HTTP_ATTEMPTS", DEFAULT_HTTP_ATTEMPTS),
+        )
         self._bot_login: str | None = None
 
     @property
@@ -240,6 +314,7 @@ class PrReviewModule:
         skipped_unchanged = 0
         skipped_drafts = 0
         errors: list[str] = []
+        repos_ok = 0
 
         for repo in self._repos:
             owner, name = repo.split("/", 1)
@@ -272,6 +347,7 @@ class PrReviewModule:
                         "previously_reviewed_sha": previously_reviewed_sha,
                         "url": pull.get("html_url"),
                     })
+                repos_ok += 1
             except Exception as exc:
                 # Include the exception type: transport failures like a TLS
                 # trust error or ConnectTimeout stringify to "", which would
@@ -282,8 +358,13 @@ class PrReviewModule:
                 errors.append(f"{repo}: {type(exc).__name__}: {exc}")
 
         capped = needing[: self._max_prs_per_run]
+        # success=False only on a TOTAL outage (every configured repo errored),
+        # so the agent surfaces "the review round could not run" instead of the
+        # indistinguishable-looking "0 PRs need review". A partial failure (some
+        # repos listed) stays success=True with the errors attached.
+        total_failure = bool(errors) and repos_ok == 0
         result = {
-            "success": True,
+            "success": not total_failure,
             "prs": capped,
             "total_needing_review": len(needing),
             "skipped_over_cap": max(0, len(needing) - self._max_prs_per_run),

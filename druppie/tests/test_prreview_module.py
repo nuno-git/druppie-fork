@@ -375,3 +375,181 @@ def test_post_pr_review_validates_verdict_and_sha_and_body(mod, module):
 
     empty_body = asyncio.run(module.post_pr_review(_REPO, 1, "aaa1111", "APPROVE", "  "))
     assert empty_body["success"] is False and "body" in empty_body["error"]
+
+
+# ---------------------------------------------------------------------------
+# Connection robustness — retry/backoff, total-failure signal, safe env ints
+# ---------------------------------------------------------------------------
+
+class _FakeResponse:
+    """Minimal stand-in for httpx.Response used to script GiteaPRClient."""
+
+    def __init__(self, status_code, *, text="", json_data=None):
+        self.status_code = status_code
+        self.text = text
+        self._json = {} if json_data is None else json_data
+        self.reason_phrase = "STATUS"
+        self.url = "https://x/api"
+        self.request = None
+
+    @property
+    def is_success(self):
+        return 200 <= self.status_code < 300
+
+    def json(self):
+        return self._json
+
+
+def _ensure_transport_error():
+    """Give the httpx stub a TransportError class (shared across tests)."""
+    httpx = sys.modules["httpx"]
+    if not hasattr(httpx, "TransportError"):
+        class _TransportError(Exception):
+            pass
+
+        httpx.TransportError = _TransportError
+    return httpx
+
+
+def _script_httpx(monkeypatch, outcomes):
+    """Make httpx.AsyncClient.request replay `outcomes` (an Exception is raised,
+    anything else is returned). Returns the list recording each call."""
+    httpx = _ensure_transport_error()
+    seq = list(outcomes)
+    calls: list[tuple[str, str]] = []
+
+    class _ScriptedAsyncClient:
+        def __init__(self, *a, **k):
+            ...
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, method, url, **kwargs):
+            calls.append((method, url))
+            outcome = seq[min(len(calls) - 1, len(seq) - 1)]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    monkeypatch.setattr(httpx, "AsyncClient", _ScriptedAsyncClient)
+    return calls
+
+
+def _client_no_sleep(mod, attempts=3):
+    client = mod.GiteaPRClient("https://x", "tok", max_attempts=attempts)
+
+    async def _no_sleep(_attempt):
+        return None
+
+    client._sleep_backoff = _no_sleep  # never actually wait in tests
+    return client
+
+
+def test_retry_recovers_from_transient_transport_error(mod, monkeypatch):
+    httpx = _ensure_transport_error()
+    calls = _script_httpx(
+        monkeypatch,
+        [
+            httpx.TransportError("connection reset"),
+            httpx.TransportError("connection reset"),
+            _FakeResponse(200, json_data={"login": _BOT}),
+        ],
+    )
+    client = _client_no_sleep(mod, attempts=3)
+    result = asyncio.run(client.get_authenticated_user())
+    assert result == {"login": _BOT}
+    assert len(calls) == 3  # two failures, then success
+
+
+def test_retry_recovers_from_transient_5xx(mod, monkeypatch):
+    calls = _script_httpx(
+        monkeypatch,
+        [_FakeResponse(503), _FakeResponse(200, json_data=[{"number": 1}])],
+    )
+    client = _client_no_sleep(mod, attempts=3)
+    result = asyncio.run(client.list_open_pulls("ai", "druppie"))
+    assert result == [{"number": 1}]
+    assert len(calls) == 2
+
+
+def test_retry_gives_up_after_max_attempts_on_persistent_5xx(mod, monkeypatch):
+    httpx = _ensure_transport_error()
+    calls = _script_httpx(monkeypatch, [_FakeResponse(500)])  # always 500
+    client = _client_no_sleep(mod, attempts=3)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(client.get_authenticated_user())
+    assert len(calls) == 3  # exhausted all attempts
+
+
+def test_non_retryable_4xx_fails_fast(mod, monkeypatch):
+    httpx = _ensure_transport_error()
+    calls = _script_httpx(monkeypatch, [_FakeResponse(404, text="not found")])
+    client = _client_no_sleep(mod, attempts=3)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(client.list_open_pulls("ai", "nope"))
+    assert len(calls) == 1  # no retry on a 404
+
+
+def test_persistent_transport_error_propagates(mod, monkeypatch):
+    httpx = _ensure_transport_error()
+    calls = _script_httpx(monkeypatch, [httpx.TransportError("dns fail")])
+    client = _client_no_sleep(mod, attempts=2)
+    with pytest.raises(httpx.TransportError):
+        asyncio.run(client.get_authenticated_user())
+    assert len(calls) == 2
+
+
+def test_total_outage_marks_round_unsuccessful(mod, module):
+    class _Boom:
+        async def get_authenticated_user(self):
+            return {"login": _BOT}
+
+        async def list_open_pulls(self, *a, **k):
+            raise RuntimeError("ConnectTimeout")
+
+    module._client = _Boom()
+    result = asyncio.run(module.list_prs_needing_review())
+    assert result["success"] is False  # every repo failed -> surface the outage
+    assert result["prs"] == []
+    assert any(_REPO in e for e in result["errors"])
+
+
+def test_partial_failure_still_succeeds(mod, monkeypatch):
+    monkeypatch.setenv("PRREVIEW_REPOS", "ai/druppie,ai/other")
+    m = mod.PrReviewModule()
+
+    class _Mixed:
+        async def get_authenticated_user(self):
+            return {"login": _BOT}
+
+        async def list_open_pulls(self, owner, repo, limit=50):
+            if repo == "other":
+                raise RuntimeError("boom")
+            return [_pull(1, "aaa1111")]
+
+        async def list_issue_comments(self, *a, **k):
+            return []
+
+    m._client = _Mixed()
+    result = asyncio.run(m.list_prs_needing_review())
+    assert result["success"] is True  # one repo listed fine
+    assert [p["number"] for p in result["prs"]] == [1]
+    assert any("ai/other" in e for e in result["errors"])
+
+
+def test_env_int_falls_back_on_garbage_or_blank(mod, monkeypatch):
+    monkeypatch.setenv("PRREVIEW_MAX_PRS_PER_RUN", "not-a-number")
+    monkeypatch.setenv("PRREVIEW_MAX_DIFF_LINES", "   ")
+    m = mod.PrReviewModule()
+    assert m._max_prs_per_run == 5
+    assert m._max_diff_lines == 3000
+
+
+def test_http_attempts_env_is_honored(mod, monkeypatch):
+    monkeypatch.setenv("PRREVIEW_HTTP_ATTEMPTS", "5")
+    m = mod.PrReviewModule()
+    assert m._client._max_attempts == 5
