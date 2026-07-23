@@ -536,6 +536,73 @@ class TestJobSchedulerShouldRun:
 
 
 # ---------------------------------------------------------------------------
+# JobScheduler — _check_jobs overlap guard
+# ---------------------------------------------------------------------------
+
+
+class TestJobSchedulerOverlapGuard:
+    """A scheduled run must not stack on top of one that is still active."""
+
+    def _scheduler_with(self, job_service):
+        from druppie.services.job_service import JobScheduler
+
+        return JobScheduler(lambda _db: job_service)
+
+    def test_skips_trigger_when_run_already_active(self):
+        definition = MagicMock()
+        definition.id = uuid.uuid4()
+        definition.job_id = "pr_review_job"
+        definition.enabled = True
+
+        job_service = MagicMock()
+        job_service.list_definitions.return_value.items = [definition]
+        job_service.job_repo.has_active_runs_for_definition.return_value = True
+
+        scheduler = self._scheduler_with(job_service)
+        due = (True, datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc))
+        with patch("druppie.db.database.SessionLocal"), \
+                patch.object(scheduler, "_should_run", return_value=due):
+            pending = scheduler._check_jobs()
+
+        assert pending == []
+        job_service.job_repo.has_active_runs_for_definition.assert_called_once_with(
+            definition.id
+        )
+        # The slot is neither claimed nor triggered while a run is active.
+        job_service.job_repo.claim_job_trigger.assert_not_called()
+        job_service.trigger_job.assert_not_called()
+
+    def test_triggers_when_no_active_run(self):
+        from druppie.domain.common import JobRunStatus
+
+        definition = MagicMock()
+        definition.id = uuid.uuid4()
+        definition.job_id = "pr_review_job"
+        definition.enabled = True
+
+        run = MagicMock()
+        run.id = uuid.uuid4()
+        run.session_id = uuid.uuid4()
+        run.status = JobRunStatus.PENDING.value
+
+        job_service = MagicMock()
+        job_service.list_definitions.return_value.items = [definition]
+        job_service.job_repo.has_active_runs_for_definition.return_value = False
+        job_service.job_repo.claim_job_trigger.return_value = True
+        job_service.trigger_job.return_value = run
+
+        scheduler = self._scheduler_with(job_service)
+        due = (True, datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc))
+        with patch("druppie.db.database.SessionLocal"), \
+                patch.object(scheduler, "_should_run", return_value=due):
+            pending = scheduler._check_jobs()
+
+        assert pending == [(run.id, run.session_id)]
+        job_service.job_repo.claim_job_trigger.assert_called_once()
+        job_service.trigger_job.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # Domain models
 # ---------------------------------------------------------------------------
 

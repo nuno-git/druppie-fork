@@ -544,6 +544,23 @@ class JobScheduler:
                 should_run, last_scheduled = self._should_run(definition, now)
                 if not should_run:
                     continue
+                # Don't stack runs of the same definition. A run can take up to
+                # the 30-min execution timeout, longer than a tight cron gap
+                # (e.g. pr_review_job's */20), so a new tick can fire while the
+                # previous run is still active. Two concurrent PR-review rounds
+                # would each find no sticky comment and both create one, so the
+                # reviews stack — exactly what the marker dedup is meant to
+                # prevent. Skip WITHOUT claiming: last_triggered_at stays put,
+                # so the slot is retried on the next tick once the run finishes
+                # (no missed round). claim_job_trigger's CAS still guards the
+                # multi-instance race; this guards the single-instance overlap.
+                if job_service.job_repo.has_active_runs_for_definition(definition.id):
+                    logger.info(
+                        "job_scheduler_skip_active_run",
+                        job_id=definition.job_id,
+                        hint="previous_run_still_active",
+                    )
+                    continue
                 claimed = job_service.job_repo.claim_job_trigger(
                     definition.id, last_scheduled, now
                 )
