@@ -138,7 +138,7 @@ spec:
 | Area | Status | Copy? | Implication for user-apps |
 |------|--------|-------|---------------------------|
 | **Flux commit→reconcile loop** | ✅ Reliable (listed under *"wat al werkt"* in `dev-envs.md.txt`) | ✅ **Copy** | Core of D4/D5 is sound |
-| **Longhorn storage** | ❌ **Down today** (`docs/infra-longhorn-issue.md`, 2026-07-16): rebuild wiped `longhorn-distributed` SC, nodes `Ready=False`, volumes faulted | 🚫 **Rethink** | AC4 **blocked on infra**. User-app PVCs must use `longhorn-branch-env` (Delete) — see D6 |
+| **Longhorn storage** | ❌ **Down today** (`docs/infra-longhorn-issue.md`, 2026-07-16): rebuild wiped `longhorn-distributed` SC, nodes `Ready=False`, volumes faulted | 🚫 **Rethink** | AC4 **blocked on infra**. User-app PVCs must use `longhorn-local` (Delete) — see D6 |
 | **Orphan-volume trap** | ❌ Ephemeral ns + Retain-policy SC leaked ~135 orphaned volumes → `storageScheduled` exhausted (`docs/longhorn-storage-issue.md`) | 🚫 **Avoid** | Same risk for user-apps (also ephemeral). `Delete`-reclaim class is mandatory |
 | **ESO sync race** | ⚠️ `fix(init-job): wait for ESO sync before creating workspace client` | ⚠️ **Gate** | Chart's DB ExternalSecret can race the app Deployment — must wait for `Synced` |
 | **imageTag auto-resolve** | ⚠️ Was empty → `ImagePullBackOff` (`fix(branch-env): use correct HR name`) | ✅ **Avoided by design** | The per-app CI sets the exact tag it just built; no parent-HR auto-resolve |
@@ -212,7 +212,7 @@ Partial code on `colab-dev`:
 - **D3 — Credentials.** Push: Harbor robot creds (`HARBOR_USERNAME/PASSWORD`) provisioned into each app repo by `create_project` via the Gitea API (or org-level secrets). Pull: deployed Deployments get `imagePullSecrets: harbor-regcred`. *(AC2)*
 - **D4 — Deploy = GitOps commit to `ai/k8s`.** `module-deploy` commits `clusters/user-apps/<app-slug>/{gitrepository,helmrelease}.yaml` via the Gitea API (same code path `branch_environment_service.py:870` already uses). `HelmRelease.values` sets `imageTag`, ingress `host`, DB secret ref. Flux reconciles. **No `kubectl apply`.** *(AC3)*
 - **D5 — Per-app namespace + a `user-apps` Kustomization.** Each app gets its **own namespace** (clean teardown/isolation, matches branch-env precedent); a separate Flux Kustomization watches `./clusters/user-apps`, `prune:true`, machine-managed, isolated from prod. One-time infra commit. *(AC3, AC6)*
-- **D6 — PVC from the chart using `longhorn-branch-env` (Delete, 1 replica).** User-apps are ephemeral (teardown = namespace delete) → **same orphan-volume risk** as branch-envs. `Delete`-reclaim class is **mandatory** — `longhorn-distributed` (Retain) leaked ~135 orphaned volumes and exhausted scheduling (`docs/longhorn-storage-issue.md`). *(AC4)*
+- **D6 — PVC from the chart using `longhorn-local` (Delete, 1 replica).** User-apps are ephemeral (teardown = namespace delete) → **same orphan-volume risk** as branch-envs. `Delete`-reclaim class is **mandatory** — `longhorn-distributed` (Retain) leaked ~135 orphaned volumes and exhausted scheduling (`docs/longhorn-storage-issue.md`). *(AC4)*
 - **D7 — Reachability via chart Ingress on `<app>-apps.rijnland.dev`** — a single DNS label, so covered by the **existing `*.rijnland.dev` wildcard cert** (secret `druppie-tls`, mirrored into each app namespace via the cluster-wide `druppie-tls-mirror` store). No new cert. *(AC5)*
 - **D8 — Health gate** polls the Ingress URL to 300s (parity with the Docker path's helper). *(AC5)*
 - **D9 — Teardown = delete the `ai/k8s` subdir**; `prune:true` removes the per-app namespace + all resources (and `Delete`-reclaim PVCs auto-cleanup — no orphans). *(AC6)*
@@ -253,7 +253,7 @@ Druppie's own CI bumps `imageTag` by cloning `ai/k8s` with `CI_GIT_TOKEN` (`.git
 
 ### Phase 1 — Template: chart + CI workflow  *(AC1)*
 **ai/druppie:** replace `templates/project/docker-compose.yaml` with:
-- `templates/project/chart/` — `Chart.yaml`, `values.yaml` (defaults: image, port 8000, `/health`, pgvector); `templates/{deployment,service,ingress,pvc,externalsecret}.yaml` (**PVC storageClass `longhorn-branch-env`**, no node pinning, ESO-sync gating D11)
+- `templates/project/chart/` — `Chart.yaml`, `values.yaml` (defaults: image, port 8000, `/health`, pgvector); `templates/{deployment,service,ingress,pvc,externalsecret}.yaml` (**PVC storageClass `longhorn-local`**, no node pinning, ESO-sync gating D11)
 - `templates/project/.gitea/workflows/build.yaml` — trimmed from Druppie's own: build 1 image → Harbor → bump imageTag in `clusters/user-apps/<slug>/helmrelease.yaml` (per §5.1 choice). Triggers: `on: push` + `workflow_dispatch`
 - `helm lint` + `helm template` green; workflow `act`-dry or syntax-check
 🛑 **Review checkpoint**
@@ -305,7 +305,7 @@ Druppie's own CI bumps `imageTag` by cloning `ai/k8s` with `CI_GIT_TOKEN` (`.git
 |------|-----------|------------|
 | **CI_GIT_TOKEN exfiltration** (untrusted AI code in app branches) | 🔴 High | §5.1-A hardening: scoped robot (ai/k8s-write only), Gitea environments tied to deploy branches, branch protection on workflow files; safety-valve → Option B |
 | **Longhorn currently down on `ka-k8s-ai`** (infra rebuild, 2026-07-16) | 🔴 External blocker | AC4 can't validate until infra re-registers Longhorn SCs/nodes. Dev-track on `colab-dev`; flag to Infra. SC choice (D6) is independent of this outage |
-| **Orphan-volume accumulation** (ephemeral ns + Retain SC) | High | Mandatory `longhorn-branch-env` (Delete, 1 replica) for all user-app PVCs (D6) |
+| **Orphan-volume accumulation** (ephemeral ns + Retain SC) | High | Mandatory `longhorn-local` (Delete, 1 replica) for all user-app PVCs (D6) |
 | **ESO sync race** | Medium | Chart gates app start on ExternalSecret `Synced` (D11) |
 | DinD runner cold builds slow | Low | Runner has 50Gi layer-cache PVC (cached build ~30s); accept slower first build |
 | Flux `GitRepository` auth to **user app repos** | Medium | Reuse `flux-git-auth` secret; verify it can read arbitrary `ai/*` app repos |
@@ -315,7 +315,7 @@ Druppie's own CI bumps `imageTag` by cloning `ai/k8s` with `CI_GIT_TOKEN` (`.git
 | Chart features an app needs that the template doesn't cover | Medium | Ship a minimal-but-complete chart; iterate; agents edit the chart in-repo |
 
 ### External dependencies / blockers
-- **Infra team (rancher-gitops):** Longhorn must be healthy (`longhorn-distributed`/`longhorn-local` SCs applied, nodes `Ready`, `longhorn-branch-env` present) before AC4/AC5 fully validate. Not in our control — track separately.
+- **Infra team (rancher-gitops):** Longhorn must be healthy (`longhorn-distributed`/`longhorn-local` SCs applied, nodes `Ready`, `longhorn-local` present) before AC4/AC5 fully validate. Not in our control — track separately.
 - **TLS:** no new cert — `<slug>-apps.rijnland.dev` is covered by the existing `*.rijnland.dev` wildcard (`druppie-tls`, mirrored via the `druppie-tls-mirror` store).
 - **Traefik LB:** must be healthy (address pools configured) for AC5 reachability.
 - **`flux-git-auth` secret:** must authorize Flux to read the per-app Gitea repos, not just `ai/druppie`.
