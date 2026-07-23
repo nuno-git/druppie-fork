@@ -429,7 +429,7 @@ def _script_httpx(monkeypatch, outcomes):
             return False
 
         async def request(self, method, url, **kwargs):
-            calls.append((method, url))
+            calls.append((method, url, kwargs.get("params")))
             outcome = seq[min(len(calls) - 1, len(seq) - 1)]
             if isinstance(outcome, Exception):
                 raise outcome
@@ -553,3 +553,61 @@ def test_http_attempts_env_is_honored(mod, monkeypatch):
     monkeypatch.setenv("PRREVIEW_HTTP_ATTEMPTS", "5")
     m = mod.PrReviewModule()
     assert m._client._max_attempts == 5
+
+
+# --- pagination: see EVERY PR and EVERY comment ------------------------------
+
+def test_list_open_pulls_pages_to_the_end(mod, monkeypatch):
+    page1 = [{"number": i} for i in range(50)]     # full page -> keep going
+    page2 = [{"number": 50 + i} for i in range(50)]  # full page -> keep going
+    page3 = [{"number": 100 + i} for i in range(10)]  # short page -> stop
+    calls = _script_httpx(
+        monkeypatch,
+        [
+            _FakeResponse(200, json_data=page1),
+            _FakeResponse(200, json_data=page2),
+            _FakeResponse(200, json_data=page3),
+        ],
+    )
+    client = _client_no_sleep(mod)
+    result = asyncio.run(client.list_open_pulls("ai", "druppie"))
+    assert [r["number"] for r in result] == list(range(110))  # nothing dropped
+    assert len(calls) == 3
+    assert [c[2]["page"] for c in calls] == [1, 2, 3]
+    assert all(c[2]["limit"] == 50 for c in calls)
+
+
+def test_list_open_pulls_short_first_page_stops(mod, monkeypatch):
+    calls = _script_httpx(monkeypatch, [_FakeResponse(200, json_data=[{"number": 1}])])
+    client = _client_no_sleep(mod)
+    result = asyncio.run(client.list_open_pulls("ai", "druppie"))
+    assert len(result) == 1
+    assert len(calls) == 1  # short first page -> no second request
+
+
+def test_pagination_stops_on_empty_page_after_full_page(mod, monkeypatch):
+    full = [{"number": i} for i in range(50)]
+    calls = _script_httpx(
+        monkeypatch,
+        [_FakeResponse(200, json_data=full), _FakeResponse(200, json_data=[])],
+    )
+    client = _client_no_sleep(mod)
+    result = asyncio.run(client.list_open_pulls("ai", "druppie"))
+    assert len(result) == 50
+    assert len(calls) == 2
+
+
+def test_list_issue_comments_paginates(mod, monkeypatch):
+    page1 = [{"id": i} for i in range(50)]
+    page2 = [{"id": 50 + i} for i in range(3)]
+    calls = _script_httpx(
+        monkeypatch,
+        [
+            _FakeResponse(200, json_data=page1),
+            _FakeResponse(200, json_data=page2),
+        ],
+    )
+    client = _client_no_sleep(mod)
+    result = asyncio.run(client.list_issue_comments("ai", "druppie", 7))
+    assert [c["id"] for c in result] == list(range(53))  # sticky on any page is seen
+    assert len(calls) == 2

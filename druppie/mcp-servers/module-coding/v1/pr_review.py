@@ -42,6 +42,14 @@ BACKOFF_BASE_SECONDS = 0.5
 BACKOFF_MAX_SECONDS = 8.0
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
+# Gitea list endpoints paginate (max 50 per page). The reviewer must see EVERY
+# open PR and EVERY comment on a PR: a missing page would silently drop PRs from
+# review and — worse — hide the bot's own sticky comment, so dedup would
+# re-review and post_pr_review would stack a second comment. List calls page to
+# the end, bounded by MAX_PAGES as a runaway guard (logged if ever hit).
+GITEA_PAGE_LIMIT = 50
+MAX_PAGES = 40
+
 # Same default as tools.py's EXTERNAL_GITEA_URL: the coding module targets the
 # shared external Gitea (aigit) unless explicitly overridden. Keeping the
 # fallback here means the config gate matches the module's actual default, so
@@ -172,6 +180,30 @@ class GiteaPRClient:
     async def _get(self, path: str, params: dict | None = None, *, raw: bool = False):
         return await self._request("GET", path, params=params, raw=raw)
 
+    async def _get_paginated(self, path: str, params: dict | None = None) -> list[dict]:
+        """GET every page of a Gitea list endpoint, concatenated in order.
+
+        Stops at the first short (< GITEA_PAGE_LIMIT) page; bounded by MAX_PAGES
+        so a misbehaving endpoint can never loop forever (truncation is logged,
+        never silent). Each page goes through _request, so retries apply per page.
+        """
+        base = dict(params or {})
+        base["limit"] = GITEA_PAGE_LIMIT
+        items: list[dict] = []
+        for page in range(1, MAX_PAGES + 1):
+            batch = await self._request("GET", path, params={**base, "page": page})
+            if not isinstance(batch, list):
+                logger.warning("paginated GET %s returned a non-list; stopping", path)
+                break
+            items.extend(batch)
+            if len(batch) < GITEA_PAGE_LIMIT:
+                return items
+        logger.warning(
+            "paginated GET %s hit MAX_PAGES=%d (%d items); results may be truncated",
+            path, MAX_PAGES, len(items),
+        )
+        return items
+
     async def _post(self, path: str, json_body: dict) -> dict:
         return await self._request("POST", path, json_body=json_body)
 
@@ -182,11 +214,10 @@ class GiteaPRClient:
         """Return the user the token belongs to (GET /user)."""
         return await self._get("user")
 
-    async def list_open_pulls(self, owner: str, repo: str, limit: int = 50) -> list[dict]:
-        """List open pull requests for a repository."""
-        return await self._get(
-            f"repos/{owner}/{repo}/pulls",
-            {"state": "open", "limit": limit},
+    async def list_open_pulls(self, owner: str, repo: str) -> list[dict]:
+        """List ALL open pull requests for a repository (paged to the end)."""
+        return await self._get_paginated(
+            f"repos/{owner}/{repo}/pulls", {"state": "open"}
         )
 
     async def get_pull_diff(self, owner: str, repo: str, index: int) -> str:
@@ -194,8 +225,10 @@ class GiteaPRClient:
         return await self._get(f"repos/{owner}/{repo}/pulls/{index}.diff", raw=True)
 
     async def list_issue_comments(self, owner: str, repo: str, index: int) -> list[dict]:
-        """List comments on a PR (Gitea PR comments live on the issue API)."""
-        return await self._get(f"repos/{owner}/{repo}/issues/{index}/comments")
+        """List ALL comments on a PR, paged (Gitea PR comments live on the issue
+        API). Full coverage is required for dedup: the sticky review comment may
+        sit on any page, and missing it would restack reviews on busy PRs."""
+        return await self._get_paginated(f"repos/{owner}/{repo}/issues/{index}/comments")
 
     async def create_issue_comment(self, owner: str, repo: str, index: int, body: str) -> dict:
         """Create a comment on a PR."""
