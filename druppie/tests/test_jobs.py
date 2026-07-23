@@ -414,6 +414,22 @@ class TestJobServiceYamlLoading:
 
         assert result.total == 0
 
+    def test_load_definitions_from_yaml_skips_impossible_cron(self, job_service: JobService, tmp_path):
+        # "0 0 31 2 *" = Feb 31: syntactically valid but an impossible date.
+        # croniter constructs it fine, so it must be rejected via get_next(),
+        # otherwise the scheduler raises CroniterBadDateError on every tick.
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "impossible_cron.yaml").write_text(
+            "id: impossible_cron\nname: Impossible Cron\nschedule: '0 0 31 2 *'\n"
+            "agent_id: summarizer\nprompt: Do it\nenabled: true\n"
+        )
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 0
+
     def test_load_definitions_from_yaml_skips_invalid_agent(self, job_service: JobService, tmp_path):
         defs_dir = tmp_path / "defs"
         defs_dir.mkdir()

@@ -1,7 +1,11 @@
 id: test_pipeline_job
 name: Test Pipeline
 description: A lightweight test job that verifies the cron pipeline works end-to-end.
-schedule: "0 0 31 2 *"
+# Feb 29 (leap day) — fires at most once every ~4 years, i.e. effectively
+# never on its own; this test job is meant to be run manually via
+# POST /api/jobs/{definition_id}/trigger. Must be a REAL date: an impossible
+# one like "31 2" makes croniter raise CroniterBadDateError every scheduler tick.
+schedule: "0 0 29 2 *"
 agent_id: summarizer
 prompt: |
   This is an automated test of the cron job pipeline.

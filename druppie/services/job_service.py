@@ -9,7 +9,7 @@ from uuid import UUID
 
 import structlog
 import yaml
-from croniter import croniter
+from croniter import CroniterBadDateError, croniter
 
 from ..core.background_tasks import create_session_task, run_session_task
 from ..domain.common import AgentRunStatus, JobRunStatus, SessionStatus
@@ -83,8 +83,12 @@ class JobService:
             errors.append("schedule is required")
         else:
             try:
-                croniter(str(schedule))
-            except ValueError:
+                # Construction validates syntax; get_next() additionally rejects
+                # syntactically-valid-but-impossible dates (e.g. "0 0 31 2 *" =
+                # Feb 31), which otherwise pass here and then make the scheduler
+                # raise CroniterBadDateError on every tick.
+                croniter(str(schedule)).get_next()
+            except (ValueError, CroniterBadDateError):
                 errors.append(f"invalid cron schedule: '{schedule}'")
 
         agent_id = data.get("agent_id")
