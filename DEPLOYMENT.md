@@ -291,6 +291,17 @@ To disable the auth gate (not recommended for production), remove or comment out
 
 ### Step 7: Build and Start
 
+> **Upgrading an existing database:** this release widens `sessions.status`
+> to `varchar(30)` for the new 21-char `paused_architect_hitl` status. Dev
+> and CI are unaffected. The `reset-db` workflow recreates the column fresh.
+> A persistent database still has `varchar(20)` because `create_all` only
+> creates missing tables, so run this once before deploying or the first
+> `paused_architect_hitl` insert fails with `StringDataRightTruncation`:
+>
+> ```sql
+> ALTER TABLE sessions ALTER COLUMN status TYPE varchar(30);
+> ```
+
 ```bash
 docker compose --profile prod --profile init up -d --build
 ```
