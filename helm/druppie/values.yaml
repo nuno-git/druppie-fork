@@ -86,6 +86,12 @@ gitea:
   adminPassword: ""
   adminEmail: admin@druppie.local
   org: druppie
+  # External Gitea (aigit.waterschap.org) — used for CNP egress rules when
+  # pods need to reach the corporate Gitea server. The IP is a fallback for
+  # Cilium's FQDN matching (DNS proxy dependency). Update if Gitea moves.
+  external:
+    url: "https://aigit.waterschap.org"
+    ip: "10.23.0.101"
   sshPort: 2222
   httpPort: 3000
   nodePort: 3000
@@ -120,8 +126,6 @@ backend:
       memory: 1Gi
       cpu: 2000m
   devMode: false
-  dockerSocket:
-    enabled: false
   serviceAccount:
     create: true
     name: ''
@@ -221,22 +225,16 @@ frontend:
 devWorkspace:
   enabled: false
   stackMode: degraded
-  # embedModules: list of MCP module keys to run INSIDE the workspace pod under
-  # `uvicorn --reload` (hot-reload on edit) instead of as separate baked-image
-  # Deployments. When a module is listed here AND devWorkspace.enabled=true:
-  #   - its Deployment is skipped (no separate pod)
-  #   - its Service selector flips to component: dev-workspace, targeting the
-  #     named port mcp-<key> on the workspace container
-  #   - the workspace entrypoint launches `uvicorn --reload` for it from
-  #     /workspace/druppie/mcp-servers/module-<dir>
+  # embedModules: list of MCP module keys that should run from source on the
+  # workspace PVC (uvicorn --reload, hot-reload on edit) instead of as
+  # baked-image Deployments. When a module is listed here AND
+  # devWorkspace.enabled=true, its Deployment pod uses the dev-workspace image,
+  # mounts the workspace-dev PVC at /workspace, and runs the
+  # module-dev-entrypoint.sh script which seeds a venv and launches uvicorn.
+  # All modules always run as separate pods — none are embedded in the
+  # workspace container.
   # Valid keys: coding docker filesearch web archimate registry llm kubernetes
   #   vision searxng browser data_access azuredevops
-  # Caveats for privileged modules (embedded best-effort, see Dockerfile.dev-workspace):
-  #   coding/docker  — need docker.sock (auto-mounted when present in the list)
-  #   kubernetes     — workspace SA gets the k8s-readonly ClusterRoleBinding
-  #   vision         — needs GPU; only useful if the workspace pod is pinned to
-  #                    a GPU node (set devWorkspace.nodeSelector + resources)
-  #   browser        — chromium already in the image; needs --no-sandbox (set)
   embedModules: []
   # secretsSource: Vault path prefix for env secrets. Accepted values:
   #   "colab-dev" → druppie/colab-dev/*  (shared LLM keys, etc.)
@@ -321,7 +319,7 @@ modules:
     enabled: true
     replicaCount: 1
     image:
-      repository: druppie-module-docker
+      repository: druppie-module-deploy
       tag: latest
     port: 9002
     resources:
@@ -331,6 +329,27 @@ modules:
       limits:
         memory: 2Gi
         cpu: 2000m
+    # User-application GitOps deployer. module-deploy deploys user apps by
+    # committing a Flux GitRepository+HelmRelease to the GitOps repo
+    # (clusters/user-apps/<slug>/); Flux reconciles. The module only needs
+    # a Gitea token (push to ai/k8s) + read-only cluster access for status.
+    userApps:
+      gitops:
+        url: https://aigit.waterschap.org
+        repo: ai/k8s
+        branch: main
+        path: clusters/user-apps
+        appRepoOrg: ai
+        # Secret holding a Gitea token (key below) with push to the GitOps repo.
+        # Reuses the ci/gitea token (same as the branch-env deployer).
+        tokenSecret:
+          name: druppie-branch-env-git
+          key: token
+        caConfigMap: ''
+      domain: rijnland.dev   # host scheme: <slug>-apps.<domain> (covered by *.<domain> cert)
+      harbor:
+        registry: harbor.rijnland.dev
+        project: druppie
   filesearch:
     enabled: true
     replicaCount: 1

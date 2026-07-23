@@ -1,4 +1,5 @@
-{{- if and .Values.modules.coding.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "coding"))) }}
+{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "coding") -}}
+{{- if .Values.modules.coding.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -28,9 +29,7 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
-      {{- if .Values.agentSandbox.enabled }}
       serviceAccountName: {{ include "druppie.fullname" . }}-module-coding
-      {{- end }}
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       initContainers:
         - name: wait-for-gitea
@@ -52,15 +51,23 @@ spec:
               cpu: "100m"
       containers:
         - name: module-coding
+          {{- if $dev }}
+          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.coding.image) }}
+          imagePullPolicy: Always
+          command:
+            - bash
+            - /scripts/module-dev-entrypoint.sh
+            - "coding"
+            - "module-coding"
+            - {{ .Values.modules.coding.port | quote }}
+          {{- else }}
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.coding.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- end }}
           env:
             - name: MCP_PORT
               value: {{ .Values.modules.coding.port | quote }}
-            {{- if .Values.backend.dockerSocket.enabled }}
-            - name: DOCKER_HOST
-              value: "unix:///var/run/docker.sock"
-            {{- end }}
+            
           envFrom:
             - configMapRef:
                 name: {{ include "druppie.fullname" . }}-config
@@ -78,12 +85,29 @@ spec:
               containerPort: {{ .Values.modules.coding.port }}
               protocol: TCP
           volumeMounts:
+            {{- if $dev }}
+            - name: workspace-dev
+              mountPath: /workspace
+            - name: module-dev-entrypoint
+              mountPath: /scripts
+              readOnly: true
+            {{- else }}
             - name: workspace
               mountPath: /workspaces
-            {{- if .Values.backend.dockerSocket.enabled }}
-            - name: docker-sock
-              mountPath: /var/run/docker.sock
             {{- end }}
+          {{- if $dev }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.coding.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.coding.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- else }}
           livenessProbe:
             httpGet:
               path: /health
@@ -100,6 +124,7 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          {{- end }}
           resources:
             {{- toYaml .Values.modules.coding.resources | nindent 12 }}
       {{- with .Values.modules.coding.nodeSelector }}
@@ -110,13 +135,17 @@ spec:
         node-role.kubernetes.io/worker: "true"
       {{- end }}
       volumes:
+        {{- if $dev }}
+        - name: workspace-dev
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        - name: module-dev-entrypoint
+          configMap:
+            name: {{ include "druppie.fullname" . }}-module-dev-entrypoint
+            defaultMode: 0755
+        {{- else }}
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
-        {{- if .Values.backend.dockerSocket.enabled }}
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
         {{- end }}
 {{- end }}

@@ -1,4 +1,5 @@
-{{- if and .Values.modules.browser.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "browser"))) }}
+{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "browser") -}}
+{{- if .Values.modules.browser.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,6 +18,9 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-browser
+        {{- if not .Values.persistence.rwx }}
+        druppie.io/shared-storage: "true"
+        {{- end }}
       annotations:
         reloader.stakater.com/auto: "true"
     spec:
@@ -24,10 +28,22 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
+      {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
         - name: module-browser
+          {{- if $dev }}
+          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.browser.image) }}
+          imagePullPolicy: Always
+          command:
+            - bash
+            - /scripts/module-dev-entrypoint.sh
+            - "browser"
+            - "module-browser"
+            - {{ .Values.modules.browser.port | quote }}
+          {{- else }}
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.browser.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- end }}
           env:
             - name: MCP_PORT
               value: {{ .Values.modules.browser.port | quote }}
@@ -45,6 +61,25 @@ spec:
             - name: http
               containerPort: {{ .Values.modules.browser.port }}
               protocol: TCP
+          {{- if $dev }}
+          volumeMounts:
+            - name: workspace-dev
+              mountPath: /workspace
+            - name: module-dev-entrypoint
+              mountPath: /scripts
+              readOnly: true
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.browser.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.browser.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- else }}
           livenessProbe:
             httpGet:
               path: /health
@@ -61,6 +96,7 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          {{- end }}
           # Chromium runs as root (image default) with --no-sandbox, passed in
           # module.py LAUNCH_ARGS. The longer initialDelaySeconds covers the
           # slower Python+Playwright import on cold start.
@@ -69,5 +105,15 @@ spec:
       {{- with .Values.modules.browser.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $dev }}
+      volumes:
+        - name: workspace-dev
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        - name: module-dev-entrypoint
+          configMap:
+            name: {{ include "druppie.fullname" . }}-module-dev-entrypoint
+            defaultMode: 0755
       {{- end }}
 {{- end }}

@@ -1,4 +1,5 @@
-{{- if and .Values.modules.archimate.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "archimate"))) }}
+{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "archimate") -}}
+{{- if .Values.modules.archimate.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,8 +31,19 @@ spec:
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
         - name: module-archimate
+          {{- if $dev }}
+          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.archimate.image) }}
+          imagePullPolicy: Always
+          command:
+            - bash
+            - /scripts/module-dev-entrypoint.sh
+            - "archimate"
+            - "module-archimate"
+            - {{ .Values.modules.archimate.port | quote }}
+          {{- else }}
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.archimate.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- end }}
           env:
             - name: MODELS_DIR
               value: "/models"
@@ -58,8 +70,29 @@ spec:
               containerPort: {{ .Values.modules.archimate.port }}
               protocol: TCP
           volumeMounts:
+            {{- if $dev }}
+            - name: workspace-dev
+              mountPath: /workspace
+            - name: module-dev-entrypoint
+              mountPath: /scripts
+              readOnly: true
+            {{- else }}
             - name: workspace
               mountPath: /workspaces
+            {{- end }}
+          {{- if $dev }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.archimate.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.archimate.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- else }}
           livenessProbe:
             httpGet:
               path: /health
@@ -76,6 +109,7 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          {{- end }}
           resources:
             {{- toYaml .Values.modules.archimate.resources | nindent 12 }}
       {{- with .Values.modules.archimate.nodeSelector }}
@@ -83,7 +117,17 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
+        {{- if $dev }}
+        - name: workspace-dev
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        - name: module-dev-entrypoint
+          configMap:
+            name: {{ include "druppie.fullname" . }}-module-dev-entrypoint
+            defaultMode: 0755
+        {{- else }}
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
+        {{- end }}
 {{- end }}

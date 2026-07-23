@@ -1,54 +1,86 @@
-{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "data_access") -}}
-{{- if .Values.modules.data_access.enabled }}
+{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "docker") -}}
+{{- if .Values.modules.docker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "druppie.fullname" . }}-module-data-access
+  name: {{ include "druppie.fullname" . }}-module-deploy
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-data-access
+    app.kubernetes.io/component: module-deploy
 spec:
-  replicas: {{ .Values.modules.data_access.replicaCount }}
+  replicas: {{ .Values.modules.docker.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: module-data-access
+      app.kubernetes.io/component: module-deploy
   template:
     metadata:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: module-data-access
+        app.kubernetes.io/component: module-deploy
         {{- if not .Values.persistence.rwx }}
         druppie.io/shared-storage: "true"
         {{- end }}
       annotations:
         reloader.stakater.com/auto: "true"
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
+      serviceAccountName: {{ include "druppie.fullname" . }}-module-deploy
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
-        - name: module-data-access
+        - name: module-deploy
           {{- if $dev }}
-          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.data_access.image) }}
+          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.docker.image) }}
           imagePullPolicy: Always
           command:
             - bash
             - /scripts/module-dev-entrypoint.sh
-            - "data_access"
-            - "module-data-access"
-            - {{ .Values.modules.data_access.port | quote }}
+            - "docker"
+            - "module-docker"
+            - {{ .Values.modules.docker.port | quote }}
           {{- else }}
-          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.data_access.image) }}
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           {{- end }}
           env:
             - name: MCP_PORT
-              value: {{ .Values.modules.data_access.port | quote }}
-            - name: WORKSPACE_ROOT
-              value: "/workspaces"
+              value: {{ .Values.modules.docker.port | quote }}
+            - name: DRUPPIE_URL
+              value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
+            {{- with .Values.modules.docker.userApps }}
+            # User-app GitOps deployer: module-deploy commits the app's
+            # Flux GitRepository+HelmRelease to the GitOps repo; Flux deploys.
+            # Reads live status read-only (module-deploy-rbac.yaml).
+            - name: USERAPPS_GITOPS_URL
+              value: {{ .gitops.url | quote }}
+            - name: USERAPPS_GITOPS_REPO
+              value: {{ .gitops.repo | quote }}
+            - name: USERAPPS_GITOPS_BRANCH
+              value: {{ .gitops.branch | quote }}
+            - name: USERAPPS_GITOPS_PATH
+              value: {{ .gitops.path | quote }}
+            - name: USERAPPS_APP_REPO_ORG
+              value: {{ .gitops.appRepoOrg | quote }}
+            - name: USERAPPS_GITOPS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .gitops.tokenSecret.name }}
+                  key: {{ .gitops.tokenSecret.key }}
+            {{- if .gitops.caConfigMap }}
+            - name: USERAPPS_GITOPS_CA
+              value: /app/gitops-ca/chain.pem
+            {{- end }}
+            - name: USERAPPS_DOMAIN
+              value: {{ .domain | quote }}
+            - name: HARBOR_REGISTRY
+              value: {{ .harbor.registry | quote }}
+            - name: HARBOR_PROJECT
+              value: {{ .harbor.project | quote }}
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "druppie.fullname" . }}-config
@@ -63,7 +95,7 @@ spec:
             {{- end }}
           ports:
             - name: http
-              containerPort: {{ .Values.modules.data_access.port }}
+              containerPort: {{ .Values.modules.docker.port }}
               protocol: TCP
           volumeMounts:
             {{- if $dev }}
@@ -76,23 +108,28 @@ spec:
             - name: workspace
               mountPath: /workspaces
             {{- end }}
+            {{- if .Values.modules.docker.userApps.gitops.caConfigMap }}
+            - name: gitops-ca
+              mountPath: /app/gitops-ca
+              readOnly: true
+            {{- end }}
           {{- if $dev }}
           livenessProbe:
             tcpSocket:
-              port: {{ .Values.modules.data_access.port }}
+              port: {{ .Values.modules.docker.port }}
             initialDelaySeconds: 15
             periodSeconds: 30
             failureThreshold: 5
           readinessProbe:
             tcpSocket:
-              port: {{ .Values.modules.data_access.port }}
+              port: {{ .Values.modules.docker.port }}
             initialDelaySeconds: 5
             periodSeconds: 10
           {{- else }}
           livenessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.modules.data_access.port }}
+              port: {{ .Values.modules.docker.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
@@ -100,17 +137,20 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.modules.data_access.port }}
+              port: {{ .Values.modules.docker.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
           {{- end }}
           resources:
-            {{- toYaml .Values.modules.data_access.resources | nindent 12 }}
-      {{- with .Values.modules.data_access.nodeSelector }}
+            {{- toYaml .Values.modules.docker.resources | nindent 12 }}
+      {{- with .Values.modules.docker.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
+      {{- else }}
+      nodeSelector:
+        node-role.kubernetes.io/worker: "true"
       {{- end }}
       volumes:
         {{- if $dev }}
@@ -126,24 +166,9 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
         {{- end }}
-{{- end }}
----
-{{- if .Values.modules.data_access.enabled }}
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "druppie.fullname" . }}-module-data-access
-  labels:
-    {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-data-access
-spec:
-  type: ClusterIP
-  ports:
-    - port: {{ .Values.modules.data_access.port }}
-      targetPort: http
-      protocol: TCP
-      name: http
-  selector:
-    {{- include "druppie.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: module-data-access
+        {{- if .Values.modules.docker.userApps.gitops.caConfigMap }}
+        - name: gitops-ca
+          configMap:
+            name: {{ .Values.modules.docker.userApps.gitops.caConfigMap }}
+        {{- end }}
 {{- end }}

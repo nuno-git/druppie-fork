@@ -1,4 +1,5 @@
-{{- if and .Values.modules.llm.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "llm"))) }}
+{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "llm") -}}
+{{- if .Values.modules.llm.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,6 +18,9 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-llm
+        {{- if not .Values.persistence.rwx }}
+        druppie.io/shared-storage: "true"
+        {{- end }}
       annotations:
         reloader.stakater.com/auto: "true"
     spec:
@@ -24,16 +28,22 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
-      {{- with .Values.global.tolerateGpu }}
-      tolerations:
-        - key: nvidia.com/gpu
-          operator: Exists
-          effect: NoSchedule
-      {{- end }}
+      {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
         - name: module-llm
+          {{- if $dev }}
+          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.llm.image) }}
+          imagePullPolicy: Always
+          command:
+            - bash
+            - /scripts/module-dev-entrypoint.sh
+            - "llm"
+            - "module-llm"
+            - {{ .Values.modules.llm.port | quote }}
+          {{- else }}
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.llm.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- end }}
           env:
             - name: MCP_PORT
               value: {{ .Values.modules.llm.port | quote }}
@@ -71,6 +81,25 @@ spec:
             - name: http
               containerPort: {{ .Values.modules.llm.port }}
               protocol: TCP
+          {{- if $dev }}
+          volumeMounts:
+            - name: workspace-dev
+              mountPath: /workspace
+            - name: module-dev-entrypoint
+              mountPath: /scripts
+              readOnly: true
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.llm.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.llm.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- else }}
           livenessProbe:
             exec:
               command:
@@ -91,6 +120,17 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          {{- end }}
           resources:
             {{- toYaml .Values.modules.llm.resources | nindent 12 }}
+      {{- if $dev }}
+      volumes:
+        - name: workspace-dev
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        - name: module-dev-entrypoint
+          configMap:
+            name: {{ include "druppie.fullname" . }}-module-dev-entrypoint
+            defaultMode: 0755
+      {{- end }}
 {{- end }}
