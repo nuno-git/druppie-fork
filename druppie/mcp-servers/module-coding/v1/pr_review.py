@@ -30,6 +30,12 @@ logger = logging.getLogger("coding-mcp")
 
 REQUEST_TIMEOUT = 30.0
 
+# Same default as tools.py's EXTERNAL_GITEA_URL: the coding module targets the
+# shared external Gitea (aigit) unless explicitly overridden. Keeping the
+# fallback here means the config gate matches the module's actual default, so
+# in practice only PRREVIEW_REPOS must be set (see PrReviewModule.__init__).
+DEFAULT_EXTERNAL_GITEA_URL = "https://aigit.waterschap.org"
+
 MARKER_RE = re.compile(
     r"<!-- druppie-pr-review sha:([0-9a-fA-F]{7,64}) verdict:([A-Z_]+) -->"
 )
@@ -149,6 +155,7 @@ class PrReviewModule:
         base_url = (
             os.getenv("PRREVIEW_GITEA_URL", "").strip()
             or os.getenv("EXTERNAL_GITEA_URL", "").strip()
+            or DEFAULT_EXTERNAL_GITEA_URL
         )
         token = (
             os.getenv("PRREVIEW_GITEA_TOKEN", "").strip()
