@@ -1,4 +1,5 @@
-{{- if and .Values.modules.docker.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "docker"))) }}
+{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "docker") -}}
+{{- if .Values.modules.docker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,8 +33,19 @@ spec:
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
         - name: module-deploy
+          {{- if $dev }}
+          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.docker.image) }}
+          imagePullPolicy: Always
+          command:
+            - bash
+            - /scripts/module-dev-entrypoint.sh
+            - "docker"
+            - "module-docker"
+            - {{ .Values.modules.docker.port | quote }}
+          {{- else }}
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- end }}
           env:
             - name: MCP_PORT
               value: {{ .Values.modules.docker.port | quote }}
@@ -86,13 +98,34 @@ spec:
               containerPort: {{ .Values.modules.docker.port }}
               protocol: TCP
           volumeMounts:
+            {{- if $dev }}
+            - name: workspace-dev
+              mountPath: /workspace
+            - name: module-dev-entrypoint
+              mountPath: /scripts
+              readOnly: true
+            {{- else }}
             - name: workspace
               mountPath: /workspaces
+            {{- end }}
             {{- if .Values.modules.docker.userApps.gitops.caConfigMap }}
             - name: gitops-ca
               mountPath: /app/gitops-ca
               readOnly: true
             {{- end }}
+          {{- if $dev }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.docker.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.docker.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- else }}
           livenessProbe:
             httpGet:
               path: /health
@@ -109,6 +142,7 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          {{- end }}
           resources:
             {{- toYaml .Values.modules.docker.resources | nindent 12 }}
       {{- with .Values.modules.docker.nodeSelector }}
@@ -119,9 +153,19 @@ spec:
         node-role.kubernetes.io/worker: "true"
       {{- end }}
       volumes:
+        {{- if $dev }}
+        - name: workspace-dev
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        - name: module-dev-entrypoint
+          configMap:
+            name: {{ include "druppie.fullname" . }}-module-dev-entrypoint
+            defaultMode: 0755
+        {{- else }}
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
+        {{- end }}
         {{- if .Values.modules.docker.userApps.gitops.caConfigMap }}
         - name: gitops-ca
           configMap:

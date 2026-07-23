@@ -108,11 +108,10 @@ spec:
               value: {{ .Values.devWorkspace.stackMode | quote }}
             - name: RECOVERY_MODE
               value: {{ if .Values.recoveryMode }}"true"{{ else }}"false"{{ end }}
-            # Space-separated MCP module keys to run inside this pod under
-            # uvicorn --reload (see scripts/dev-workspace-entrypoint.sh).
-            # Empty in prod/colab-dev; set from devWorkspace.embedModules.
+            # Modules now run as separate pods (dev-mode or baked), not
+            # embedded in the workspace pod. EMBED_MODULES is always empty.
             - name: EMBED_MODULES
-              value: {{ join " " .Values.devWorkspace.embedModules | quote }}
+              value: ""
             - name: DRUPPIE_DESKTOP
               value: "1"
             # The frontend preview is reached through code-server's port proxy
@@ -150,16 +149,6 @@ spec:
             - { name: backend,     containerPort: 8000 }
             - { name: frontend,    containerPort: 5173 }
             - { name: code-server, containerPort: 8080 }
-            {{- range $key := .Values.devWorkspace.embedModules }}
-            {{- $mod := index $.Values.modules $key }}
-            {{- if $mod }}
-            # Named port for the embedded {{ $key }} MCP module — the matching
-            # <instance>-module-{{ $key }} Service targets this port when the
-            # module is embedded. Underscore in the key is replaced so the port
-            # name matches RFC 1123 (data_access -> mcp-data-access).
-            - { name: mcp-{{ $key | replace "_" "-" }}, containerPort: {{ $mod.port }} }
-            {{- end }}
-            {{- end }}
           volumeMounts:
             - name: workspace
               mountPath: /workspace
