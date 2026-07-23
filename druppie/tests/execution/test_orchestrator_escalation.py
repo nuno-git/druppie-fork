@@ -473,6 +473,27 @@ class TestTermination:
         with pytest.raises(ConflictError):
             await orch.resume_paused_session(session.id)
 
+    @pytest.mark.asyncio
+    async def test_resume_after_sandbox_on_terminated_raises_conflict(self):
+        from druppie.api.errors import ConflictError
+
+        orch = _make_orchestrator()
+        session = _make_session(status=SessionStatus.TERMINATED)
+        _wire_session(orch, session)
+
+        tool_call = MagicMock()
+        tool_call.agent_run_id = uuid4()
+        orch.execution_repo.get_tool_call.return_value = tool_call
+        agent_run = _make_run("business_analyst")
+        agent_run.session_id = session.id
+        orch.execution_repo.get_by_id.return_value = agent_run
+
+        with patch.object(orch, "_sync_workspace") as mock_sync:
+            with pytest.raises(ConflictError):
+                await orch.resume_after_sandbox(tool_call_id=uuid4())
+
+        mock_sync.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Behavior: role-targeted notifications on HITL pause

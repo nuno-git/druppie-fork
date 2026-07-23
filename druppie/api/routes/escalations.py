@@ -326,12 +326,20 @@ async def escalation_history(
 ) -> EscalationEventList:
     """Return a session's escalation event history.
 
+    Read access is owner-or-admin (history is an audit trail of decisions
+    already gated by role at decision-time).
+
     Raises:
         NotFoundError: Session not found
+        AuthorizationError: User is not the session owner or an admin
     """
     user_id = UUID(user["sub"])
-    _ = get_user_roles(user)
+    user_roles = get_user_roles(user)
 
     logger.info("escalation_history", session_id=str(session_id), user_id=str(user_id))
 
-    return escalation_service.list_history(session_id)
+    return escalation_service.list_history(
+        session_id=session_id,
+        user_id=user_id,
+        user_roles=user_roles,
+    )

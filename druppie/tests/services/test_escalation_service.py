@@ -361,7 +361,11 @@ class TestListHistory:
         )
         escalation_repo.get_for_session.return_value = [first, second]
 
-        result = svc.list_history(session_id=session.id)
+        result = svc.list_history(
+            session_id=session.id,
+            user_id=session.user_id,
+            user_roles=["user"],
+        )
 
         escalation_repo.get_for_session.assert_called_once_with(session.id)
         assert isinstance(result, EscalationEventList)
@@ -372,6 +376,10 @@ class TestListHistory:
         svc, escalation_repo = _make_service(session=session)
         escalation_repo.get_for_session.return_value = []
 
-        result = svc.list_history(session_id=session.id)
+        result = svc.list_history(
+            session_id=session.id,
+            user_id=session.user_id,
+            user_roles=["user"],
+        )
 
         assert result.items == []

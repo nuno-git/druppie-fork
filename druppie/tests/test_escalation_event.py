@@ -1,16 +1,14 @@
 """Phase 1 tests for the escalation event model, domain, and repository.
 
-Tests ORM columns, domain model fields, enum members, and repository
-methods (create/get_for_session) using a mocked DB session.
-
-NOTE: Repository tests are skipped due to a pre-existing SyntaxError in
-attachment_repository.py that blocks the entire repositories package.
+Tests ORM columns, domain model fields, enum members, and the repository
+ORM->domain mapping (EscalationRepository._to_detail).
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 
 from druppie.db.models.escalation_event import EscalationEvent
 from druppie.domain.common import EscalationEventType
@@ -19,22 +17,10 @@ from druppie.domain.escalation import (
     EscalationEventList,
     EscalationEventSummary,
 )
+from druppie.repositories.escalation_repository import EscalationRepository
 
-
-# Replicate _to_detail logic for repository testing without importing
-# the repositories package (blocked by pre-existing SyntaxError in
-# attachment_repository.py).
-def _to_detail(event: EscalationEvent) -> EscalationEventDetail:
-    return EscalationEventDetail(
-        id=event.id,
-        session_id=event.session_id,
-        event_type=EscalationEventType(event.event_type),
-        actor_user_id=event.actor_user_id,
-        decision=event.decision,
-        feedback=event.feedback,
-        rejection_count_at_event=event.rejection_count_at_event,
-        created_at=event.created_at,
-    )
+# _to_detail is pure (never touches self.db), so a mock session is safe.
+_repo = EscalationRepository(MagicMock())
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +174,7 @@ class TestEscalationEventList:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _to_detail mapping (mirrors repository logic)
+# Tests: repository _to_detail mapping
 # ---------------------------------------------------------------------------
 
 
@@ -224,7 +210,7 @@ class TestToDetailMapping:
             feedback="Too many rejections",
             rejection_count=3,
         )
-        detail = _to_detail(row)
+        detail = _repo._to_detail(row)
         assert detail.session_id == session_id
         assert detail.event_type == EscalationEventType.BA_HITL_ESCALATE
         assert detail.actor_user_id == actor_id
@@ -238,7 +224,7 @@ class TestToDetailMapping:
             event_type="session_terminated",
             rejection_count=5,
         )
-        detail = _to_detail(row)
+        detail = _repo._to_detail(row)
         assert detail.actor_user_id is None
         assert detail.decision is None
         assert detail.feedback is None
@@ -258,7 +244,7 @@ class TestToDetailMapping:
         event3.created_at = now + timedelta(seconds=20)
 
         events = sorted([event1, event2, event3], key=lambda e: e.created_at)
-        details = [_to_detail(e) for e in events]
+        details = [_repo._to_detail(e) for e in events]
 
         assert len(details) == 3
         assert details[0].event_type == EscalationEventType.BA_HITL_ENTERED

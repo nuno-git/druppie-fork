@@ -390,12 +390,44 @@ class TestEscalationHistoryRoute:
         body = r.json()
         assert "items" in body
         assert len(body["items"]) == 2
+        mock_service.list_history.assert_called_once_with(
+            session_id=SESSION_ID,
+            user_id=UUID(ADMIN_SUB),
+            user_roles=["admin"],
+        )
 
     def test_history_empty(self, client, as_admin, mock_service):
         mock_service.list_history.return_value = _fake_event_list(0)
         r = client.get(self.BASE)
         assert r.status_code == 200
         assert r.json()["items"] == []
+
+    def test_owner_gets_200(self, client, as_owner, mock_service):
+        mock_service.list_history.return_value = _fake_event_list(1)
+        r = client.get(self.BASE)
+        assert r.status_code == 200
+        mock_service.list_history.assert_called_once_with(
+            session_id=SESSION_ID,
+            user_id=UUID(OWNER_SUB),
+            user_roles=["user"],
+        )
+
+    def test_admin_not_owner_gets_200(self, client, as_admin, mock_service):
+        mock_service.list_history.return_value = _fake_event_list(1)
+        r = client.get(self.BASE)
+        assert r.status_code == 200
+
+    def test_403_non_owner_non_admin(self, client, as_plain, mock_service):
+        mock_service.list_history.side_effect = AuthorizationError(
+            "Only the session owner can view escalation history",
+        )
+        r = client.get(self.BASE)
+        assert r.status_code == 403
+        mock_service.list_history.assert_called_once_with(
+            session_id=SESSION_ID,
+            user_id=UUID(PLAIN_SUB),
+            user_roles=["user"],
+        )
 
     def test_404_session_not_found(self, client, as_admin, mock_service):
         mock_service.list_history.side_effect = NotFoundError("session", str(SESSION_ID))

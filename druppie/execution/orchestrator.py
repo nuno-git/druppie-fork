@@ -1836,6 +1836,8 @@ class Orchestrator:
 
         session_id = agent_run.session_id
 
+        self._assert_not_terminated(session_id)
+
         logger.info(
             "resume_after_sandbox",
             tool_call_id=str(tool_call_id),

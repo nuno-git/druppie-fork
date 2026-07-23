@@ -132,8 +132,19 @@ class EscalationService:
             feedback=reason,
         )
 
-    def list_history(self, session_id: UUID) -> EscalationEventList:
-        """Return a session's escalation events, oldest first."""
+    def list_history(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        user_roles: list[str],
+    ) -> EscalationEventList:
+        """Return a session's escalation events, oldest first.
+
+        History is an audit trail of decisions already gated by role at
+        decision-time, so read access is owner-or-admin (no new role gate).
+        """
+        session = self._get_session_or_404(session_id)
+        self._check_authorization(session, user_id, user_roles, level="history")
         return EscalationEventList(items=self.escalation_repo.get_for_session(session_id))
 
     # ------------------------------------------------------------------
@@ -153,6 +164,7 @@ class EscalationService:
             ba_hitl:        business_analyst role OR session owner
             architect_hitl: architect role
             terminate:      session owner
+            history:        session owner (audit trail of role-gated decisions)
         """
         if "admin" in user_roles:
             return
@@ -175,6 +187,12 @@ class EscalationService:
                 if session.user_id == user_id:
                     return
                 raise AuthorizationError("Only the session owner can terminate this session")
+            case "history":
+                if session.user_id == user_id:
+                    return
+                raise AuthorizationError(
+                    "Only the session owner can view escalation history",
+                )
             case _:
                 raise AuthorizationError(f"Unknown authorization level: {level}")
 
