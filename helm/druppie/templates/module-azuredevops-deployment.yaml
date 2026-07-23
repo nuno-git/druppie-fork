@@ -18,7 +18,7 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-azuredevops
-        {{- if not .Values.persistence.rwx }}
+        {{- if and $dev (not .Values.persistence.rwx) }}
         druppie.io/shared-storage: "true"
         {{- end }}
       annotations:
@@ -28,7 +28,9 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
+      {{- if $dev }}
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
+      {{- end }}
       containers:
         - name: module-azuredevops
           {{- if $dev }}
