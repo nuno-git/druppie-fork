@@ -656,7 +656,13 @@ externalSecrets:
   vaultRole: external-secrets
   serviceAccount: external-secrets
 agentSandbox:
-  enabled: false
+  # NOTE: enabled here in the values file (not via the ai/k8s HelmRelease) for
+  # the same reason as prReview above: this branch env was generated before the
+  # generator emitted agentSandbox, so its committed HelmRelease lacks the
+  # block and regeneration would wipe a hand-added one. Without this the
+  # coding module falls back to DRUPPIE_SANDBOX_MODE=docker and every sandbox
+  # op fails with "dial unix /var/run/docker.sock: no such file or directory".
+  enabled: true
   coding:
     cpuLimit: '2'
     memoryLimit: 4Gi
@@ -664,4 +670,5 @@ agentSandbox:
   devEnv:
     workspaceSize: 20Gi
   warmPool:
-    replicas: 5
+    # 2 warm sandboxes (not the default 5): single-developer branch env.
+    replicas: 2
