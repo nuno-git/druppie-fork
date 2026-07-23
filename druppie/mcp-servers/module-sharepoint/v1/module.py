@@ -26,23 +26,57 @@ TEXT_EXTENSIONS = {
 }
 
 
+def _load_allowed_sites() -> set[str] | None:
+    raw = os.environ.get("SHAREPOINT_ALLOWED_SITES", "").strip()
+    if not raw:
+        return set()
+    if raw.lower() == "all":
+        return None
+    return {s.strip().rstrip("/").lower() for s in raw.split(";") if s.strip()}
+
+
 class SharePointModule:
     """High-level file operations for SharePoint sites."""
 
     def __init__(self) -> None:
         self._client = SharePointClient()
-        logger.info("SharePoint MCP initialized (multi-site mode)")
+        self._allowed_urls = _load_allowed_sites()
+        self._allowed_ids: set[str] | None = None if self._allowed_urls is None else set()
+        if self._allowed_urls is None:
+            logger.info("SharePoint MCP initialized (all sites allowed)")
+        elif self._allowed_urls:
+            logger.info("SharePoint MCP initialized (allowed sites: %s)", self._allowed_urls)
+        else:
+            logger.info("SharePoint MCP initialized (no sites allowed)")
+
+    def _is_site_allowed_by_url(self, web_url: str) -> bool:
+        if self._allowed_urls is None:
+            return True
+        return web_url.rstrip("/").lower() in self._allowed_urls
+
+    def _is_site_allowed(self, site_id: str) -> bool:
+        if self._allowed_urls is None:
+            return True
+        return site_id in (self._allowed_ids or set())
 
     async def list_sites(self, user_token: str, query: str = "") -> dict:
         """List SharePoint sites the user has access to."""
+        if self._allowed_urls is not None and not self._allowed_urls:
+            return {"success": True, "sites": [], "count": 0}
         try:
             sites = await self._client.search_sites(query, user_token)
             result = []
             for site in sites:
+                site_id = site["id"]
+                web_url = site.get("webUrl", "")
+                if not self._is_site_allowed_by_url(web_url):
+                    continue
+                if self._allowed_ids is not None:
+                    self._allowed_ids.add(site_id)
                 result.append({
-                    "id": site["id"],
+                    "id": site_id,
                     "name": site.get("displayName", ""),
-                    "web_url": site.get("webUrl", ""),
+                    "web_url": web_url,
                     "description": site.get("description", ""),
                 })
             return {
@@ -67,11 +101,17 @@ class SharePointModule:
         """Resolve a SharePoint site URL to its site ID and metadata."""
         try:
             site = await self._client.get_site_by_url(url, user_token)
+            site_id = site["id"]
+            web_url = site.get("webUrl", "")
+            if not self._is_site_allowed_by_url(web_url):
+                return {"success": False, "error": "Access to this site is not allowed."}
+            if self._allowed_ids is not None:
+                self._allowed_ids.add(site_id)
             return {
                 "success": True,
-                "id": site["id"],
+                "id": site_id,
                 "name": site.get("displayName", ""),
-                "web_url": site.get("webUrl", ""),
+                "web_url": web_url,
                 "description": site.get("description", ""),
             }
         except Exception as exc:
@@ -85,6 +125,8 @@ class SharePointModule:
         folder_path: str | None = None,
     ) -> dict:
         """List files and folders on a site (at root or a specific folder)."""
+        if not self._is_site_allowed(site_id):
+            return {"success": False, "error": "Access to this site is not allowed."}
         try:
             items = await self._client.list_folder(
                 site_id, user_token, folder_path
@@ -124,6 +166,8 @@ class SharePointModule:
         self, site_id: str, file_id: str, user_token: str
     ) -> dict:
         """Read file: text content for text formats, metadata-only for binary."""
+        if not self._is_site_allowed(site_id):
+            return {"success": False, "error": "Access to this site is not allowed."}
         try:
             content_bytes, content_type, metadata = (
                 await self._client.download_file(site_id, file_id, user_token)
@@ -170,6 +214,8 @@ class SharePointModule:
         self, site_id: str, file_id: str, user_token: str
     ) -> dict:
         """Get metadata for a file or folder without downloading content."""
+        if not self._is_site_allowed(site_id):
+            return {"success": False, "error": "Access to this site is not allowed."}
         try:
             metadata = await self._client.get_item(site_id, file_id, user_token)
 
@@ -214,6 +260,8 @@ class SharePointModule:
         self, site_id: str, query: str, user_token: str
     ) -> dict:
         """Search files within a SharePoint site's drive."""
+        if not self._is_site_allowed(site_id):
+            return {"success": False, "error": "Access to this site is not allowed."}
         try:
             items = await self._client.search(site_id, query, user_token)
             files = []

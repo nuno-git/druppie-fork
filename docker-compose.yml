@@ -517,6 +517,7 @@ services:
     profiles: [sharepoint]
     environment:
       MCP_PORT: "9014"
+      SHAREPOINT_ALLOWED_SITES: "${SHAREPOINT_ALLOWED_SITES-all}"
     ports:
       - "${MCP_SHAREPOINT_PORT:-9014}:9014"
     networks:
