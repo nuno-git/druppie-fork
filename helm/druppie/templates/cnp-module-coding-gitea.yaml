@@ -1,4 +1,4 @@
-{{- if and (or .Values.prReview.repos .Values.agentSandbox.enabled) .Values.modules.coding.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "coding"))) }}
+{{- if and (or .Values.prReview.repos .Values.agentSandbox.enabled) .Values.modules.coding.enabled }}
 # CiliumNetworkPolicy: allow the module-coding pod to reach the external Gitea
 # ({{ .Values.gitea.external.url }}). Two code paths in this pod talk to aigit:
 #
@@ -14,8 +14,8 @@
 # update_core read_file/clone fails after the 60s MCP timeout. Same pattern as
 # cnp-dev-workspace-gitea.yaml and cnp-backend-gitops.yaml (Cilium unions CNP
 # and NP egress). This is the file values.yaml references as covering aigit
-# egress. Gated on either path being active; when coding is embedded in the
-# workspace pod the label is dev-workspace and cnp-dev-workspace-gitea covers it.
+# egress. Gated on either path being active (prReview.repos or agentSandbox).
+# module-coding always runs as its own pod, so component: module-coding matches.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
