@@ -967,7 +967,7 @@ async def create_message(
     except Exception:
         logger.debug("caller_agent_id_lookup_failed", agent_run_id=str(agent_run_id))
 
-    message_id = execution_repo.create_message(
+    message = execution_repo.create_message(
         session_id=session_id,
         role="assistant",
         content=display_content,
@@ -976,6 +976,7 @@ async def create_message(
         agent_id=caller_agent_id,
         sequence_number=seq,
     )
+    message_id = message.id
     execution_repo.flush()
 
     linked_count = 0

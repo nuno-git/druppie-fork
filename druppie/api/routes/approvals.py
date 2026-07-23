@@ -25,11 +25,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_attachment_repository, get_current_user, get_user_roles, get_approval_service
-from druppie.repositories import AttachmentRepository
-from druppie.services import ApprovalService
+from druppie.api.deps import get_approval_repository, get_attachment_repository, get_current_user, get_session_service, get_user_roles, get_approval_service
+from druppie.repositories import ApprovalRepository, AttachmentRepository
+from druppie.services import ApprovalService, SessionService
 from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
-from druppie.core.background_tasks import create_tracked_task, run_session_task
+from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
 
@@ -133,6 +133,8 @@ async def approval_history(
 async def approve(
     approval_id: UUID,
     approval_service: ApprovalService = Depends(get_approval_service),
+    session_service: SessionService = Depends(get_session_service),
+    approval_repo: ApprovalRepository = Depends(get_approval_repository),
     user: dict = Depends(get_current_user),
 ) -> ApprovalResponse:
     """Approve a pending tool execution.
@@ -160,27 +162,66 @@ async def approve(
         user_id=str(user_id),
     )
 
-    # Step 1: Record approval in database (fast)
-    approval = approval_service.approve(
-        approval_id=approval_id,
-        user_id=user_id,
-        user_roles=user_roles,
-    )
+    # Step 1: Fetch approval to get session_id for locking
+    raw_approval = approval_repo.get_by_id(approval_id)
+    if not raw_approval:
+        raise HTTPException(status_code=404, detail="Approval not found")
 
-    # Step 2: Spawn background task to resume workflow
+    # Step 1b: Validate approval is still pending BEFORE acquiring the lock.
+    # This prevents lock_for_hitl_resume() from committing session status to
+    # 'active' when the subsequent approve() call would fail (e.g., approval
+    # already processed), which would leave the session stuck at 'active'.
+    if raw_approval.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Approval already {raw_approval.status}",
+        )
+
+    # Step 2: Atomically lock session BEFORE recording the approval.
+    # This prevents a race where a concurrent resume endpoint reverts
+    # the session status back to paused_hitl between approve() and lock().
     try:
-        create_tracked_task(
+        previous_status = session_service.lock_for_hitl_resume(raw_approval.session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    # Step 3: Record approval in database (fast)
+    # Wrapped in try/except so we can restore the session status if this fails
+    # unexpectedly (lock_for_hitl_resume already committed status to 'active').
+    try:
+        approval = approval_service.approve(
+            approval_id=approval_id,
+            user_id=user_id,
+            user_roles=user_roles,
+        )
+    except Exception:
+        logger.warning(
+            "approve_failed_restoring_session_status",
+            approval_id=str(approval_id),
+            session_id=str(raw_approval.session_id),
+        )
+        session_service.revert_to_hitl_paused(raw_approval.session_id, previous_status)
+        raise
+
+    # Step 4: Spawn background task to resume workflow
+    try:
+        create_session_task(
+            approval.session_id,
             _resume_workflow_after_approval(
                 session_id=approval.session_id,
                 approval_id=approval_id,
             ),
             name=f"resume-approve-{approval_id}",
+            skip_lock=True,
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
         )
     except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to start background task",
-        )
+        session_service.mark_failed(approval.session_id, "Failed to start approval resume background task")
+        raise
 
     logger.info(
         "approval_recorded_resuming_in_background",
@@ -199,6 +240,8 @@ async def reject(
     approval_id: UUID,
     request: RejectRequest,
     approval_service: ApprovalService = Depends(get_approval_service),
+    session_service: SessionService = Depends(get_session_service),
+    approval_repo: ApprovalRepository = Depends(get_approval_repository),
     attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
     user: dict = Depends(get_current_user),
 ) -> ApprovalResponse:
@@ -232,15 +275,49 @@ async def reject(
         reason=request.reason,
     )
 
-    # Step 1: Record rejection in database (fast)
-    approval = approval_service.reject(
-        approval_id=approval_id,
-        user_id=user_id,
-        user_roles=user_roles,
-        reason=request.reason,
-    )
+    # Step 1: Fetch approval to get session_id for locking
+    raw_approval = approval_repo.get_by_id(approval_id)
+    if not raw_approval:
+        raise HTTPException(status_code=404, detail="Approval not found")
 
-    # Step 1b: Link attachments to approval
+    # Step 1b: Validate approval is still pending BEFORE acquiring the lock.
+    # This prevents lock_for_hitl_resume() from committing session status to
+    # 'active' when the subsequent reject() call would fail (e.g., approval
+    # already processed), which would leave the session stuck at 'active'.
+    if raw_approval.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Approval already {raw_approval.status}",
+        )
+
+    # Step 2: Atomically lock session BEFORE recording the rejection.
+    # This prevents a race where a concurrent resume endpoint reverts
+    # the session status back to paused_hitl between reject() and lock().
+    try:
+        previous_status = session_service.lock_for_hitl_resume(raw_approval.session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    # Step 3: Record rejection in database (fast)
+    # Wrapped in try/except so we can restore the session status if this fails
+    # unexpectedly (lock_for_hitl_resume already committed status to 'active').
+    try:
+        approval = approval_service.reject(
+            approval_id=approval_id,
+            user_id=user_id,
+            user_roles=user_roles,
+            reason=request.reason,
+        )
+    except Exception:
+        logger.warning(
+            "reject_failed_restoring_session_status",
+            approval_id=str(approval_id),
+            session_id=str(raw_approval.session_id),
+        )
+        session_service.revert_to_hitl_paused(raw_approval.session_id, previous_status)
+        raise
+
+    # Step 3b: Link attachments to approval
     if request.attachment_ids:
         try:
             attachment_uuids = [UUID(aid) for aid in request.attachment_ids]
@@ -255,20 +332,25 @@ async def reject(
         )
         attachment_repo.db.commit()
 
-    # Step 2: Spawn background task to resume workflow
+    # Step 4: Spawn background task to resume workflow
     try:
-        create_tracked_task(
+        create_session_task(
+            approval.session_id,
             _resume_workflow_after_approval(
                 session_id=approval.session_id,
                 approval_id=approval_id,
             ),
             name=f"resume-reject-{approval_id}",
+            skip_lock=True,
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
         )
     except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to start background task",
-        )
+        session_service.mark_failed(approval.session_id, "Failed to start rejection resume background task")
+        raise
 
     logger.info(
         "rejection_recorded_resuming_in_background",
