@@ -249,7 +249,7 @@ Same pattern — setup test via API first, then retry via UI:
 ## Critical Rules
 
 1. **NO database migrations** - Update SQLAlchemy models directly, reset DB with `docker compose --profile reset-db run --rm reset-db`
-2. **NO JSON/JSONB columns** - Normalize everything into proper relational tables
+2. **Prefer relational tables over JSON/JSONB columns** - Normalize data with a stable, queryable schema into proper tables. `Column(JSON)` is allowed for genuinely variable/open-ended payloads (raw LLM messages, dynamic tool arguments) — document the expected shape in a code comment when you use it.
 3. **NO legacy/fallback code** - Clean architecture only, no backwards compatibility hacks
 4. **Config in YAML files** - Agent definitions in `agents/definitions/*.yaml`, not database
 5. **Always commit and push** - Keep changes in git

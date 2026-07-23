@@ -108,6 +108,23 @@ clientScopes:
           claim.name: "mcp_permissions"
           jsonType.label: "JSON"
 
+  - name: identity-provider
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+    protocolMappers:
+      - name: identity-provider-mapper
+        protocol: openid-connect
+        protocolMapper: oidc-usersessionmodel-note-mapper
+        consentRequired: false
+        config:
+          user.session.note: "identity_provider"
+          userinfo.token.claim: "true"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          claim.name: "identity_provider"
+          jsonType.label: "String"
+
 # Clients
 clients:
   - clientId: druppie-frontend
@@ -117,7 +134,7 @@ clients:
     publicClient: true
     standardFlowEnabled: true
     implicitFlowEnabled: false
-    directAccessGrantsEnabled: true
+    directAccessGrantsEnabled: false
     serviceAccountsEnabled: false
     protocol: openid-connect
     rootUrl: http://${EXTERNAL_HOST}:${FRONTEND_PORT}
@@ -128,6 +145,8 @@ clients:
     webOrigins:
       - http://localhost:${FRONTEND_PORT}
       - http://${EXTERNAL_HOST}:${FRONTEND_PORT}
+    attributes:
+      post.logout.redirect.uris: "http://localhost:${FRONTEND_PORT}/*##http://${EXTERNAL_HOST}:${FRONTEND_PORT}/*"
     defaultClientScopes:
       - web-origins
       - profile
@@ -135,6 +154,7 @@ clients:
       - email
       - druppie-roles
       - mcp-permissions
+      - identity-provider
 
   - clientId: druppie-backend
     name: Druppie Backend API
@@ -172,3 +192,24 @@ clients:
       - http://localhost:${GITEA_PORT}
       - http://${EXTERNAL_HOST}:${GITEA_PORT}
     secret: ${GITEA_CLIENT_SECRET}
+
+# Identity Providers (optional — configured when ENTRA_CLIENT_ID is set)
+identityProviders:
+  - alias: entra-id
+    displayName: Microsoft (Entra ID)
+    providerId: oidc
+    enabled: true
+    storeToken: true
+    trustEmail: false
+    firstBrokerLoginFlowAlias: first broker login
+    config:
+      clientId: ${ENTRA_CLIENT_ID}
+      clientSecret: ${ENTRA_CLIENT_SECRET}
+      authorizationUrl: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/oauth2/v2.0/authorize
+      tokenUrl: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/oauth2/v2.0/token
+      userInfoUrl: https://graph.microsoft.com/oidc/userinfo
+      defaultScope: openid profile email User.Read offline_access
+      validateSignature: "true"
+      useJwksUrl: "true"
+      jwksUrl: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/discovery/v2.0/keys
+      prompt: select_account

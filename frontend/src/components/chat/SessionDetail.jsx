@@ -2,17 +2,18 @@
  * Session Detail - right panel when a session is selected in Chat
  */
 
-import { useState, useRef, useEffect, useContext } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useRef, useEffect, useMemo, useContext } from 'react'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, FileText, FileType, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight, Calendar } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, getResumableRuns, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput, getSandboxEvents, getAttachmentUrl } from '../../services/api'
-import { getUserInfo } from '../../services/keycloak'
+import { getSession, sendChat, cancelChat, resumeSession, authorizeEntra, getResumableRuns, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput, getSandboxEvents, downloadAttachment, getAttachmentUrl } from '../../services/api'
+import { getUserInfo, getKeycloak } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
+import DataSourcesMenu from './DataSourcesMenu'
 import DownloadMenu from './DownloadMenu'
 import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '../../utils/downloadDesign'
 import HITLQuestionMessage from './HITLQuestionMessage'
@@ -22,6 +23,7 @@ import DebugEventLog from './DebugEventLog'
 import ContinueDialog from './ContinueDialog'
 import AnnotationBar from './AnnotationBar'
 import { consumePending } from '../../services/pendingChat'
+import SessionSocket from '../../services/sessionSocket'
 import {
   chatMarkdownComponents,
   CopyJsonButton,
@@ -162,7 +164,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        window.open(getAttachmentUrl(att.id), '_blank')
+                        downloadAttachment(att.id)
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -311,6 +313,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
 const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles, attachments = [], onAttachmentsConsumed, onAnswerSubmitted }) => {
   const queryClient = useQueryClient()
+  const [localAnswer, setLocalAnswer] = useState(null)
 
   const answerMut = useMutation({
     mutationFn: ({ questionId, answer, selectedChoices = null, attachmentIds = [] }) =>
@@ -320,6 +323,9 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
       markResuming()
       onAnswerSubmitted?.()
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+    },
+    onError: () => {
+      setLocalAnswer(null)
     },
   })
 
@@ -332,13 +338,15 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
   // - ask_expert: any user with the expert_role, or admin
   // The session owner does NOT get to answer expert questions (unless they
   // hold the role themselves) — they have to wait for the expert.
-  const canAnswer = isAdmin
+  // Prevent double-submission while the backend processes the answer.
+  const canAnswer = (isAdmin
     || (isExpertTool
       ? !!expertRole && Array.isArray(userRoles) && userRoles.includes(expertRole)
-      : !!isOwner)
+      : !!isOwner))
+    && !localAnswer
 
   const rawChoices = tc.arguments?.choices || tc.arguments?.options || []
-  const choices = rawChoices
+  const choices = (Array.isArray(rawChoices) ? rawChoices : [])
     .map(c => (typeof c === 'string' ? c : c.text || c.label || String(c)))
     .filter(c => !/^other\b/i.test(c.trim()))
 
@@ -384,15 +392,51 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
       )}
       <HITLQuestionMessage
         question={questionData}
-        onSubmitAnswer={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices, attachmentIds: attachments.map((a) => a.id) })}
+        onSubmitAnswer={({ indices, answerText }) => {
+          setLocalAnswer(answerText)
+          answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices, attachmentIds: attachments.map((a) => a.id) })
+        }}
         isAnswering={answerMut.isPending}
         answered={isAnswered || showAsReadOnly}
       />
+      {/* Show download chips for any attachments linked to this HITL question */}
+      {tc.attachments?.length > 0 && (
+        <div className="ml-8 mt-2 flex flex-wrap gap-1.5">
+          {tc.attachments.map((att) => {
+            const Icon = att.content_type === 'application/pdf' ? FileType : FileText
+            return (
+              <button
+                key={att.id}
+                type="button"
+                onClick={() => {
+                  if (window.confirm(`Download "${att.original_filename}"?`)) {
+                    window.open(getAttachmentUrl(att.id), '_blank')
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                <Icon className={`w-3.5 h-3.5 ${att.content_type === 'application/pdf' ? 'text-red-400' : 'text-blue-400'}`} />
+                <span className="truncate max-w-[180px]">{att.original_filename}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
       {showAsReadOnly && (
         <div className="ml-8 mt-1 text-xs text-gray-500 italic">
           {isExpertTool
             ? `Waiting for a user with the "${expertRole}" role to answer.`
             : 'Only the session owner can answer this question.'}
+        </div>
+      )}
+      {localAnswer && !isAnswered && (
+        <div className="flex justify-end mt-2">
+          <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-blue-50 text-gray-900">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+              <span className="whitespace-pre-wrap">{localAnswer}</span>
+            </div>
+          </div>
         </div>
       )}
       {isAnswered && displayAnswer && (
@@ -411,7 +455,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
                       type="button"
                       onClick={() => {
                         if (window.confirm(`Download "${att.original_filename}"?`)) {
-                          window.open(getAttachmentUrl(att.id), '_blank')
+                          downloadAttachment(att.id)
                         }
                       }}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -807,7 +851,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
             </div>
           )
         }
-      return null
+        return null
       })}
       {surfacedFiles.length > 0 && (
         <SurfacedFileCard files={surfacedFiles} />
@@ -850,7 +894,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        window.open(getAttachmentUrl(att.id), '_blank')
+                        downloadAttachment(att.id)
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -947,8 +991,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
 // AgentRunStatus values that indicate the agent has started processing (not pending)
-// Note: 'paused_user' was removed as it doesn't exist; 'paused_crashed' added
-const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_user', 'paused_entra_auth', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
 
 const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)
@@ -982,29 +1025,247 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const { user } = useAuth()
   const canDebug = user?.roles?.some(r => r === 'developer' || r === 'admin')
   const isAdmin = !!user?.roles?.includes('admin')
+  // Persist highest sequence across remounts / reloads so delta fetch works.
+  // We do NOT persist mergedTimelineRef — sessionStorage quota is ~5MB and
+  // timelines with many messages + attachments easily exceed it. When the buffer
+  // is lost after a navigation-back / reload, we detect that (highestSeq known
+  // but mergedTimeline empty) and do a full fetch once, then resume delta.
+  const storagePrefix = sessionId ? `druppie_session_${sessionId}` : null
+  const highestSeqRef = useRef(
+    storagePrefix ? parseInt(sessionStorage.getItem(`${storagePrefix}_highest_seq`), 10) || undefined : undefined
+  )
+  const prevSessionIdRef = useRef(sessionId)
+  const viewModeRef = useRef(viewMode)
+  viewModeRef.current = viewMode
+
+  useEffect(() => {
+    if (!storagePrefix) return
+    if (highestSeqRef.current !== undefined) {
+      sessionStorage.setItem(`${storagePrefix}_highest_seq`, String(highestSeqRef.current))
+    }
+  })
+
+  const isWebSocketConnected = useRef(false)
+
+  const mergedTimelineRef = useRef([])
+
+  const getExcludeForViewMode = (mode) => {
+    if (mode === 'inspect') return []
+    return ['llm_raw', 'tool_results', 'trace_events']
+  }
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['session', sessionId],
-    queryFn: () => getSession(sessionId),
+    queryFn: () => {
+      const isFirstLoad = highestSeqRef.current === undefined
+      const lostBuffer = highestSeqRef.current !== undefined && mergedTimelineRef.current.length === 0
+      
+      if (isFirstLoad || lostBuffer) {
+        return getSession(sessionId)
+      }
+      
+      // Delta loading only appends new entries; it never updates existing ones.
+      // During active execution, agent_run statuses change frequently
+      // (running -> completed, etc.) We need a full fetch to see those updates.
+      // Once the session pauses/completes, switch back to delta for efficiency.
+      const cachedData = queryClient.getQueryData(['session', sessionId])
+      const hasRunningAgents = cachedData?.timeline?.some(
+        e => e.type === 'agent_run' && (e.agent_run?.status === 'running' || e.agent_run?.status === 'pending')
+      )
+      const isActive = cachedData?.status === 'active' || cachedData?.status === 'running'
+      
+      if (isActive || hasRunningAgents) {
+        return getSession(sessionId)
+      }
+      
+      return getSession(sessionId, {
+        sinceSequence: highestSeqRef.current,
+        exclude: getExcludeForViewMode(viewModeRef.current),
+      })
+    },
     retry: (failureCount, error) => {
       if (error?.status === 403 || error?.status === 404) return false
       return failureCount < 3
     },
     refetchInterval: (query) => {
       if (query.state.error) return false
+      if (isWebSocketConnected.current) return false
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
-      // Fast poll briefly after submitting an answer/approval (translation in progress)
       if (isResuming()) return 500
       if (status === 'paused_crashed') return 1000
       if (status === 'paused_sandbox') return 1000
+      if (status === 'paused_entra_auth') return 500
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
         return 500
       }
       return 500
     },
     enabled: !!sessionId,
+    placeholderData: keepPreviousData,
+    staleTime: 5000,
+    refetchOnMount: true,
   })
+
+  // Merge incoming data.timeline with accumulated entries.
+  // Pure computation: no ref mutations during render.
+  const mergedTimeline = useMemo(() => {
+    if (!data) return []
+
+    const incoming = data.timeline || []
+    const existing = mergedTimelineRef.current || []
+
+    if (highestSeqRef.current === undefined) {
+      return incoming
+    }
+
+    if (incoming.length === 0) return existing
+
+    const existingMap = new Map()
+    for (const entry of existing) {
+      if (entry.sequence_number != null) {
+        existingMap.set(entry.sequence_number, entry)
+      } else {
+        existingMap.set(existingMap.size, entry)
+      }
+    }
+
+    for (const entry of incoming) {
+      if (entry.sequence_number != null) {
+        existingMap.set(entry.sequence_number, entry)
+      } else {
+        existingMap.set(existingMap.size, entry)
+      }
+    }
+
+    return Array.from(existingMap.values())
+      .sort((a, b) => {
+        if (a.sequence_number == null && b.sequence_number == null) return 0
+        if (a.sequence_number == null) return 1
+        if (b.sequence_number == null) return -1
+        return a.sequence_number - b.sequence_number
+      })
+  }, [data])
+
+  // After render, update the accumulated refs so WebSocket handler
+  // and next delta load have the latest merged state.
+  useEffect(() => {
+    mergedTimelineRef.current = mergedTimeline
+    const seqs = mergedTimeline.map(e => e.sequence_number).filter(Boolean)
+    if (seqs.length > 0) {
+      const newMax = Math.max(...seqs)
+      if (newMax !== highestSeqRef.current) {
+        highestSeqRef.current = newMax
+      }
+    }
+  }, [mergedTimeline])
+
+  const displayTimeline = mergedTimeline
+
+  useEffect(() => {
+    if (sessionId !== prevSessionIdRef.current) {
+      const oldSessionId = prevSessionIdRef.current
+      prevSessionIdRef.current = sessionId
+      highestSeqRef.current = undefined
+      mergedTimelineRef.current = []
+      // Clear stale key for the session we are leaving
+      if (oldSessionId) {
+        sessionStorage.removeItem(`druppie_session_${oldSessionId}_timeline`)
+        sessionStorage.removeItem(`druppie_session_${oldSessionId}_highest_seq`)
+      }
+    }
+  }, [sessionId])
+
+  useEffect(() => {
+    if (viewMode === 'inspect') {
+      highestSeqRef.current = undefined
+      mergedTimelineRef.current = []
+    }
+  }, [viewMode])
+
+  useEffect(() => {
+    if (!sessionId) return
+
+    if (!getUserInfo()?.id) return
+
+    isWebSocketConnected.current = false
+
+    const socket = new SessionSocket(sessionId, (event) => {
+      if (event.type === 'timeline_entry' && event.entry) {
+        const entry = event.entry
+        
+        if (entry.type === 'agent_run_update') {
+          // Quick visual: patch the status of an existing agent_run in place
+          const timeline = [...mergedTimelineRef.current]
+          for (const e of timeline) {
+            if (e.type === 'agent_run' && e.agent_run?.id === entry.id) {
+              e.agent_run.status = entry.status
+              if (entry.error_message) {
+                e.agent_run.error_message = entry.error_message
+              }
+              break
+            }
+          }
+          mergedTimelineRef.current = timeline
+          queryClient.setQueryData(['session', sessionId], (old) => {
+            if (!old) return old
+            return { ...old, timeline: mergedTimelineRef.current }
+          })
+        } else {
+          // Append a new full entry (message or agent_run)
+          const newTimeline = [...mergedTimelineRef.current, entry]
+          newTimeline.sort((a, b) => (a.sequence_number || 0) - (b.sequence_number || 0))
+          mergedTimelineRef.current = newTimeline
+          const seqs = newTimeline.map(e => e.sequence_number).filter(Boolean)
+          if (seqs.length > 0) {
+            highestSeqRef.current = Math.max(...seqs)
+          }
+          queryClient.setQueryData(['session', sessionId], (old) => {
+            if (!old) return old
+            return { ...old, timeline: mergedTimelineRef.current }
+          })
+        }
+
+        // Defensive refetch: delta only returns entries with higher sequence_number.
+        // When an approval or question is created, its sequence_number may not
+        // increase, so delta skips it. Reset highestSeqRef for those events
+        // to force a full fetch. agent_run_update is NOT reset — status changes
+        // are already patched inline (lines 1117-1133) and don't need refetch.
+        if (entry.type === 'question' || entry.type === 'approval') {
+          highestSeqRef.current = undefined
+        }
+        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      } else if (event.type === 'session_status') {
+        queryClient.setQueryData(['session', sessionId], (old) => {
+          if (!old) return old
+          return { ...old, status: event.status }
+        })
+        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      }
+    }, {
+      onOpen: () => { isWebSocketConnected.current = true },
+      onClose: () => { isWebSocketConnected.current = false }
+    })
+
+    socket.connect()
+
+    return () => {
+      socket.disconnect()
+      isWebSocketConnected.current = false
+    }
+  }, [sessionId, queryClient])
+
+  // Listen for reset events from retry/resume operations in inspect mode
+  useEffect(() => {
+    const handleResetCache = (e) => {
+      if (e.detail?.sessionId === sessionId) {
+        highestSeqRef.current = undefined
+        mergedTimelineRef.current = []
+      }
+    }
+    window.addEventListener('druppie-reset-session-cache', handleResetCache)
+    return () => window.removeEventListener('druppie-reset-session-cache', handleResetCache)
+  }, [sessionId])
 
   const continueMutation = useMutation({
     mutationFn: ({ message, attachmentIds }) => sendChat(message, sessionId, null, attachmentIds),
@@ -1033,12 +1294,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   })
 
   // Derive "stopping" state: session is paused but agent is still finishing current operation
-  const hasRunningAgentRun = data?.timeline?.some(
+  const hasRunningAgentRun = displayTimeline?.some(
     e => e.type === 'agent_run' && e.agent_run?.status === 'running'
   )
 
   // If all tool calls are failed, don't show "Stopping..." even if agent_run is "running"
-  const hasActuallyRunningToolCall = data?.timeline?.some(
+  const hasActuallyRunningToolCall = displayTimeline?.some(
     e => e.type === 'agent_run' && (e.agent_run?.llm_calls || []).some(
       llm => (llm.tool_calls || []).some(
         tc => tc.status === 'executing' || tc.status === 'waiting_approval' || tc.status === 'waiting_sandbox'
@@ -1057,8 +1318,34 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     }
   }, [data?.status, queryClient])
 
+  // Auto-submit Entra ID authorization when session is waiting
+  const entraAuthSentRef = useRef(false)
   useEffect(() => {
-    const currentLength = data?.timeline?.length || 0
+    if (data?.status !== 'paused_entra_auth') {
+      entraAuthSentRef.current = false
+      return
+    }
+    if (entraAuthSentRef.current) return
+    entraAuthSentRef.current = true
+    authorizeEntra(sessionId)
+      .then((result) => {
+        if (result?.needs_reauth) {
+          const kc = getKeycloak()
+          if (kc) {
+            kc.login({ idpHint: 'entra-id', redirectUri: window.location.origin + window.location.pathname })
+          }
+          return
+        }
+        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      })
+      .catch((err) => {
+        console.error('Entra auth failed:', err)
+        entraAuthSentRef.current = false
+      })
+  }, [data?.status, sessionId, queryClient])
+
+  useEffect(() => {
+    const currentLength = displayTimeline?.length || 0
     if (currentLength > prevLengthRef.current) {
       const isInitial = prevLengthRef.current === 0
       // Double rAF for initial load: ensures flex layout is fully computed
@@ -1073,7 +1360,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       })
     }
     prevLengthRef.current = currentLength
-  }, [data?.timeline?.length])
+  }, [displayTimeline?.length])
 
   // Restore scroll position when returning from inspect to timeline
   const prevViewMode = useRef(viewMode)
@@ -1098,15 +1385,22 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
   const isBusy = continueMutation.isPending || isAnswering
 
-  // Clear optimistic message once server data catches up (new timeline entries)
+  // Clear optimistic message once server data catches up
   useEffect(() => {
     if (pendingMessage === null) return
     const len = data?.timeline?.length || 0
+    // New timeline entry appeared (regular follow-up messages)
     if (pendingSetAtLength.current !== null && len > pendingSetAtLength.current) {
       setPendingMessage(null)
       setIsAnswering(false)
+      return
     }
-  }, [data?.timeline?.length, pendingMessage])
+    // HITL answer: timeline length stays the same but question is no longer pending
+    if (pendingSetAtLength.current !== null && !findPendingQuestion(data?.timeline)) {
+      setPendingMessage(null)
+      setIsAnswering(false)
+    }
+  }, [data?.timeline, pendingMessage])
 
   // Safety: clear pending message after 30s in case data never arrives
   useEffect(() => {
@@ -1216,12 +1510,13 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (!answer) return
       setPendingMessage(trimmed || true)
       setIsAnswering(true)
-      pendingSetAtLength.current = data?.timeline?.length || 0
+      pendingSetAtLength.current = displayTimeline?.length || 0
       setContinueInput('')
       setAttachments([])
       const attIds = attachments.map((a) => a.id)
       answerQuestion(pendingQuestion.tc.question_id, answer, null, attIds)
         .then(() => {
+          setPendingMessage(null)
           setIsAnswering(false)
           markResuming()
           queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
@@ -1239,7 +1534,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       : 'Zie bijlage'
     const message = trimmed || fallback
     setPendingMessage(trimmed || true)
-    pendingSetAtLength.current = data?.timeline?.length || 0
+    pendingSetAtLength.current = displayTimeline?.length || 0
     continueMutation.mutate({ message, attachmentIds: attachments.map((a) => a.id) })
   }
 
@@ -1255,6 +1550,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_crashed: 'bg-red-500',
         paused_hitl: 'bg-amber-500 animate-pulse',
         paused_tool: 'bg-amber-500 animate-pulse',
+        paused_entra_auth: 'bg-blue-500 animate-pulse',
         paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
@@ -1298,6 +1594,13 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 Stopping…
               </span>
             )}
+            {/* Entra auth indicator */}
+            {data.status === 'paused_entra_auth' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Authorizing Azure access…
+              </span>
+            )}
             {/* Sandbox running indicator */}
             {data.status === 'paused_sandbox' && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg">
@@ -1306,7 +1609,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               </span>
             )}
             {/* Continue button — when fully stopped, crashed, or failed */}
-            {canControlSession && ['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
+            {canControlSession && ['paused', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
               <button
                 onClick={() => setShowContinueDialog(true)}
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
@@ -1364,6 +1667,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 {data.project.name}
               </a>
             )}
+            <DataSourcesMenu />
             <DownloadMenu
               loading={transcriptPdfLoading}
               onDownloadMd={() => {
@@ -1402,7 +1706,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       )}
 
       {/* Workflow Pipeline — quick-glance status bar for all modes */}
-      <WorkflowPipeline timeline={data.timeline} />
+      <WorkflowPipeline timeline={displayTimeline} />
 
       {/* Content area: Chat/Annotated timeline or Inspect event log */}
       {viewMode === 'inspect' ? (
@@ -1410,7 +1714,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       ) : (
         <div ref={timelineRef} className="flex-1 overflow-y-auto overflow-x-hidden">
           <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-          {(!data.timeline || data.timeline.length === 0) && !pendingMessage && (
+          {(!displayTimeline || displayTimeline.length === 0) && !pendingMessage && (
             data.status === 'active' || data.status === 'running' ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-5 h-5 text-gray-400 animate-spin" />
@@ -1430,7 +1734,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             // annotationMap: places each agent's AnnotationBar after the last
             // timeline entry (any message role) before the next agent_run starts
             const annotationMap = new Map()
-            if (data.timeline) {
+            if (displayTimeline) {
               let lastRun = null
               let lastRunIdx = null
               let lastMsgIdx = null
@@ -1438,8 +1742,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               let annotCurrentRun = null
               let annotCurrentRunIdx = null
               let annotLastEntryIdx = null
-              for (let idx = 0; idx < data.timeline.length; idx++) {
-                const e = data.timeline[idx]
+              for (let idx = 0; idx < displayTimeline.length; idx++) {
+                const e = displayTimeline[idx]
                 if (e.type === 'agent_run' && e.agent_run) {
                   // messageRunMap logic (non-user messages only)
                   if (lastRun && lastMsgIdx !== null) {
@@ -1484,7 +1788,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             }
 
             const fallbackSeen = new Set()
-            return data.timeline?.map((entry, i) => {
+            return displayTimeline.map((entry, i) => {
               // Messages always render
               if (entry.type === 'message' && entry.message) {
                 return (
@@ -1534,7 +1838,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       onAttachmentsConsumed={() => { setAttachments([]); setUploadError(null) }}
                       onAnswerSubmitted={() => {
                         setPendingMessage(true)
-                        pendingSetAtLength.current = data?.timeline?.length || 0
+                        pendingSetAtLength.current = displayTimeline?.length || 0
                       }}
                       language={data?.language}
                     />
@@ -1565,7 +1869,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           {(() => {
             // Don't show thinking indicator if session itself has ended
             if (data.status === 'failed' || data.status === 'completed') return null
-            const activeEntry = data.timeline?.findLast(
+            const activeEntry = displayTimeline?.findLast(
               (e) => e.type === 'agent_run' && (e.agent_run?.status === 'running' || e.agent_run?.status === 'paused_sandbox')
             )
             if (!activeEntry) return null
@@ -1603,7 +1907,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               })
               run?.subagent_runs?.forEach(scanRun)
             }
-            data.timeline?.forEach((entry) => {
+            displayTimeline?.forEach((entry) => {
               if (entry.type !== 'agent_run' || !entry.agent_run) return
               scanRun(entry.agent_run)
             })
@@ -1650,10 +1954,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
 
-      {/* Floating input bar — hidden in inspect mode, during sandbox, and
-          for non-owner experts (they can only view the session here; they
-          answer their expert questions on the /questions page). */}
-      {canControlSession && data.status !== 'failed' && data.status !== 'paused_sandbox' && viewMode !== 'inspect' && (
+      {/* Floating input bar — hidden in inspect mode, during sandbox, during entra auth,
+          and for non-owner experts (they answer their expert questions on the /questions page). */}
+      {canControlSession && data.status !== 'failed' && data.status !== 'paused_sandbox' && data.status !== 'paused_entra_auth' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
@@ -1711,7 +2014,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                     <StopCircle className="w-4 h-4" />
                   )}
                 </button>
-              ) : ['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) ? (
+              ) : ['paused', 'paused_crashed', 'failed'].includes(data.status) ? (
                 <button
                   onClick={() => setShowContinueDialog(true)}
                   className="flex-shrink-0 p-2 rounded-xl bg-green-600 text-white hover:bg-green-700 transition-colors"

@@ -56,6 +56,21 @@ services:
     networks:
       - app-net
 
+  redis:
+    image: redis:7-alpine
+    profiles: [infra, dev, prod]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app-net
+
   keycloak-db:
     image: postgres:15-alpine
     profiles: [infra, dev, prod]
@@ -248,8 +263,8 @@ services:
 
   module-docker:
     build:
-      context: ./druppie
-      dockerfile: mcp-servers/module-docker/Dockerfile
+      context: ./druppie/mcp-servers
+      dockerfile: module-docker/Dockerfile
     container_name: druppie-module-docker
     profiles: [infra, dev, prod]
     environment:
@@ -463,6 +478,10 @@ services:
       DATA_SOURCE_1: ${DATA_SOURCE_1:-}
       DATA_SOURCE_2: ${DATA_SOURCE_2:-}
       DATA_SOURCE_3: ${DATA_SOURCE_3:-}
+      DATA_SOURCE_4: ${DATA_SOURCE_4:-}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
     volumes:
       - workspace:/workspaces
     ports:
@@ -653,6 +672,10 @@ services:
       KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-}
       # Container name derived from COMPOSE_PROJECT_NAME (Docker Compose naming: <project>-<service>-1)
       GITEA_CONTAINER: ${COMPOSE_PROJECT_NAME:-druppie}-gitea-1
+      # Entra ID identity broker (optional — skipped if ENTRA_CLIENT_ID is empty)
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
       # Override .env path for setup_gitea.py token writing
       ENV_FILE: /project/.env
     volumes:
@@ -684,12 +707,20 @@ services:
     command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "druppie", "--reload-dir", "testing"]
     environment:
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-30}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-50}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-60}
       DEV_MODE: ${DEV_MODE:-false}
       KEYCLOAK_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_SERVER_URL: http://keycloak:8080
       KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
+      ENTRA_ALLOWED_EMAILS: ${ENTRA_ALLOWED_EMAILS:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
       LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
       LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
@@ -716,6 +747,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
@@ -783,11 +815,19 @@ services:
     profiles: [prod]
     environment:
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-30}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-50}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-60}
       KEYCLOAK_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_SERVER_URL: http://keycloak:8080
       KEYCLOAK_ISSUER_URL: ${KEYCLOAK_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}}
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
+      ENTRA_ALLOWED_EMAILS: ${ENTRA_ALLOWED_EMAILS:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
       LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
       LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
@@ -817,6 +857,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
@@ -1125,6 +1166,8 @@ volumes:
     name: ${DRUPPIE_INSTANCE:-druppie}_dataset
   init_marker:
     name: ${DRUPPIE_INSTANCE:-druppie}_init_marker
+  redis_data:
+    name: ${DRUPPIE_INSTANCE:-druppie}_redis_data
   sandbox_dep_cache:
     name: ${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache
   sandbox_bundles:

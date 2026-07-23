@@ -54,6 +54,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked",
                     },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
+                    },
                 },
                 "required": ["question"],
             },
@@ -79,6 +84,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "context": {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
                     },
                 },
                 "required": ["question", "choices"],
@@ -111,6 +121,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "context": {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked.",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
                     },
                 },
                 "required": ["expert_role", "question"],
@@ -145,6 +160,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "context": {
                         "type": "string",
                         "description": "Optional context explaining why this question is being asked.",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional attachment IDs to display with this question (e.g. PDF files the user can download before answering)",
                     },
                 },
                 "required": ["expert_role", "question", "choices"],
@@ -947,7 +967,7 @@ async def create_message(
     except Exception:
         logger.debug("caller_agent_id_lookup_failed", agent_run_id=str(agent_run_id))
 
-    message_id = execution_repo.create_message(
+    message = execution_repo.create_message(
         session_id=session_id,
         role="assistant",
         content=display_content,
@@ -956,6 +976,7 @@ async def create_message(
         agent_id=caller_agent_id,
         sequence_number=seq,
     )
+    message_id = message.id
     execution_repo.flush()
 
     linked_count = 0

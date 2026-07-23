@@ -7,6 +7,7 @@ import structlog
 from ..api.errors import AuthorizationError, NotFoundError
 from ..db.models import MessageAttachment, Session as SessionModel
 from ..domain import SessionDetail, SessionSummary
+from ..repositories.session_repository import DetailOptions
 from ..domain.common import SessionStatus
 from ..repositories import SessionRepository, QuestionRepository
 from ..services import attachment_service
@@ -35,13 +36,13 @@ class SessionService:
         expert_session_ids = self.question_repo.list_session_ids_with_expert_role(user_roles)
         return session_id in expert_session_ids
 
-    def get_detail(
+    def check_access(
         self,
         session_id: UUID,
         user_id: UUID,
         user_roles: list[str],
-    ) -> SessionDetail:
-        """Get session detail with access check.
+    ) -> bool:
+        """Check whether a user is allowed to access a session.
 
         Access rules:
           - Owner: full access
@@ -61,10 +62,29 @@ class SessionService:
             and self._user_is_session_expert(session_id, user_roles)
         )
 
-        if not (is_owner or is_admin or is_expert):
+        return is_owner or is_admin or is_expert
+
+    def get_detail(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        user_roles: list[str],
+        since_sequence: int | None = None,
+        exclude: set[str] | None = None,
+    ) -> SessionDetail:
+        """Get session detail with access check.
+
+        Access rules:
+          - Owner: full access
+          - Admin: full access
+          - Expert (a user holding a role this session has asked an expert
+            question for): read-only access
+        """
+        if not self.check_access(session_id, user_id, user_roles):
             raise AuthorizationError("Cannot access this session")
 
-        detail = self.session_repo.get_with_chat(session_id)
+        options = DetailOptions(since_sequence=since_sequence, exclude=exclude or set())
+        detail = self.session_repo.get_with_chat(session_id, options=options)
         if not detail:
             raise NotFoundError("session", str(session_id))
 
@@ -251,6 +271,9 @@ class SessionService:
             SessionStatus.PAUSED.value,
             SessionStatus.PAUSED_HITL.value,
             SessionStatus.PAUSED_CRASHED.value,
+            SessionStatus.PAUSED_APPROVAL.value,
+            SessionStatus.PAUSED_ENTRA_AUTH.value,
+            SessionStatus.PAUSED_SANDBOX.value,
             SessionStatus.FAILED.value,
         }
         if session.status not in resumable:
@@ -268,7 +291,11 @@ class SessionService:
         session.status = SessionStatus.ACTIVE.value
         self.session_repo.commit()
 
-    def lock_for_hitl_resume(self, session_id: UUID) -> None:
+    def lock_for_hitl_resume(self, session_id: UUID) -> str:
+        """Atomically lock and transition session to ACTIVE for HITL resume.
+
+        Returns the previous session status so callers can revert on failure.
+        """
         session = self.session_repo.get_by_id_for_update(session_id)
         if not session:
             raise NotFoundError("session", str(session_id))
@@ -279,5 +306,21 @@ class SessionService:
         }
         if session.status not in resumable:
             raise ValueError(f"Cannot resume HITL for session with status '{session.status}'")
+        previous_status = session.status
         session.status = SessionStatus.ACTIVE.value
+        self.session_repo.commit()
+        return previous_status
+
+    def revert_to_hitl_paused(self, session_id: UUID, previous_status: str | None = None) -> None:
+        """Revert session status after a failed HITL resume attempt.
+
+        If previous_status is provided, restores to that exact status.
+        Otherwise defaults to paused_hitl.
+        """
+        target = previous_status or SessionStatus.PAUSED_HITL.value
+        try:
+            target_enum = SessionStatus(target)
+        except ValueError:
+            target_enum = SessionStatus.PAUSED_HITL
+        self.session_repo.update_status(session_id, target_enum)
         self.session_repo.commit()

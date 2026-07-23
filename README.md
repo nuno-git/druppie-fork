@@ -222,6 +222,7 @@ BACKEND_PORT=8200
 FRONTEND_PORT=5274
 KEYCLOAK_PORT=8181
 GITEA_PORT=3101
+# REDIS_PORT=6379  # Only needed if you run an external Redis; internal default is 6379
 ```
 
 ## Documentation

@@ -63,17 +63,21 @@ def reconstruct_from_db(
             ],
         })
 
-        for j, tool_call_db in enumerate(last_call.tool_calls):
-            if tool_call_db.result or tool_call_db.error_message:
-                tool_call_id = f"call_last_{j}"
-                if j < len(last_call.response_tool_calls):
-                    tool_call_id = last_call.response_tool_calls[j].get("id", tool_call_id)
+        db_tool_calls = {tc.tool_call_index: tc for tc in last_call.tool_calls}
+        for j, tc in enumerate(last_call.response_tool_calls):
+            tool_call_id = tc.get("id", f"call_last_{j}")
+            tool_call_db = db_tool_calls.get(j)
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": tool_call_db.result or f"Error: {tool_call_db.error_message}",
-                })
+            if tool_call_db and (tool_call_db.result or tool_call_db.error_message):
+                content = tool_call_db.result or f"Error: {tool_call_db.error_message}"
+            else:
+                content = '{"success": false, "error": "Tool execution was interrupted."}'
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": content,
+            })
 
     elif last_call.response_content:
         messages.append({
@@ -109,18 +113,30 @@ def _full_replay(llm_calls: list) -> list[dict]:
                 ],
             })
 
-            for j, tool_call_db in enumerate(llm_call.tool_calls):
-                if tool_call_db.result or tool_call_db.error_message:
-                    tool_call_id = f"call_{i}_{j}"
-                    if j < len(llm_call.response_tool_calls):
-                        tool_call_id = llm_call.response_tool_calls[j].get("id", tool_call_id)
+            # Add tool results from the database
+            # Build a map of tool_call_index → db record for matching
+            db_tc_by_index = {
+                tc.tool_call_index: tc
+                for tc in llm_call.tool_calls
+                if tc.tool_call_index is not None
+            }
 
+            for j, tc_spec in enumerate(llm_call.response_tool_calls):
+                tool_call_id = tc_spec.get("id", f"call_{i}_{j}")
+                tool_call_db = db_tc_by_index.get(j)
+
+                if tool_call_db and (tool_call_db.result or tool_call_db.error_message):
                     result_content = _strip_display_fields(tool_call_db.result) or f"Error: {tool_call_db.error_message}"
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": result_content,
+                else:
+                    result_content = json.dumps({
+                        "success": False,
+                        "error": "Tool execution was interrupted. Please call this tool again.",
                     })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": result_content,
+                })
 
         elif llm_call.response_content:
             messages.append({
