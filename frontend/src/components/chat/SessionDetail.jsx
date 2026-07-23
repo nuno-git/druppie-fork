@@ -8,7 +8,7 @@ import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, M
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, authorizeEntra, getResumableRuns, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput, getSandboxEvents, downloadAttachment } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, authorizeEntra, getResumableRuns, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput, getSandboxEvents, downloadAttachment, getAttachmentUrl } from '../../services/api'
 import { getUserInfo, getKeycloak } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
@@ -991,8 +991,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
 // AgentRunStatus values that indicate the agent has started processing (not pending)
-// Note: 'paused_user' was removed as it doesn't exist; 'paused_crashed' added
-const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_entra_auth', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_user', 'paused_entra_auth', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
 
 const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)
@@ -1610,7 +1609,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               </span>
             )}
             {/* Continue button — when fully stopped, crashed, or failed */}
-            {canControlSession && ['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
+            {canControlSession && ['paused', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
               <button
                 onClick={() => setShowContinueDialog(true)}
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
@@ -2015,7 +2014,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                     <StopCircle className="w-4 h-4" />
                   )}
                 </button>
-              ) : ['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) ? (
+              ) : ['paused', 'paused_crashed', 'failed'].includes(data.status) ? (
                 <button
                   onClick={() => setShowContinueDialog(true)}
                   className="flex-shrink-0 p-2 rounded-xl bg-green-600 text-white hover:bg-green-700 transition-colors"

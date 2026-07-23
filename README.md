@@ -100,8 +100,6 @@ docker compose logs -f                       # All services
 docker compose logs -f druppie-backend-dev   # Backend only
 docker compose logs -f druppie-frontend-dev  # Frontend only
 docker compose logs -f keycloak              # Keycloak only
-docker compose logs -f sandbox-control-plane # Sandbox control plane
-docker compose logs -f sandbox-manager       # Sandbox manager
 ```
 
 ### Reset
@@ -231,10 +229,46 @@ GITEA_PORT=3101
 
 | Document | Description |
 |----------|-------------|
-| [docs/FEATURES.md](docs/FEATURES.md) | Functional features: agents, workflows, approvals, HITL, sandbox coding |
-| [docs/TECHNICAL.md](docs/TECHNICAL.md) | Technical architecture: backend, database, agent runtime, security |
+| [docs/TECHNICAL.md](docs/TECHNICAL.md) | Technical architecture (as-built reference, superseded by formal ADRs/PRDs/Specs) |
 | [docs/SANDBOX.md](docs/SANDBOX.md) | Sandbox infrastructure: OpenCode integration, provider resilience, Kata Containers |
-| [docs/BACKLOG.md](docs/BACKLOG.md) | Bugs, technical debt, and improvement ideas |
+| [docs/adrs/](docs/adrs/) | Architectural Decision Records (ADRs 001-017) |
+| [docs/prds/](docs/prds/) | Product Requirements Documents (PRDs 001-013) |
+| [docs/research/](docs/research/) | Research and analysis (001-007) |
+| [docs/specs/](docs/specs/) | Executable behavioral specs (Gherkin) |
+| [docs/guides/](docs/guides/) | Operational guides |
+
+## Documentation checks
+
+Docs under `docs/adrs`, `docs/prds`, `docs/research` and `docs/specs` are validated against the documentation standard (PBI 9744).
+
+Run the check locally (no host Python needed — it runs in Docker):
+
+```bash
+docker compose --profile docs-validator run --rm docs-validator
+```
+
+Optional (opt-in) — get fast local feedback by running the check automatically
+before each commit via [lefthook](https://github.com/evilmartians/lefthook). This
+is purely a convenience; CI (`.github/workflows/docs.yml`) is the binding gate.
+
+Easiest way — one command (installs the hooks if the binary is present, otherwise
+prints install instructions):
+
+```bash
+./scripts/setup-hooks.sh
+```
+
+Or do it manually:
+
+```bash
+# Install the lefthook binary once (Linux: download the release binary or
+# `go install github.com/evilmartians/lefthook@latest`; macOS: `brew install lefthook`), then:
+lefthook install
+```
+
+The pre-commit hook only affects commits made on a host where it is installed;
+it does not touch agent commits made inside sandbox containers. It is always
+bypassable with `git commit --no-verify`, and CI remains the binding gate.
 
 ## Troubleshooting
 

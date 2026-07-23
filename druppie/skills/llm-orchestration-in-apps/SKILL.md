@@ -148,7 +148,7 @@ call, made against the platform standard.
   placement): `llm-orchestration-standard` skill.
 - Research foundation, the module-llm capability gap, and the module-llm
   v2 handoff:
-  [`docs/LLM-orchestration/llm-orchestration-in-apps.md`](../../../docs/LLM-orchestration/llm-orchestration-in-apps.md)
+  [`docs/research/002-llm-orchestration-in-apps.md`](../../../docs/research/002-llm-orchestration-in-apps.md)
 - `module-llm` interface (current `chat` tool):
   [`druppie/mcp-servers/module-llm/v1/tools.py`](../../mcp-servers/module-llm/v1/tools.py)
 - Druppie agent stack (contrast — *not* in scope for this skill):

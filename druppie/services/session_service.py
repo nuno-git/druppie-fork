@@ -271,7 +271,7 @@ class SessionService:
             SessionStatus.PAUSED.value,
             SessionStatus.PAUSED_HITL.value,
             SessionStatus.PAUSED_CRASHED.value,
-            SessionStatus.PAUSED_HITL.value,
+            SessionStatus.PAUSED_APPROVAL.value,
             SessionStatus.PAUSED_ENTRA_AUTH.value,
             SessionStatus.PAUSED_SANDBOX.value,
             SessionStatus.FAILED.value,
@@ -291,7 +291,11 @@ class SessionService:
         session.status = SessionStatus.ACTIVE.value
         self.session_repo.commit()
 
-    def lock_for_hitl_resume(self, session_id: UUID) -> None:
+    def lock_for_hitl_resume(self, session_id: UUID) -> str:
+        """Atomically lock and transition session to ACTIVE for HITL resume.
+
+        Returns the previous session status so callers can revert on failure.
+        """
         session = self.session_repo.get_by_id_for_update(session_id)
         if not session:
             raise NotFoundError("session", str(session_id))
@@ -302,5 +306,21 @@ class SessionService:
         }
         if session.status not in resumable:
             raise ValueError(f"Cannot resume HITL for session with status '{session.status}'")
+        previous_status = session.status
         session.status = SessionStatus.ACTIVE.value
+        self.session_repo.commit()
+        return previous_status
+
+    def revert_to_hitl_paused(self, session_id: UUID, previous_status: str | None = None) -> None:
+        """Revert session status after a failed HITL resume attempt.
+
+        If previous_status is provided, restores to that exact status.
+        Otherwise defaults to paused_hitl.
+        """
+        target = previous_status or SessionStatus.PAUSED_HITL.value
+        try:
+            target_enum = SessionStatus(target)
+        except ValueError:
+            target_enum = SessionStatus.PAUSED_HITL
+        self.session_repo.update_status(session_id, target_enum)
         self.session_repo.commit()
