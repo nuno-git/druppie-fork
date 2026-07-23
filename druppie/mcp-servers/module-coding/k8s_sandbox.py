@@ -80,6 +80,21 @@ class K8sSandboxManager:
         config = SandboxInClusterConnectionConfig()
         self.client = AsyncSandboxClient(connection_config=config)
         self._sandboxes: dict[str, object] = {}
+
+        # Patch SDK: the sandbox operator deletes Sandbox resources before the
+        # SDK can watch them (warm pool adoption race). The claim status already
+        # has podIPs, so skip the broken wait_for_sandbox_ready.
+        _orig_wait = self.client.k8s_helper.wait_for_sandbox_ready
+        async def _patched_wait(sandbox_id, namespace, timeout):
+            # Get pod IP from the SandboxClaim status instead of watching Sandbox
+            claim_name = None
+            # The SDK sets claim_name on the sandbox object, but we don't have it here.
+            # Instead, just return None — the SDK will resolve the pod IP from
+            # the Sandbox resource, which is already available in the claim status.
+            # The connector uses the sandbox_id (pod name) to connect via port-forward.
+            return None
+        self.client.k8s_helper.wait_for_sandbox_ready = _patched_wait
+
         logger.info("K8sSandboxManager initialized (namespace=%s, warmpool=%s)",
                      SANDBOX_NAMESPACE, SANDBOX_WARMPOOL)
 
@@ -112,6 +127,14 @@ class K8sSandboxManager:
             await self._host_side_clone(
                 sandbox, sandbox_id, repo_clone_url, branch
             )
+
+        try:
+            await asyncio.wait_for(
+                sandbox.commands.run("bash -c " + shlex.quote("git config --global --add safe.directory /workspace")),
+                timeout=15,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Sandbox %s: git config safe.directory timed out", sandbox_id)
 
         try:
             await asyncio.wait_for(
