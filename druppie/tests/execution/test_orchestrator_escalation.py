@@ -374,6 +374,8 @@ class TestResumeAfterArchitectHitl:
     async def test_approve_creates_architect_run(self):
         orch = _make_orchestrator()
         session = _make_session(status=SessionStatus.PAUSED_ARCHITECT_HITL, fd_escalation_mode=True)
+        session.fd_rejection_count = 3
+        session.fd_post_hitl_rejection_count = 1
         _wire_session(orch, session)
         orch.execution_repo.get_next_sequence_number.return_value = 7
 
@@ -386,6 +388,8 @@ class TestResumeAfterArchitectHitl:
         assert call_kwargs["agent_id"] == "architect"
         mock_exec.assert_awaited_once()
         assert session.fd_escalation_mode is False
+        assert session.fd_rejection_count == 0
+        assert session.fd_post_hitl_rejection_count == 0
 
     @pytest.mark.asyncio
     async def test_reject_to_ba_hitl(self):

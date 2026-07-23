@@ -2218,6 +2218,8 @@ class Orchestrator:
         match decision:
             case "approve":
                 session.fd_escalation_mode = False
+                session.fd_rejection_count = 0
+                session.fd_post_hitl_rejection_count = 0
                 seq = self.execution_repo.get_next_sequence_number(session_id)
                 self.execution_repo.create_agent_run(
                     session_id=session_id,
