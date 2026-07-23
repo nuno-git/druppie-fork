@@ -287,6 +287,7 @@ class TestArchitectHitlRoute:
             user_roles=["architect"],
             decision="reject",
             next_on_reject="terminate",
+            feedback=None,
         )
 
     def test_403_non_architect(self, client, as_plain, mock_service):

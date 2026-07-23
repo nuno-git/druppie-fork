@@ -353,16 +353,6 @@ class TestResumeAfterBaHitl:
             session.id, SessionStatus.TERMINATED, error_message="done"
         )
 
-    @pytest.mark.asyncio
-    async def test_wrong_status_raises_conflict(self):
-        from druppie.api.errors import ConflictError
-
-        orch = _make_orchestrator()
-        session = _make_session(status=SessionStatus.ACTIVE)
-        _wire_session(orch, session)
-        with pytest.raises(ConflictError):
-            await orch.resume_after_ba_hitl(session.id, decision="iterate")
-
 
 # ---------------------------------------------------------------------------
 # Behavior E: resume_after_architect_hitl

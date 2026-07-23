@@ -71,6 +71,7 @@ class ArchitectHitlRequest(BaseModel):
 
     decision: Literal["approve", "reject"]
     next_on_reject: Literal["ba_hitl", "terminate"] | None = Field(default=None)
+    feedback: str | None = Field(default=None)
 
     @model_validator(mode="after")
     def _reject_requires_target(self) -> "ArchitectHitlRequest":
@@ -121,6 +122,7 @@ async def _resume_architect_hitl(
     decision: str,
     next_on_reject: str | None,
     user_id: UUID,
+    feedback: str | None = None,
 ) -> None:
     """Resume architect HITL workflow in background using run_session_task for DB lifecycle."""
 
@@ -130,6 +132,7 @@ async def _resume_architect_hitl(
             decision=decision,
             next_on_reject=next_on_reject,
             user_id=user_id,
+            feedback=feedback,
         )
 
     await run_session_task(session_id, task, "resume_architect_hitl")
@@ -250,6 +253,7 @@ async def architect_hitl(
         user_roles=user_roles,
         decision=request.decision,
         next_on_reject=request.next_on_reject,
+        feedback=request.feedback,
     )
 
     # Step 2: Spawn background task to resume
@@ -261,6 +265,7 @@ async def architect_hitl(
                 decision=request.decision,
                 next_on_reject=request.next_on_reject,
                 user_id=user_id,
+                feedback=request.feedback,
             ),
             name=f"resume-architect-hitl-{session_id}",
         )

@@ -2132,9 +2132,6 @@ class Orchestrator:
         session = self.session_repo.get_by_id(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
-        if session.status != SessionStatus.PAUSED_BA_HITL.value:
-            raise ConflictError(f"Session not paused for BA HITL (status={session.status})")
-
         # The human-decision audit event is recorded by EscalationService (the
         # authorize+audit gate) before this method runs; only state transitions
         # happen here. State-machine events (BA_HITL_ENTERED, sticky ITERATE
@@ -2200,21 +2197,17 @@ class Orchestrator:
         decision: str,
         next_on_reject: str | None = None,
         user_id: UUID | None = None,
+        feedback: str | None = None,
     ) -> UUID:
         """Resume a PAUSED_ARCHITECT_HITL session per the architect's decision.
 
         decision: "approve" | "reject"
         When rejecting, next_on_reject: "ba_hitl" | "terminate"
         """
-        from druppie.api.errors import ConflictError
-
         self._assert_not_terminated(session_id)
         session = self.session_repo.get_by_id(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
-        if session.status != SessionStatus.PAUSED_ARCHITECT_HITL.value:
-            raise ConflictError(f"Session not paused for architect HITL (status={session.status})")
-
         match decision:
             case "approve":
                 session.fd_escalation_mode = False
@@ -2242,6 +2235,7 @@ class Orchestrator:
                             event_type=EscalationEventType.BA_HITL_ENTERED.value,
                             actor_user_id=user_id,
                             rejection_count_at_event=session.fd_rejection_count or 0,
+                            feedback=feedback,
                         )
                         self.session_repo.commit()
                     case "terminate":

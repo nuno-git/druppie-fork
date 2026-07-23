@@ -95,6 +95,7 @@ class EscalationService:
         user_roles: list[str],
         decision: str,
         next_on_reject: str | None = None,
+        feedback: str | None = None,
     ) -> EscalationEventDetail:
         """Record an architect human-in-the-loop decision (auth level: architect_hitl).
 
@@ -111,6 +112,7 @@ class EscalationService:
             actor_user_id=user_id,
             decision=decision,
             event_type=event_type,
+            feedback=feedback,
         )
 
     def terminate(

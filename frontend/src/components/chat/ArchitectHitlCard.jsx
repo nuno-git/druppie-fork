@@ -19,6 +19,7 @@ const ArchitectHitlCard = ({ sessionId, session }) => {
   const queryClient = useQueryClient()
   const { user } = useAuth()
   const [showReject, setShowReject] = useState(false)
+  const [feedback, setFeedback] = useState('')
 
   const userRoles = user?.roles || []
   const isAdmin = userRoles.includes('admin')
@@ -28,6 +29,7 @@ const ArchitectHitlCard = ({ sessionId, session }) => {
     mutationFn: (payload) => submitArchitectHitl(sessionId, payload),
     onSuccess: () => {
       setShowReject(false)
+      setFeedback('')
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['escalation-history', sessionId] })
     },
@@ -37,7 +39,7 @@ const ArchitectHitlCard = ({ sessionId, session }) => {
 
   const rejectWith = (nextOnReject) => {
     if (!ARCHITECT_REJECT_NEXT.includes(nextOnReject) || pending) return
-    mutation.mutate({ decision: 'reject', next_on_reject: nextOnReject })
+    mutation.mutate({ decision: 'reject', next_on_reject: nextOnReject, feedback: feedback.trim() || undefined })
   }
 
   if (!canAct) {
@@ -65,6 +67,15 @@ const ArchitectHitlCard = ({ sessionId, session }) => {
       {showReject ? (
         <div className="ml-6 space-y-2">
           <p className="text-sm text-indigo-800">Reject — send where?</p>
+          <textarea
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder="Reason for rejection (optional, visible to the BA reviewer)…"
+            rows={2}
+            disabled={pending}
+            className="w-full resize-y border border-indigo-300 rounded-lg px-3 py-2 bg-white outline-none text-sm leading-6 focus:border-indigo-400 transition-colors"
+            aria-label="Rejection feedback"
+          />
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => rejectWith('ba_hitl')}
@@ -83,7 +94,7 @@ const ArchitectHitlCard = ({ sessionId, session }) => {
               Terminate session
             </button>
             <button
-              onClick={() => setShowReject(false)}
+              onClick={() => { setShowReject(false); setFeedback('') }}
               disabled={pending}
               className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 transition-colors"
             >
