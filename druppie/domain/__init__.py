@@ -54,7 +54,7 @@ from .evaluation import (
 )
 
 # Documentation models
-from .documentation import DocumentationEntry
+from .documentation import DocumentationEntry, PlatformDocEntry
 
 # Document formatter models
 from .document_formatter import DocumentMetadata
@@ -163,6 +163,7 @@ __all__ = [
     "UserInfo",
     # Documentation
     "DocumentationEntry",
+    "PlatformDocEntry",
     # Document formatter
     "DocumentMetadata",
     # Agent definition
