@@ -652,13 +652,41 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
               "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }
             }
           }
+        },
+        "deepseek-v4-flash": {
+          "name": "DeepSeek V4 Flash (284B MoE, B12X)",
+          "id": "deepseek-v4-flash",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": { "context": 262144, "output": 32768 },
+          "options": {
+            "temperature": 0.1,
+            "top_p": 0.95,
+            "extraBody": {
+              "chat_template_kwargs": { "thinking": true, "reasoning_effort": "high" }
+            }
+          }
+        },
+        "laguna-s-2.1": {
+          "name": "Laguna S 2.1 (118B MoE, NVFP4)",
+          "id": "laguna-s-2.1",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": { "context": 262144, "output": 32768 },
+          "options": {
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "extraBody": {
+              "chat_template_kwargs": { "enable_thinking": true }
+            }
+          }
         }
       }
     }
   }
 }
 OPENCODE_CFG
-log "opencode: Waterschap LLM provider configured (qwen3.6-27b, qwen3.6-35b-a3b)"
+log "opencode: Waterschap LLM provider configured (qwen3.6-27b, qwen3.6-35b-a3b, deepseek-v4-flash, laguna-s-2.1)"
 
 # ---------------------------------------------------------------------------
 # 2d. Patch kubeconfig to use internal API server endpoint.
