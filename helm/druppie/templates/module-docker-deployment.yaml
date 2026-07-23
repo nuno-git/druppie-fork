@@ -1,95 +1,105 @@
-{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "registry") -}}
-{{- if .Values.modules.registry.enabled }}
+{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "docker") -}}
+{{- if .Values.modules.docker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "druppie.fullname" . }}-module-registry
+  name: {{ include "druppie.fullname" . }}-module-docker
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-registry
+    app.kubernetes.io/component: module-docker
 spec:
-  replicas: {{ .Values.modules.registry.replicaCount }}
+  replicas: {{ .Values.modules.docker.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: module-registry
+      app.kubernetes.io/component: module-docker
   template:
     metadata:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: module-registry
-        {{- if and $dev (not .Values.persistence.rwx) }}
+        app.kubernetes.io/component: module-docker
+        {{- if not .Values.persistence.rwx }}
         druppie.io/shared-storage: "true"
         {{- end }}
       annotations:
         reloader.stakater.com/auto: "true"
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
-      {{- if $dev }}
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
-      {{- end }}
       containers:
-        - name: module-registry
+        - name: module-docker
           {{- if $dev }}
-          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.registry.image) }}
+          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.docker.image) }}
           imagePullPolicy: Always
           command:
             - bash
             - /scripts/module-dev-entrypoint.sh
-            - "registry"
-            - "module-registry"
-            - {{ .Values.modules.registry.port | quote }}
+            - "docker"
+            - "module-docker"
+            - {{ .Values.modules.docker.port | quote }}
           {{- else }}
-          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.registry.image) }}
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           {{- end }}
           env:
-            - name: DATA_DIR
-              value: "/data"
             - name: MCP_PORT
-              value: {{ .Values.modules.registry.port | quote }}
+              value: {{ .Values.modules.docker.port | quote }}
+            - name: DRUPPIE_URL
+              value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
+            {{- if and .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
+            - name: DOCKER_HOST
+              value: "unix:///var/run/docker.sock"
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "druppie.fullname" . }}-config
             - secretRef:
                 name: {{ include "druppie.fullname" . }}-secrets
             {{- if .Values.global.extraEnvFromSecret }}
-            # Branch environments: Vault-sourced overrides (ESO-managed). Listed
-            # last so its keys win; optional so pods start while it syncs.
             - secretRef:
                 name: {{ .Values.global.extraEnvFromSecret }}
                 optional: true
             {{- end }}
           ports:
             - name: http
-              containerPort: {{ .Values.modules.registry.port }}
+              containerPort: {{ .Values.modules.docker.port }}
               protocol: TCP
-          {{- if $dev }}
           volumeMounts:
+            {{- if $dev }}
             - name: workspace-dev
               mountPath: /workspace
             - name: module-dev-entrypoint
               mountPath: /scripts
               readOnly: true
+            {{- else }}
+            - name: workspace
+              mountPath: /workspaces
+            {{- end }}
+            {{- if and .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            {{- end }}
+          {{- if $dev }}
           livenessProbe:
             tcpSocket:
-              port: {{ .Values.modules.registry.port }}
+              port: {{ .Values.modules.docker.port }}
             initialDelaySeconds: 15
             periodSeconds: 30
             failureThreshold: 5
           readinessProbe:
             tcpSocket:
-              port: {{ .Values.modules.registry.port }}
+              port: {{ .Values.modules.docker.port }}
             initialDelaySeconds: 5
             periodSeconds: 10
           {{- else }}
           livenessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.modules.registry.port }}
+              port: {{ .Values.modules.docker.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
@@ -97,16 +107,23 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.modules.registry.port }}
+              port: {{ .Values.modules.docker.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
           {{- end }}
           resources:
-            {{- toYaml .Values.modules.registry.resources | nindent 12 }}
-      {{- if $dev }}
+            {{- toYaml .Values.modules.docker.resources | nindent 12 }}
+      {{- with .Values.modules.docker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- else }}
+      nodeSelector:
+        node-role.kubernetes.io/worker: "true"
+      {{- end }}
       volumes:
+        {{- if $dev }}
         - name: workspace-dev
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace-dev
@@ -114,5 +131,15 @@ spec:
           configMap:
             name: {{ include "druppie.fullname" . }}-module-dev-entrypoint
             defaultMode: 0755
-      {{- end }}
+        {{- else }}
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace
+        {{- end }}
+        {{- if and .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        {{- end }}
 {{- end }}
