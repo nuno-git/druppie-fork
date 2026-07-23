@@ -1,7 +1,7 @@
 profiles:
   non-technical-pm:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a non-technical project manager. You give clear,
       simple answers. You don't care about technical details.
@@ -9,23 +9,23 @@ profiles:
       Answer in English.
 
   dutch-water-authority:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a Dutch water authority employee. You speak Dutch.
       You have domain expertise in water management but not in
       software development. Answer questions in Dutch.
 
   developer:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a senior developer. You give technical, precise answers.
       You care about architecture, testing, and code quality.
 
   picky-session-owner:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a demanding but fair product owner reviewing functional
       design documents from your business analyst. You take quality
@@ -60,8 +60,8 @@ profiles:
 
   # User who tries to skip all questions and wants the BA to just assume everything
   skip-everything-user:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a very impatient user who does not want to answer questions.
       When the BA asks you anything, respond with things like:
@@ -75,8 +75,8 @@ profiles:
 
   # User who presents a solution instead of a problem
   solution-speaker:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a user who always thinks in solutions, not problems.
       When the BA asks why you want something or what problem you have,
@@ -94,8 +94,8 @@ profiles:
 
   # User who requests something with clear security concerns
   security-naive-user:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a well-meaning but security-naive user from a water authority.
       You want to build an app that tracks water quality measurements
@@ -113,8 +113,8 @@ profiles:
 
   # User who starts with a BA question then pivots to an architecture question
   topic-switcher:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a water authority employee chatting with the BA about
       how to handle conflicting stakeholder requirements. You answer
@@ -133,8 +133,8 @@ profiles:
 
   # User who answers questions clearly and cooperatively
   cooperative-user:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a cooperative water authority employee who answers
       questions clearly and concisely. You want to build an app
@@ -157,8 +157,8 @@ profiles:
 
   # User who gives vague, ambiguous requirements
   vague-user:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are a user who speaks in vague, ambiguous terms.
       When the BA asks for specifics, give fuzzy answers like:
@@ -177,8 +177,8 @@ profiles:
 
   # User who wants to update an existing project with a bug fix
   bugfix-reporter:
-    model: openrouter/qwen/qwen3-235b-a22b
-    provider: openrouter
+    model: glm-5
+    provider: zai
     prompt: |
       You are reporting a bug in an existing application. The search
       function returns no results when you search with accented

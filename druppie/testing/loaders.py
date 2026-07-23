@@ -115,8 +115,8 @@ class ProfileLoader:
             return self._hitl[name]
         if name == "default":
             return HITLProfile(
-                model="openrouter/qwen/qwen3-235b-a22b",
-                provider="openrouter",
+                model="glm-4.5-air",
+                provider="zai",
                 prompt="You are a helpful user who gives clear, concise answers.",
             )
         raise KeyError(
@@ -128,7 +128,7 @@ class ProfileLoader:
         if name in self._judges:
             return self._judges[name]
         if name == "default":
-            return JudgeProfile(model="openrouter/qwen/qwen3-235b-a22b", provider="openrouter")
+            return JudgeProfile(model="glm-4.5-air", provider="zai")
         raise KeyError(
             f"Unknown judge profile: {name}. "
             f"Available: {sorted(self._judges.keys())}"
