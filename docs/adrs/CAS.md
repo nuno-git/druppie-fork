@@ -6,6 +6,7 @@ Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`
 
 | ADR | Title |
 |-----|-------|
+| [001](001-adopt-documentation-standard.md) | Adopt a spec-driven documentation standard |
 | [002](002-kubernetes-migration.md) | Kubernetes migration architecture |
 | [003](003-developer-agent-testing-page.md) | Add developer page for single-agent testing |
 | [004](004-agent-runtime.md) | Build native agent runtime with done() enforcement |

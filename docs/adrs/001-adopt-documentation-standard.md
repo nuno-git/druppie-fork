@@ -1,7 +1,7 @@
 ---
 id: "001"
 title: Adopt a spec-driven documentation standard
-status: proposed
+status: accepted
 date: 2026-07-14
 deciders:
   - team

@@ -30,13 +30,13 @@ jobs:
           python -m pytest scripts/tests -q
 
       # Check A — mandatory-docs gate (PR level). If code changed but no docs did,
-      # warn — unless the PR is exempt via the `docs-exempt` label OR a `docs-exempt`
-      # line in the PR description. Warn-mode for now (continue-on-error); flip to
-      # blocking in fase 8 (remove continue-on-error + mark the check required).
+      # FAIL the build — unless the PR is exempt via the `docs-exempt` label OR a
+      # `docs-exempt` line in the PR description. Blocking: the baseline is clean and
+      # the team has accepted ADR 001. Mark this check required in branch protection
+      # so it must pass before merge.
       # The gate/exempt logic lives in the testable scripts/check_mandatory_docs.py,
       # which prints its own ::error:: with the guide link + the 3 exempt ways.
       - name: Mandatory-docs gate (Check A)
-        continue-on-error: true
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -45,9 +45,8 @@ jobs:
           git fetch --no-tags origin "$BASE_REF"
           git diff --name-only "origin/$BASE_REF...HEAD" | python scripts/check_mandatory_docs.py
 
-      # Check B — validity of the docs that exist. Warn-mode for now.
+      # Check B — validity of the docs that exist. Blocking.
       - name: Validate docs (Check B)
-        continue-on-error: true
         run: |
           python scripts/validate_docs.py || {
             echo "::error::Documentation validation failed. See docs/guides/documentation-framework.md for the standard (frontmatter, ids, links, CAS)."
