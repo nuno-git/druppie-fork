@@ -1,0 +1,11 @@
+{{- if .Values.devWorkspace.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-dev-entrypoint
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+data:
+  module-dev-entrypoint.sh: |
+{{ .Files.Get "files/module-dev-entrypoint.sh" | indent 4 }}
+{{- end }}

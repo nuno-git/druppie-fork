@@ -1,4 +1,5 @@
-{{- if and .Values.modules.web.enabled (not (include "druppie.moduleEmbedded" (dict "root" . "mod" "web"))) }}
+{{- $dev := include "druppie.moduleDevMode" (dict "root" . "mod" "web") -}}
+{{- if .Values.modules.web.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,8 +31,19 @@ spec:
       {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
         - name: module-web
+          {{- if $dev }}
+          image: {{ include "druppie.moduleDevImage" (dict "root" . "image" .Values.modules.web.image) }}
+          imagePullPolicy: Always
+          command:
+            - bash
+            - /scripts/module-dev-entrypoint.sh
+            - "web"
+            - "module-web"
+            - {{ .Values.modules.web.port | quote }}
+          {{- else }}
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.web.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- end }}
           env:
             - name: SEARCH_ROOT
               value: "/dataset"
@@ -42,8 +54,29 @@ spec:
               containerPort: {{ .Values.modules.web.port }}
               protocol: TCP
           volumeMounts:
+            {{- if $dev }}
+            - name: workspace-dev
+              mountPath: /workspace
+            - name: module-dev-entrypoint
+              mountPath: /scripts
+              readOnly: true
+            {{- else }}
             - name: dataset
               mountPath: /dataset
+            {{- end }}
+          {{- if $dev }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.web.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.modules.web.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- else }}
           livenessProbe:
             httpGet:
               path: /health
@@ -60,6 +93,7 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          {{- end }}
           resources:
             {{- toYaml .Values.modules.web.resources | nindent 12 }}
       {{- with .Values.modules.web.nodeSelector }}
@@ -67,7 +101,17 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
+        {{- if $dev }}
+        - name: workspace-dev
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace-dev
+        - name: module-dev-entrypoint
+          configMap:
+            name: {{ include "druppie.fullname" . }}-module-dev-entrypoint
+            defaultMode: 0755
+        {{- else }}
         - name: dataset
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-dataset
+        {{- end }}
 {{- end }}
