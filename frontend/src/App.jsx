@@ -27,7 +27,7 @@ import Analytics from './pages/Analytics'
 import BatchDetail from './pages/BatchDetail'
 import DeveloperPage from './pages/DeveloperPage'
 import CachedDependencies from './pages/CachedDependencies'
-import Documentation from './pages/Documentation'
+import Documentation, { DocumentationDetail } from './pages/Documentation'
 import Deployments from './pages/Deployments'
 import ModelManagement from './pages/ModelManagement'
 
@@ -166,6 +166,20 @@ function App() {
                 />
                 {/* Redirect old debug-chat to chat */}
                 <Route path="/debug-chat" element={<Navigate to="/chat" replace />} />
+                {/* Documentation detail: full-bleed (no max-w-7xl) so doc content can use
+                    full available width while NavRail stays visible. */}
+                <Route
+                  path="/documentation/:docType/:docId"
+                  element={
+                    <ProtectedRoute>
+                      <ErrorBoundary>
+                        <main className="flex-1 overflow-y-auto">
+                          <DocumentationDetail />
+                        </main>
+                      </ErrorBoundary>
+                    </ProtectedRoute>
+                  }
+                />
                 {/* Padded routes: standard content pages */}
                 <Route
                   path="*"

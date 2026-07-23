@@ -2,7 +2,7 @@
 
 Provisions a production K3s cluster on Hetzner Cloud using [hetzner-k3s](https://github.com/vitobotta/hetzner-k3s).
 
-See [ADR-001](../docs/ADR-KUBERNETES.md) for the full architecture decisions.
+See [ADR-001](../docs/adrs/002-kubernetes-migration.md) for the full architecture decisions.
 
 ## Prerequisites
 
@@ -238,7 +238,7 @@ Based on Hetzner pricing (June 2026):
 
 ## References
 
-- [ADR-001: Kubernetes Migration Architecture](../docs/ADR-KUBERNETES.md)
-- [Kubernetes Strategy (spike research)](../docs/KUBERNETES-STRATEGY.md)
+- [ADR-001: Kubernetes Migration Architecture](../docs/adrs/002-kubernetes-migration.md)
+- [Kubernetes Strategy (spike research)](../docs/research/006-kubernetes-strategy.md)
 - [hetzner-k3s documentation](https://github.com/vitobotta/hetzner-k3s)
 - [K3s documentation](https://docs.k3s.io/)
