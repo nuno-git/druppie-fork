@@ -11,7 +11,7 @@ apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
   name: agent-coding-template
-  namespace: sandbox-runtime
+  namespace: "{{ .Values.global.instance }}-sandbox"
 spec:
   podTemplate:
     spec:
