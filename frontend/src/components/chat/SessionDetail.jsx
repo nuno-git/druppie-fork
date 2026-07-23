@@ -8,7 +8,7 @@ import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, M
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, authorizeEntra, getResumableRuns, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput, getSandboxEvents, downloadAttachment, getAttachmentUrl } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, authorizeEntra, getResumableRuns, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput, getSandboxEvents, downloadAttachment } from '../../services/api'
 import { getUserInfo, getKeycloak } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
@@ -41,6 +41,7 @@ import FileUploadButton from './FileUploadButton'
 import AttachmentChips from './AttachmentChips'
 import SurfacedFileCard from './SurfacedFileCard'
 import TestResultCard from './TestResultCard'
+import { useToast } from '../Toast'
 
 // Fast-poll window after user actions (answer/approve/continue) so the
 // loading indicator appears promptly instead of waiting for the 2s paused poll.
@@ -71,6 +72,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const queryClient = useQueryClient()
   const user = getUserInfo()
   const repo = useContext(ProjectRepoContext)
+  const toast = useToast()
   const [rejectMode, setRejectMode] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [rejectAttachments, setRejectAttachments] = useState([])
@@ -164,7 +166,9 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        downloadAttachment(att.id, att.original_filename)
+                        downloadAttachment(att.id, att.original_filename).catch(err => {
+                          toast.error('Download Failed', `Could not download "${att.original_filename}": ${err.message}`)
+                        })
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -313,6 +317,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
 const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles, attachments = [], onAttachmentsConsumed, onAnswerSubmitted }) => {
   const queryClient = useQueryClient()
+  const toast = useToast()
   const [localAnswer, setLocalAnswer] = useState(null)
 
   const answerMut = useMutation({
@@ -410,7 +415,9 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
                 type="button"
                 onClick={() => {
                   if (window.confirm(`Download "${att.original_filename}"?`)) {
-                    window.open(getAttachmentUrl(att.id), '_blank')
+                    downloadAttachment(att.id, att.original_filename).catch(err => {
+                      toast.error('Download Failed', `Could not download "${att.original_filename}": ${err.message}`)
+                    })
                   }
                 }}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50 transition-colors"
@@ -454,9 +461,11 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
                       key={att.id}
                       type="button"
                       onClick={() => {
-                        if (window.confirm(`Download "${att.original_filename}"?`)) {
-                          downloadAttachment(att.id, att.original_filename)
-                        }
+                    if (window.confirm(`Download "${att.original_filename}"?`)) {
+                        downloadAttachment(att.id, att.original_filename).catch(err => {
+                          toast.error('Download Failed', `Could not download "${att.original_filename}": ${err.message}`)
+                        })
+                      }
                       }}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
                     >
@@ -863,6 +872,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
 // --- Message ---
 
 const MessageItem = ({ message, agentRun, sessionId }) => {
+  const toast = useToast()
   const isUser = message.role === 'user'
   const isResumeContext = isUser && message.agent_run_id
   const hasAgent = message.agent_id && !isUser
@@ -894,7 +904,9 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        downloadAttachment(att.id, att.original_filename)
+                        downloadAttachment(att.id, att.original_filename).catch(err => {
+                          toast.error('Download Failed', `Could not download "${att.original_filename}": ${err.message}`)
+                        })
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -943,7 +955,9 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        downloadAttachment(att.id, att.original_filename)
+                        downloadAttachment(att.id, att.original_filename).catch(err => {
+                          toast.error('Download Failed', `Could not download "${att.original_filename}": ${err.message}`)
+                        })
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"

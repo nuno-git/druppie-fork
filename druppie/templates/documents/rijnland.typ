@@ -20,6 +20,11 @@
 // ============================================================================
 
 // ============================================================================
+// IMPORTS
+// ============================================================================
+#import "_shared.typ": dutch-month-name, ai-generated-notice, ai-trajectory-disclaimer
+
+// ============================================================================
 // COLOR PALETTE
 // ============================================================================
 
@@ -41,14 +46,6 @@
 // ============================================================================
 // UTILITIES
 // ============================================================================
-
-#let dutch-month-name(m) = {
-  let names = (
-    "januari", "februari", "maart", "april", "mei", "juni",
-    "juli", "augustus", "september", "oktober", "november", "december"
-  )
-  names.at(m - 1)
-}
 
 // ============================================================================
 // DOCUMENT TEMPLATE
@@ -186,7 +183,7 @@
       #v(0.4cm)
 
       #text(size: 8pt, grijs-licht)[
-        Dit document is gegenereerd met behulp van AI.
+        #ai-generated-notice
       ]
 
       #if show-watermark {
@@ -204,8 +201,7 @@
       #v(0.6cm)
 
       #text(size: 9pt, grijs-licht)[
-        Dit traject dient om het AI-platform te leren en verbeteren.
-        Geen garantie op een volledige oplossing, vaste planning of maatwerkontwikkeling.
+        #ai-trajectory-disclaimer
       ]
     ]
 
