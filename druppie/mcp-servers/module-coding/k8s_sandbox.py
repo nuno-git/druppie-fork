@@ -130,6 +130,14 @@ class K8sSandboxManager:
 
         try:
             await asyncio.wait_for(
+                sandbox.commands.run("bash -c " + shlex.quote("git config --global --add safe.directory /workspace")),
+                timeout=15,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Sandbox %s: git config safe.directory timed out", sandbox_id)
+
+        try:
+            await asyncio.wait_for(
                 sandbox.commands.run("bash -c " + shlex.quote("git -C /workspace config user.email 'agent@druppie.local'")),
                 timeout=15,
             )
