@@ -1,3 +1,6 @@
+> **📦 ARCHIVED** — This PBI has been fully implemented.
+> The Builder and Tester agents are in production.
+> Kept for historical reference.
 
 ## PBI (Story) — Bouwer & Tester Agent
 

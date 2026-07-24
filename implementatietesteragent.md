@@ -1,3 +1,7 @@
+> **📦 ARCHIVED** — This implementation plan has been fully executed.
+> The Builder and Tester agents with TDD are in production.
+> Kept for historical reference.
+
 # Implementatieplan: Builder & Tester Agents met TDD
 
 ## Overzicht

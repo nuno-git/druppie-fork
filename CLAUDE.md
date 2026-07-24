@@ -18,10 +18,16 @@ git checkout -b feature/your-feature-name
 
 ## Documentation Reminder
 
-When making significant changes, remember to update the `/docs` folder:
-- `docs/FEATURES.md` - New features or feature changes
-- `docs/BACKLOG.md` - Bugs, technical debt, and improvement ideas
-- `docs/TECHNICAL.md` - Architecture or technical changes
+When making significant changes, use the formal documentation framework:
+- `docs/adrs/` - Architectural decisions (ADRs)
+- `docs/prds/` - Product requirements (PRDs)
+- `docs/research/` - Research and analysis
+- `docs/specs/` -Executable behavioral specs (Gherkin)
+- `docs/guides/` - Operational guides
+
+### Documentation standard (PBI 9742–9744)
+
+Documentation flow & templates: see [`AGENTS.md`](AGENTS.md) (tool-agnostic entry point) / [`docs/guides/documentation-framework.md`](docs/guides/documentation-framework.md) (full details). A PR that changes feature code should include documentation, or be marked `docs-exempt`. Validate: `docker compose --profile docs-validator run --rm docs-validator`.
 
 ## Project Overview
 
@@ -92,8 +98,6 @@ druppie/
 ├── agents/        # YAML agent definitions
 ├── core/          # MCP client, config loading
 └── mcp-servers/   # Coding (9001), Docker (9002) microservices
-
-background-agents/  # Sandbox infrastructure (from nuno120/background-agents, branch druppie)
 
 frontend/
 ├── src/pages/     # React pages
@@ -245,7 +249,7 @@ Same pattern — setup test via API first, then retry via UI:
 ## Critical Rules
 
 1. **NO database migrations** - Update SQLAlchemy models directly, reset DB with `docker compose --profile reset-db run --rm reset-db`
-2. **NO JSON/JSONB columns** - Normalize everything into proper relational tables
+2. **Prefer relational tables over JSON/JSONB columns** - Normalize data with a stable, queryable schema into proper tables. `Column(JSON)` is allowed for genuinely variable/open-ended payloads (raw LLM messages, dynamic tool arguments) — document the expected shape in a code comment when you use it.
 3. **NO legacy/fallback code** - Clean architecture only, no backwards compatibility hacks
 4. **Config in YAML files** - Agent definitions in `agents/definitions/*.yaml`, not database
 5. **Always commit and push** - Keep changes in git

@@ -262,6 +262,17 @@ mcps:
           - validate_view
           - add_layered_view
           - add_cooperation_view
+      # Project repo coordinates — the write tools read/write the model file
+      # (docs/architecture.archimate) directly against Gitea, so they need to
+      # know which repo. Same source as the coding MCP.
+      repo_name:
+        from: project.repo_name
+        hidden: true
+        tools: [create_element, update_element, delete_element, create_relationship, update_relationship, delete_relationship, add_to_view, add_connection_to_view, remove_from_view, get_or_create_wilma_reference, save_model, request_full_relayout, assess_layout, validate_view, add_layered_view, add_cooperation_view]
+      repo_owner:
+        from: project.repo_owner
+        hidden: true
+        tools: [create_element, update_element, delete_element, create_relationship, update_relationship, delete_relationship, add_to_view, add_connection_to_view, remove_from_view, get_or_create_wilma_reference, save_model, request_full_relayout, assess_layout, validate_view, add_layered_view, add_cooperation_view]
     tools:
       # --- Read-only WILMA reference tools ---
       - name: list_models

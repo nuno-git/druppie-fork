@@ -180,6 +180,31 @@ class ToolExecutor:
         task_db = _task_db.get(None)
         return task_db if task_db is not None else self.db
 
+    def _update_tool_call_safe(self, tool_call_id: UUID, **kwargs) -> None:
+        """Update a tool call, falling back to a fresh session if the
+        cached session was invalidated (e.g. by concurrent modification
+        from another async task during an await).  Only used in error
+        handlers where the captured _db / _repo have gone stale."""
+        db = self.db
+        repo = self._execution_repo
+        if db is not None and repo is not None:
+            try:
+                repo.update_tool_call(tool_call_id, **kwargs)
+                db.commit()
+                return
+            except (AttributeError, NameError):
+                pass
+        if self._session_factory is None:
+            raise RuntimeError("ToolExecutor has no db session and no session_factory")
+        db = self._session_factory()
+        try:
+            from druppie.repositories import ExecutionRepository
+            repo = ExecutionRepository(db)
+            repo.update_tool_call(tool_call_id, **kwargs)
+            db.commit()
+        finally:
+            db.close()
+
     @property
     def execution_repo(self):
         """ExecutionRepository for ToolCall operations."""
@@ -1025,12 +1050,13 @@ class ToolExecutor:
         )
 
         seq = self.execution_repo.get_next_sequence_number(session_id)
-        self.execution_repo.create_message(
+        msg = self.execution_repo.create_message(
             session_id=session_id,
             role="system",
             content=message,
             sequence_number=seq,
         )
+        msg_id = msg.id
         self._active_db.flush()
         logger.info("translation_fallback_to_english", session_id=str(session_id))
 
@@ -1132,6 +1158,14 @@ class ToolExecutor:
             approval_id=str(approval.id),
             tool_call_id=str(tool_call.id),
             required_role=required_role,
+        )
+
+        from druppie.core.session_event_manager import get_event_manager
+        await get_event_manager().broadcast_approval_created(
+            session_id=tool_call.session_id,
+            approval_id=approval.id,
+            tool_name=tool_call.tool_name,
+            required_role=required_role or "developer",
         )
 
         return ToolCallStatus.WAITING_APPROVAL
@@ -1340,6 +1374,38 @@ class ToolExecutor:
             choices_english=[{"text": c} for c in english_choices] if english_choices and is_translated else None,
         )
 
+        # Link attachments to the question if the agent provided attachment_ids.
+        attachment_ids = args.get("attachment_ids")
+        if attachment_ids:
+            raw_ids = [aid for aid in attachment_ids if isinstance(aid, str) and aid]
+            if raw_ids:
+                try:
+                    att_ids = [UUID(aid) for aid in raw_ids]
+                except ValueError as e:
+                    logger.warning(
+                        "hitl_attachment_invalid_uuid",
+                        error=str(e),
+                        question_id=str(question.id),
+                    )
+                else:
+                    from druppie.repositories import AttachmentRepository
+                    att_repo = AttachmentRepository(self._active_db)
+                    att_repo.validate_ownership(att_ids, tool_call.session_id)
+                    try:
+                        att_repo.link_to_question(att_ids, question.id, tool_call.session_id)
+                    except Exception as e:
+                        logger.warning(
+                            "hitl_attachment_link_failed",
+                            error=str(e),
+                            question_id=str(question.id),
+                        )
+                    else:
+                        logger.info(
+                            "hitl_attachments_linked",
+                            question_id=str(question.id),
+                            count=len(att_ids),
+                        )
+
         # Update tool call status to waiting
         self.execution_repo.update_tool_call(
             tool_call.id,
@@ -1353,6 +1419,14 @@ class ToolExecutor:
             tool_call_id=str(tool_call.id),
             question_type=question_type,
             expert_role=expert_role,
+        )
+
+        from druppie.core.session_event_manager import get_event_manager
+        await get_event_manager().broadcast_question_created(
+            session_id=tool_call.session_id,
+            question_id=question.id,
+            question_text=question_text,
+            question_type=question_type,
         )
 
         return ToolCallStatus.WAITING_ANSWER
@@ -1502,10 +1576,18 @@ class ToolExecutor:
             final_args=list(args.keys()),
         )
 
+        # Save references to DB session and repo before any async await.
+        # In factory mode self.db is shared mutable state across concurrent
+        # async frames; an await may yield to another task that calls
+        # _bind_session and resets self.db.  Using captured references
+        # ensures the update after the await still targets the original session.
+        _db = self.db
+        _repo = self.execution_repo
+
         try:
             # Mark as executing and commit so the session is clean
             # before the HTTP call (avoids auto-flush issues later)
-            self.execution_repo.update_tool_call(
+            _repo.update_tool_call(
                 tool_call.id,
                 status=ToolCallStatus.EXECUTING,
             )
@@ -1563,13 +1645,38 @@ class ToolExecutor:
                         error=str(e),
                     )
 
-            self.execution_repo.update_tool_call(
-                tool_call.id,
-                status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
-                result=result,
-                error=result.get("error") or result.get("stderr") if not is_success else None,
-            )
-            self._active_db.commit()
+            # Defensive: if the captured session was invalidated while we
+            # awaited the MCP call, open a fresh short-lived one.
+            try:
+                _repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
+                    result=result,
+                    error=result.get("error") or result.get("stderr") if not is_success else None,
+                )
+                _db.commit()
+            except AttributeError:
+                if self._session_factory is None:
+                    raise RuntimeError(
+                        "ToolExecutor DB session was invalidated and no session_factory is available"
+                    ) from None
+                logger.warning(
+                    "tool_executor_session_lost_falling_back",
+                    tool_call_id=str(tool_call.id),
+                )
+                db = self._session_factory()
+                try:
+                    from druppie.repositories import ExecutionRepository
+                    repo = ExecutionRepository(db)
+                    repo.update_tool_call(
+                        tool_call.id,
+                        status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
+                        result=result,
+                        error=result.get("error") or result.get("stderr") if not is_success else None,
+                    )
+                    db.commit()
+                finally:
+                    db.close()
 
             logger.info(
                 "mcp_tool_completed",
@@ -1590,7 +1697,7 @@ class ToolExecutor:
                 error=str(e),
                 retryable=e.retryable,
             )
-            self.execution_repo.update_tool_call(
+            self._update_tool_call_safe(
                 tool_call.id,
                 status=ToolCallStatus.FAILED,
                 error=str(e),
@@ -1604,7 +1711,7 @@ class ToolExecutor:
                 tool_call_id=str(tool_call.id),
                 error=str(e),
             )
-            self.execution_repo.update_tool_call(
+            self._update_tool_call_safe(
                 tool_call.id,
                 status=ToolCallStatus.FAILED,
                 error=str(e),

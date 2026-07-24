@@ -1,6 +1,8 @@
 # Sandbox Architecture
 
-Each coding agent runs in an isolated Docker container. The `module-coding` MCP server spawns per-agent containers via the Docker socket, clones the target repo, executes the task, and extracts changes via `git bundle` -- all without the container ever having git credentials.
+Each coding agent runs in an isolated Docker container. The `module-coding` MCP server mounts the host Docker socket and spawns per-agent containers via the Docker CLI, clones the target repo, executes the task, and extracts changes via `git bundle` -- all without the container ever having git credentials.
+
+There is no `druppie/sandbox/` Python package. All sandbox lifecycle logic lives in `druppie/mcp-servers/module-coding/v1/tools.py`.
 
 ---
 
@@ -11,10 +13,10 @@ Druppie backend (LangGraph agent loop)
     |
     v
 module-coding MCP server (port 9001)
-    |  (Docker socket mount)
+    |  (host Docker socket mount -- spawns containers via Docker CLI)
     v
 Per-agent container: druppie-{session[:12]}-{git_scope}
-    |  (no git credentials, no network access to host)
+    |  (no git credentials, network-isolated)
     v
 git bundle extraction on module-coding host
     |
@@ -26,16 +28,13 @@ git push from module-coding host (has credentials)
 
 | Component | Location | Role |
 |-----------|----------|------|
-| **ContainerManager ABC** | `druppie/sandbox/` | Abstract container lifecycle interface |
-| **Sysbox / Kata implementations** | `druppie/sandbox/` | Runtime-specific container management |
-| **SandboxWarmPool** | `druppie/sandbox/` | Pre-warms containers to reduce startup latency |
-| **MCP tools (orchestrator)** | `druppie/mcp-servers/module-coding/v1/tools.py` | Spawns containers, proxies file/bash operations |
+| **MCP tools (orchestrator)** | `druppie/mcp-servers/module-coding/v1/tools.py` | Spawns containers via Docker CLI, proxies file/bash operations |
 | **Sandbox base image** | `druppie/mcp-servers/module-coding/Dockerfile.sandbox` | Python 3.12 + git + Node + ripgrep + jq |
-| **Image builder service** | `docker-compose.yml` (sandbox-image-builder) | One-shot build producing `druppie-sandbox:latest` |
+| **Image builder service** | `docker-compose.yml` (`sandbox-image-builder`) | One-shot build producing `druppie-sandbox:latest` |
 
 ---
 
-## Container Isolation
+## Container Naming & Lifecycle
 
 Each session + `git_scope` combination gets its own container named `druppie-{session[:12]}-{git_scope}`. Containers:
 
@@ -57,6 +56,18 @@ module-coding host (has credentials)
     |
     |-- git push from host (credentials used here, never in container)
 ```
+
+---
+
+## Network Isolation
+
+Sandbox containers run on three dedicated Docker networks, keeping them away from Druppie's internal services (database, Keycloak, Gitea, backend):
+
+| Network | Connectivity | Purpose |
+|---------|--------------|---------|
+| `sandbox-net` | internal only | Isolated sandbox network (no external connectivity) |
+| `sandbox-inet` | internet | Sandbox network with outbound internet egress |
+| `sandbox-modules` | internal only | Internal network bridging MCP modules and sandboxes |
 
 ---
 
@@ -84,14 +95,7 @@ The `module-coding` MCP server exposes these tools to the agent:
 
 ## Runtime Configuration
 
-The container runtime is configurable via `DRUPPIE_SANDBOX_RUNTIME`:
-
-| Runtime | Isolation | Use Case |
-|---------|-----------|----------|
-| **sysbox-runc** (default) | Hardened container-level (nested containers, stronger isolation) | Development |
-| **kata-runtime** | VM-level (lightweight QEMU VMs) | Production, untrusted code |
-
-The runtime swap is entirely within the `ContainerManager` -- the MCP tools and rest of the stack are unchanged.
+The container runtime is configurable via `DRUPPIE_SANDBOX_RUNTIME` (default: `sysbox-runc`). The sandbox uses the [sysbox](https://github.com/nestybox/sysbox) runtime for hardened, container-level isolation (nested containers, stronger isolation than the default `runc`).
 
 ---
 
@@ -114,13 +118,16 @@ docker compose --profile dev up -d --build sandbox-image-builder
 
 ---
 
-## Dependency Cache
+## Shared Dependency Cache
 
-Sandbox containers are ephemeral. A shared Docker volume can be mounted to persist downloaded packages across runs:
+A shared Docker volume (`druppie_sandbox_dep_cache`) caches downloaded npm/pip/uv packages and is mounted into every sandbox container. Sandbox containers are otherwise ephemeral, so this volume lets dependency downloads persist across runs.
 
 ```bash
 # Purge the cache
 docker compose --profile reset-cache run --rm reset-cache
+
+# Scan cached dependencies for vulnerabilities (OSV)
+docker compose --profile scan-cache run --rm cache-scanner
 ```
 
 ---
@@ -132,7 +139,7 @@ docker compose --profile reset-cache run --rm reset-cache
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DRUPPIE_SANDBOX_IMAGE` | `druppie-sandbox:latest` | Sandbox container base image |
-| `DRUPPIE_SANDBOX_RUNTIME` | `sysbox-runc` | Container runtime (`sysbox-runc`, `kata-runtime`) |
+| `DRUPPIE_SANDBOX_RUNTIME` | `sysbox-runc` | Container runtime |
 | `SANDBOX_MEMORY_LIMIT` | `12g` | Docker memory limit per sandbox |
 | `SANDBOX_CPU_LIMIT` | `4` | Docker CPU limit per sandbox |
 
@@ -140,16 +147,15 @@ docker compose --profile reset-cache run --rm reset-cache
 
 | File | Purpose |
 |------|---------|
-| `druppie/sandbox/` | ContainerManager ABC + runtime implementations + SandboxWarmPool |
-| `druppie/mcp-servers/module-coding/v1/tools.py` | MCP tool implementations (sandbox orchestrator) |
+| `druppie/mcp-servers/module-coding/v1/tools.py` | MCP tool implementations -- sandbox orchestrator (single source of truth) |
 | `druppie/mcp-servers/module-coding/Dockerfile.sandbox` | Sandbox base image definition |
-| `docker-compose.yml` | sandbox-image-builder service, Docker socket mount on module-coding |
+| `docker-compose.yml` | `sandbox-image-builder` service, Docker socket mount on module-coding |
 
 ### Troubleshooting
 
 ```bash
 # Check module-coding logs
-docker compose logs -f druppie-mcp-coding
+docker compose logs -f module-coding
 
 # Verify sandbox image exists
 docker images | grep druppie-sandbox

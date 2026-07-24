@@ -1,3 +1,13 @@
+> **⚠️ SUPERSEDED** — The decisions, behaviors, and product descriptions in this
+> document have been migrated to the formal documentation framework:
+> - **ADRs 007-014** (`docs/adrs/`) — architectural decisions (layering, data modeling, LLM providers, approvals, summary relay, tool schema, pause/resume, cron)
+> - **PRDs 008-013** (`docs/prds/`) — product requirements (module system, data access, approvals, session lifecycle, LLM provider management, scheduled jobs)
+> - **Research 007** (`docs/research/007-kubernetes-as-built-analysis.md`) — K8s as-built analysis
+> - **Specs 007-014** (`docs/specs/`) — executable behavioral specifications
+>
+> This file is retained as the canonical as-built reference. Do not add new
+> decisions here — create formal ADRs/PRDs/Specs instead.
+
 # Technical Architecture
 
 This document describes how the Druppie platform is built: its components, data flow, runtime behavior, and infrastructure.
@@ -306,10 +316,12 @@ PDF compilation from native **Typst** source files authored by agents. The Docum
 
 ### 3.3 Real-time Updates
 
-The frontend uses polling for real-time updates:
+The frontend uses **WebSocket** for real-time updates with a Redis pub/sub backbone for cross-replica broadcasting:
 
-- **Active sessions**: 500ms polling interval for chat messages and agent status.
-- **Approvals**: 1-second polling interval for pending approval/question lists.
+- **WebSocket endpoint**: `/api/sessions/{id}/events` — connects without a token in the URL, then authenticates by sending a JSON frame `{type:"auth",token:"<jwt>"}` within 10 seconds. Pushes `timeline_entry`, `agent_run_update`, `approval`, `question`, and `session_status` events as they happen. This prevents the token from leaking into access logs, browser history, and Referer headers.
+- **Redis pub/sub**: When the backend broadcasts an event, it publishes to a Redis channel (`session:{id}`) so all backend replicas receive the event and can forward it to their local WebSocket clients. This ensures users see updates regardless of which replica handles their connection.
+- **Graceful fallback**: If Redis is unavailable, events are broadcast locally within the process. The system degrades cleanly to single-replica behavior.
+- **Legacy polling**: Some pages (e.g., approvals list, agent test runs) still use polling for simplicity where WebSocket is not yet wired.
 
 ### 3.4 API Client
 
@@ -620,7 +632,7 @@ standards.
 
 ### 6.9 Data Access Server (port 9010)
 
-Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/MCP/data-access.md`](MCP/data-access.md).
+Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/adrs/020-data-access-mcp.md`](adrs/020-data-access-mcp.md).
 
 | Tool | Approval | Description |
 |------|----------|-------------|
@@ -1043,7 +1055,7 @@ Skills are reusable prompt/instruction packages stored as Markdown files in `dru
    - The skill's Markdown body is returned as the tool result (instructions for the LLM).
 4. `ToolExecutor` checks `_is_tool_allowed_via_skill()` to permit tools granted by active skills.
 
-**Decision-guide skills.** Agent intake steps contain pattern-detection trigger lines that instruct an agent to call `invoke_skill(...)` proactively when specific design signals match. For in-app LLM workflows the responsibility is split along the architect/builder_planner role boundary: the Architect's Step 1 intake (in `druppie/agents/definitions/architect.yaml`) invokes `llm-orchestration-in-apps` to decide the **WHAT** (workflow pattern and agency level via a strict hierarchy) without naming any framework — which respects the architect's own rule that it never names concrete libraries; capability placement is left to the architect's generic reuse decision framework rather than re-derived per skill. The Builder-Planner's intake (`builder_planner.yaml`, which now carries a `skills:` block) invokes `llm-orchestration-standard` to decide the **HOW** (the single platform standard: plain Python everywhere, with the single agent built as a small core-style tool-loop rather than an agent framework; access-pattern; code placement). Both skills share one platform-research document (`docs/LLM-orchestration/llm-orchestration-in-apps.md`) that leads with the standard and demotes the framework survey to an appendix. End-to-end verification runs via the seed tool test `testing/tools/architect-fd-llm-chain-pending.yaml`, which pauses on the FD-approval gate so an analyst can drive the loop manually from `/evaluations` + `/tasks`.
+**Decision-guide skills.** Agent intake steps contain pattern-detection trigger lines that instruct an agent to call `invoke_skill(...)` proactively when specific design signals match. For in-app LLM workflows the responsibility is split along the architect/builder_planner role boundary: the Architect's Step 1 intake (in `druppie/agents/definitions/architect.yaml`) invokes `llm-orchestration-in-apps` to decide the **WHAT** (workflow pattern and agency level via a strict hierarchy) without naming any framework — which respects the architect's own rule that it never names concrete libraries; capability placement is left to the architect's generic reuse decision framework rather than re-derived per skill. The Builder-Planner's intake (`builder_planner.yaml`, which now carries a `skills:` block) invokes `llm-orchestration-standard` to decide the **HOW** (the single platform standard: plain Python everywhere, with the single agent built as a small core-style tool-loop rather than an agent framework; access-pattern; code placement). Both skills share one platform-research document (`docs/research/002-llm-orchestration-in-apps.md`) that leads with the standard and demotes the framework survey to an appendix. End-to-end verification runs via the seed tool test `testing/tools/architect-fd-llm-chain-pending.yaml`, which pauses on the FD-approval gate so an analyst can drive the loop manually from `/evaluations` + `/tasks`.
 
 ### 8.8 Orchestrator
 
@@ -1286,6 +1298,10 @@ Optional:
 
 ## 11. Sandbox Infrastructure (Open-Inspect)
 
+> **⚠️ STALE** — This section describes the removed Open-Inspect/background-agents architecture.
+> The current sandbox is managed entirely by the module-coding MCP server via Docker socket.
+> See `docs/SANDBOX.md` for the current sandbox documentation.
+
 > Full documentation: [docs/SANDBOX.md](SANDBOX.md) — covers architecture, OpenCode integration, provider resilience, Kata Containers, and security.
 
 [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a git submodule at `background-agents/`. Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
@@ -1336,15 +1352,15 @@ The `tool_call_id` FK enables direct lookup from webhook → tool call without t
 
 ---
 
-## 11. Agent Runtime Library (`druppie/agent_runtime/`)
+## 12. Agent Runtime Library (`druppie/agent_runtime/`)
 
-### 11.1 Design Principle
+### 12.1 Design Principle
 
 The `agent_runtime` package is a **storage-agnostic, self-contained agent execution library** with zero coupling to `druppie.db`, `druppie.domain`, or `druppie.repositories`. It defines its own types (dataclasses, not Pydantic), its own event system, and its own tool routing. The only external dependencies are stdlib and PyYAML.
 
 This library can execute an LLM agent loop with MCP tool calling, event emission, subagent spawning, and sandbox management without touching any database or web framework.
 
-### 11.2 Dependencies
+### 12.2 Dependencies
 
 | Dependency | Purpose |
 |------------|---------|
@@ -1353,7 +1369,7 @@ This library can execute an LLM agent loop with MCP tool calling, event emission
 
 No Pydantic, no SQLAlchemy, no FastAPI, no LiteLLM. All domain types use `@dataclass` for zero-framework overhead.
 
-### 11.3 Layer Architecture (Bottom-Up)
+### 12.3 Layer Architecture (Bottom-Up)
 
 The package is organized in strict dependency layers. Higher layers import from lower layers, never the reverse.
 
@@ -1482,7 +1498,7 @@ Key responsibilities:
 
 Bridges the storage-agnostic runtime to the existing Druppie backend without modifying either. Provides `adapt_llm()` (wraps the old `BaseLLM` as the runtime's async LLM callable), `DruppieToolProvider` (implements the `ToolProvider` protocol over the old `ToolExecutor`/builtin tools, persisting every call to the DB via short-lived sessions), `create_event_persister()` (an event callback that maps runtime `AgentEvent`s to DB writes for runs, LLM calls, tool calls, and compaction events), `SubagentsMCPConnection` (in-process MCP wrapper around `SubagentsMCP`), and `old_definition_to_new()` (converts the old Pydantic `AgentDefinition` to the new dataclass). Also bridges the `waiting_entra_auth` pause status from the `ToolExecutor` to the new runtime's pause/resume mechanism.
 
-### 11.4 Data Flow
+### 12.4 Data Flow
 
 ```
 AgentDefinition (YAML)
@@ -1507,7 +1523,7 @@ AgentLoop.run(llm, tool_provider, ...)
 AgentResult (output, status, metadata)
 ```
 
-### 11.5 LLM Interface
+### 12.5 LLM Interface
 
 The library accepts an **async callable** as its LLM interface, compatible with litellm's `acompletion`:
 
@@ -1518,7 +1534,7 @@ async def llm(messages: list, tools: list, **kwargs) -> LLMResponse:
 
 The library never imports litellm directly. The caller (typically the druppie backend) wraps litellm or any compatible provider and passes the callable. This keeps the library provider-agnostic.
 
-### 11.6 Tool Routing
+### 12.6 Tool Routing
 
 ```
 AgentLoop
@@ -1536,7 +1552,7 @@ MCPToolProvider
 
 Each MCP server has its own `MCPConnection`. The provider maps tool names to their originating server and routes calls accordingly.
 
-### 11.7 Coexistence with Existing Agent System
+### 12.7 Coexistence with Existing Agent System
 
 The `agent_runtime` library is **completely separate** from the existing agent system in `druppie/agents/` and `druppie/execution/`:
 
@@ -1551,7 +1567,7 @@ The `agent_runtime` library is **completely separate** from the existing agent s
 
 Zero modifications are required to existing code when using the library. Both systems can coexist in the same process.
 
-### 11.8 Test Suite
+### 12.8 Test Suite
 
 179 tests in `druppie/tests/agent_runtime/` with a shared `conftest.py` providing:
 
@@ -1564,11 +1580,11 @@ Tests cover all layers: type construction, YAML parsing, event emission, tool ro
 
 ---
 
-## 12. Translation Service
+## 13. Translation Service
 
 The platform provides automatic translation so agents always work in English while users interact in their own language.
 
-### 12.1 Architecture
+### 13.1 Architecture
 
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
@@ -1578,7 +1594,7 @@ The platform provides automatic translation so agents always work in English whi
 
 The translation service is separate from the main LLM provider — it always uses DeepInfra regardless of `LLM_PROVIDER`. This requires `DEEPINFRA_API_KEY` to be set. If the key is missing, `TranslationNotAvailableError` is raised on first use (not silently swallowed).
 
-### 12.2 Data Flow
+### 13.2 Data Flow
 
 ```
 User (Dutch) → Orchestrator → [detect language] → [translate to English] → Router/Planner/Agent
@@ -1590,7 +1606,7 @@ Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ 
     └─► done (summary) → [translate to Dutch] → Chat timeline
 ```
 
-### 12.3 Integration Points
+### 13.3 Integration Points
 
 | Point | File | What happens |
 |-------|------|--------------|
@@ -1602,7 +1618,7 @@ Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ 
 | Summarizer message | `builtin_tools.py` ~line 731 | Translate to session language before storing |
 | Agent prompt | `prompt_builder.py` ~line 82 | Inject English-only instruction block |
 
-### 12.3.1 HITL Answer Field Naming
+### 13.3.1 HITL Answer Field Naming
 
 The tool call result for answered HITL questions stores two versions of the answer:
 
@@ -1613,7 +1629,7 @@ The tool call result for answered HITL questions stores two versions of the answ
 
 `message_history.py` strips `user_answer` before reconstructing tool results for agent context, so agents only see the English version.
 
-### 12.3.2 HITL Question Bilingual Storage
+### 13.3.2 HITL Question Bilingual Storage
 
 HITL questions store both the translated (display) and original (English) versions:
 
@@ -1626,7 +1642,7 @@ HITL questions store both the translated (display) and original (English) versio
 
 The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on HITL tool calls when `question_english` is present, making it easy to compare what the agent generated vs what the user saw.
 
-### 12.4 Design Document Translation Paths
+### 13.4 Design Document Translation Paths
 
 | English path | Dutch path |
 |--------------|------------|
@@ -1634,11 +1650,11 @@ The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on H
 | `docs/technical-design.md` | `docs/technisch-ontwerp.md` |
 | `docs/technical-research.md` | `docs/technisch-onderzoek.md` |
 
-### 12.5 Session Language
+### 13.5 Session Language
 
 Stored in `sessions.language` (VARCHAR(10), nullable). Set on the first user message and locked — HITL answers do not update it, preventing a Dutch user's English-sounding answer from flipping the session language.
 
-### 12.6 Error Handling
+### 13.6 Error Handling
 
 - `TranslationNotAvailableError` (missing API key) propagates — the session fails with a clear error message.
 - Transient translation errors (API timeouts, empty responses) fall back to the original English text with a logged warning.
