@@ -662,7 +662,7 @@ Read-only access to SharePoint sites via Microsoft Graph API. Uses delegated (OB
 | `get_file_metadata` | None | Get file/folder metadata without downloading |
 | `search_files` | None | Search files within a site by keyword |
 
-**Site allowlist.** `SHAREPOINT_ALLOWED_SITES` env var restricts which sites agents can access: `all` (default when unset), empty (block all), or semicolon-separated site URLs. The module filters `list_sites`/`resolve_site_url` results by URL and caches allowed Graph site IDs for subsequent operations (`list_files`, `read_file`, etc.).
+**Site allowlist.** `SHAREPOINT_ALLOWED_SITES` env var restricts which sites agents can access: `all` (allow all), empty/unset (block all, default), or semicolon-separated site URLs. The module filters `list_sites`/`resolve_site_url` results by URL and caches allowed Graph site IDs for subsequent operations (`list_files`, `read_file`, etc.).
 
 **Token injection.** The `user_token` parameter is injected from `user.entra_token` (scope `https://graph.microsoft.com/.default`) and marked `hidden: true` so agents never see it.
 

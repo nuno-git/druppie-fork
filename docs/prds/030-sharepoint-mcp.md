@@ -44,7 +44,7 @@ An MCP server that provides read-only access to SharePoint sites via Microsoft G
 
 - Read-only access only. No file creation, upload, modification, or deletion.
 - OBO (On-Behalf-Of) authentication: agents access SharePoint as the logged-in user, not as a service principal. Requires Entra ID brokering.
-- Site allowlist (`SHAREPOINT_ALLOWED_SITES`) restricts which sites agents can access, regardless of user permissions. Three modes: `all`, empty (block all), or semicolon-separated site URLs.
+- Site allowlist (`SHAREPOINT_ALLOWED_SITES`) restricts which sites agents can access, regardless of user permissions. Three modes: `all` (allow all), empty/unset (block all, default), or semicolon-separated site URLs.
 - Graph site IDs contain commas (`hostname,guid1,guid2`), so the allowlist delimiter must be semicolons.
 - Text content is returned inline only for text-based files. Binary/Office files return metadata with a `web_url` for browser viewing.
 - The `list_all_files` tool returns folder-level summaries (not individual files) to avoid overflowing agent context on large drives.
