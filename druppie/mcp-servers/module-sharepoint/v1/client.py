@@ -52,6 +52,12 @@ class SharePointClient:
         result = await self._get("sites", user_token, params=params)
         return result.get("value", [])
 
+    async def get_site(self, site_id: str, user_token: str) -> dict:
+        """Get a site by its Graph site ID."""
+        return await self._get(f"sites/{site_id}", user_token, params={
+            "$select": "id,displayName,webUrl",
+        })
+
     async def get_site_by_url(self, url: str, user_token: str) -> dict:
         """Resolve a SharePoint site URL to its Graph site object.
 
@@ -114,3 +120,25 @@ class SharePointClient:
         }
         result = await self._get(path, user_token, params=params)
         return result.get("value", [])
+
+    async def delta(self, site_id: str, user_token: str) -> list[dict]:
+        """Get all items in a site's drive via the delta endpoint (paginated)."""
+        path = f"sites/{site_id}/drive/root/delta"
+        params = {
+            "$select": "id,name,size,lastModifiedDateTime,webUrl,file,folder,parentReference"
+        }
+        all_items: list[dict] = []
+        async with httpx.AsyncClient(timeout=60) as client:
+            url = f"{GRAPH_BASE}/{path}"
+            while url:
+                resp = await client.get(
+                    url,
+                    headers=self._auth_header(user_token),
+                    params=params,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                all_items.extend(data.get("value", []))
+                url = data.get("@odata.nextLink")
+                params = None
+        return all_items

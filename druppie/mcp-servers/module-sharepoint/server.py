@@ -1,9 +1,8 @@
 """SharePoint MCP Server — Version Router.
 
-Read-only access to files in a configured SharePoint folder via Microsoft
-Graph API. The SharePoint site and folder are fixed via the SHAREPOINT_SITE_ID
-and SHAREPOINT_FOLDER_PATH env vars and are never taken from a tool argument,
-so agents cannot read any other site or folder.
+Read-only access to SharePoint sites via Microsoft Graph API. Agents discover
+sites with list_sites, then browse and read files using the returned site IDs.
+Access is scoped by SHAREPOINT_ALLOWED_SITES (URL allowlist) and OBO auth.
 """
 
 import os

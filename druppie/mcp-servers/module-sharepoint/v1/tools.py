@@ -170,3 +170,29 @@ async def search_files(
     if not user_token:
         return {"success": False, "error": "Entra ID authentication required"}
     return await module.search_files(site_id, query, user_token)
+
+
+@mcp.tool()
+async def list_all_files(
+    site_id: str,
+    user_token: str | None = None,
+) -> dict:
+    """Get a folder-level summary of all content on a SharePoint site.
+
+    Returns every folder with its file count, total size, and file type
+    breakdown — NOT individual files. Use this to orient yourself on a
+    site, then drill into specific folders with list_files or find files
+    with search_files.
+
+    Args:
+        site_id: The SharePoint site ID (from list_sites results).
+        user_token: Entra ID access token (injected automatically, do not
+                    provide).
+
+    Returns:
+        Dict with total_files, total_size, folder_count, and folders
+        (each with path, file_count, total_size, file_types).
+    """
+    if not user_token:
+        return {"success": False, "error": "Entra ID authentication required"}
+    return await module.list_all_files(site_id, user_token)

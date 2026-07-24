@@ -212,6 +212,7 @@ The **Services** button in the chat session header shows a dropdown of all conne
 
 - **Entra ID link status**: whether the current user has linked their Microsoft account
 - **Azure DevOps**: connection status (configured + Entra linked = accessible)
+- **SharePoint**: connection status (configured + Entra linked = accessible)
 - **Data Sources**: each configured data source with its auth type and accessibility
 
 ### Configuration
@@ -222,16 +223,66 @@ Set these environment variables to enable Entra ID brokering (all optional — w
 ENTRA_TENANT_ID=<your-azure-tenant-id>
 ENTRA_CLIENT_ID=<app-registration-client-id>
 ENTRA_CLIENT_SECRET=<app-registration-secret>
-ENTRA_ALLOWED_EMAILS=user1@example.com,user2@example.com
+ENTRA_ALLOWED_EMAILS=user1@example.com;user2@example.com
 ```
 
 The App Registration must be a **separate** registration from any existing service principal, configured with **delegated** (not application) permissions.
 
-`ENTRA_ALLOWED_EMAILS` is a comma-separated list of email addresses authorized to use Druppie via Entra ID. When set, only users whose Entra email matches the allowlist can log in. When empty, all Entra-brokered logins are denied (fail-closed).
+`ENTRA_ALLOWED_EMAILS` controls which Entra ID accounts can use Druppie:
+- `all` — allow all Entra-authenticated accounts
+- (empty) — block all accounts (fail-closed, default)
+- `email1;email2;...` — semicolon-separated allowlist of email addresses
 
 ### Graceful Degradation
 
 When Entra ID is not configured or the user hasn't linked their Microsoft account, tools that need Azure access fail with a user-friendly message. Existing service-principal based access continues to work independently.
+
+---
+
+## SharePoint Integration (MS Graph)
+
+Agents can browse and read files from SharePoint sites via Microsoft Graph API using delegated (OBO) authentication. The agent reads on behalf of the logged-in user — it can only access sites and files the user has permission for in SharePoint.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_sites` | List SharePoint sites the user has access to (optional search query) |
+| `resolve_site_url` | Resolve a SharePoint URL to its Graph site ID |
+| `list_all_files` | Folder-level summary of entire site: folder paths, file counts, sizes, and type breakdown (uses Graph delta endpoint) |
+| `list_files` | List individual files and folders in a specific folder on a site |
+| `read_file` | Read file content (text files) or get metadata + web_url (binary/Office files) |
+| `get_file_metadata` | Get metadata for a file or folder without downloading |
+| `search_files` | Search for files within a site by keyword |
+
+All tools are **read-only**. Writing, uploading, or deleting files is not supported.
+
+### Agent Access
+
+The **data analyst** and **product owner** agents have SharePoint tools enabled. The planner routes SharePoint-related questions to the data analyst.
+
+### Site Allowlist
+
+`SHAREPOINT_ALLOWED_SITES` controls which SharePoint sites agents can access:
+- `all` — no filtering, all sites the user can see in Graph (default when unset)
+- (empty) — block all sites
+- `url1;url2;...` — semicolon-separated allowlist of SharePoint site URLs
+
+Example: `SHAREPOINT_ALLOWED_SITES=https://contoso.sharepoint.com/sites/TeamSite;https://contoso.sharepoint.com/sites/HR`
+
+### Security
+
+- **OBO authentication**: tokens are passed per-request and never stored by the module
+- **User-scoped**: the agent only sees what the logged-in user can see in SharePoint
+- **Site filtering**: the allowlist is enforced server-side on all operations (list, read, search)
+- **Entra email allowlist**: only whitelisted Entra accounts can use the integration
+
+### Prerequisites
+
+- Entra ID brokering configured (`ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`)
+- App registration with delegated permissions: `Files.Read.All`, `Sites.Read.All`
+- User must have linked their Microsoft account via Entra ID login
+- SharePoint profile activated with `--profile sharepoint` in docker-compose
 
 ---
 

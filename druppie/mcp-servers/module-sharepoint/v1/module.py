@@ -41,7 +41,7 @@ class SharePointModule:
     def __init__(self) -> None:
         self._client = SharePointClient()
         self._allowed_urls = _load_allowed_sites()
-        self._allowed_ids: set[str] | None = None if self._allowed_urls is None else set()
+        self._verified_ids: dict[str, bool] = {}
         if self._allowed_urls is None:
             logger.info("SharePoint MCP initialized (all sites allowed)")
         elif self._allowed_urls:
@@ -54,10 +54,21 @@ class SharePointModule:
             return True
         return web_url.rstrip("/").lower() in self._allowed_urls
 
-    def _is_site_allowed(self, site_id: str) -> bool:
+    async def _is_site_allowed(self, site_id: str, user_token: str) -> bool:
         if self._allowed_urls is None:
             return True
-        return site_id in (self._allowed_ids or set())
+        if not self._allowed_urls:
+            return False
+        if site_id in self._verified_ids:
+            return self._verified_ids[site_id]
+        try:
+            site = await self._client.get_site(site_id, user_token)
+            web_url = site.get("webUrl", "")
+            allowed = self._is_site_allowed_by_url(web_url)
+            self._verified_ids[site_id] = allowed
+            return allowed
+        except Exception:
+            return False
 
     async def list_sites(self, user_token: str, query: str = "") -> dict:
         """List SharePoint sites the user has access to."""
@@ -71,8 +82,7 @@ class SharePointModule:
                 web_url = site.get("webUrl", "")
                 if not self._is_site_allowed_by_url(web_url):
                     continue
-                if self._allowed_ids is not None:
-                    self._allowed_ids.add(site_id)
+                self._verified_ids[site_id] = True
                 result.append({
                     "id": site_id,
                     "name": site.get("displayName", ""),
@@ -105,8 +115,7 @@ class SharePointModule:
             web_url = site.get("webUrl", "")
             if not self._is_site_allowed_by_url(web_url):
                 return {"success": False, "error": "Access to this site is not allowed."}
-            if self._allowed_ids is not None:
-                self._allowed_ids.add(site_id)
+            self._verified_ids[site_id] = True
             return {
                 "success": True,
                 "id": site_id,
@@ -125,7 +134,7 @@ class SharePointModule:
         folder_path: str | None = None,
     ) -> dict:
         """List files and folders on a site (at root or a specific folder)."""
-        if not self._is_site_allowed(site_id):
+        if not await self._is_site_allowed(site_id, user_token):
             return {"success": False, "error": "Access to this site is not allowed."}
         try:
             items = await self._client.list_folder(
@@ -166,7 +175,7 @@ class SharePointModule:
         self, site_id: str, file_id: str, user_token: str
     ) -> dict:
         """Read file: text content for text formats, metadata-only for binary."""
-        if not self._is_site_allowed(site_id):
+        if not await self._is_site_allowed(site_id, user_token):
             return {"success": False, "error": "Access to this site is not allowed."}
         try:
             content_bytes, content_type, metadata = (
@@ -214,7 +223,7 @@ class SharePointModule:
         self, site_id: str, file_id: str, user_token: str
     ) -> dict:
         """Get metadata for a file or folder without downloading content."""
-        if not self._is_site_allowed(site_id):
+        if not await self._is_site_allowed(site_id, user_token):
             return {"success": False, "error": "Access to this site is not allowed."}
         try:
             metadata = await self._client.get_item(site_id, file_id, user_token)
@@ -260,7 +269,7 @@ class SharePointModule:
         self, site_id: str, query: str, user_token: str
     ) -> dict:
         """Search files within a SharePoint site's drive."""
-        if not self._is_site_allowed(site_id):
+        if not await self._is_site_allowed(site_id, user_token):
             return {"success": False, "error": "Access to this site is not allowed."}
         try:
             items = await self._client.search(site_id, query, user_token)
@@ -289,4 +298,79 @@ class SharePointModule:
             }
         except Exception as exc:
             logger.warning("search_files failed: %s", exc)
+            return {"success": False, "error": str(exc)}
+
+    async def list_all_files(self, site_id: str, user_token: str) -> dict:
+        """Return a folder-level summary of a site's drive via delta query.
+
+        Instead of listing every file (which can overflow agent context),
+        aggregates into per-folder stats: file count, total size, and file
+        type breakdown.  The agent uses this to orient, then drills into
+        specific folders with list_files or search_files.
+        """
+        if not await self._is_site_allowed(site_id, user_token):
+            return {"success": False, "error": "Access to this site is not allowed."}
+        try:
+            items = await self._client.delta(site_id, user_token)
+
+            folders: dict[str, dict] = {}
+            total_files = 0
+            total_size = 0
+
+            for item in items:
+                if "deleted" in item:
+                    continue
+
+                parent = item.get("parentReference", {})
+                parent_path = parent.get("path", "")
+                drive_root = "/root:"
+                idx = parent_path.find(drive_root)
+                if idx >= 0:
+                    folder = parent_path[idx + len(drive_root):].strip("/")
+                else:
+                    folder = ""
+
+                if "folder" in item:
+                    path = f"{folder}/{item.get('name', '')}" if folder else item.get("name", "")
+                    if path not in folders:
+                        folders[path] = {"file_count": 0, "total_size": 0, "types": {}}
+                    continue
+
+                if "file" not in item:
+                    continue
+
+                total_files += 1
+                size = item.get("size", 0)
+                total_size += size
+                mime = item["file"].get("mimeType", "unknown")
+                ext = mime.split("/")[-1] if "/" in mime else mime
+
+                if folder not in folders:
+                    folders[folder] = {"file_count": 0, "total_size": 0, "types": {}}
+                folders[folder]["file_count"] += 1
+                folders[folder]["total_size"] += size
+                folders[folder]["types"][ext] = folders[folder]["types"].get(ext, 0) + 1
+
+            tree = []
+            for path in sorted(folders):
+                info = folders[path]
+                entry = {
+                    "path": path or "/",
+                    "file_count": info["file_count"],
+                    "total_size": info["total_size"],
+                }
+                if info["types"]:
+                    entry["file_types"] = info["types"]
+                tree.append(entry)
+
+            return {
+                "success": True,
+                "site_id": site_id,
+                "total_files": total_files,
+                "total_size": total_size,
+                "folders": tree,
+                "folder_count": len(tree),
+            }
+        except Exception as exc:
+            logger.warning("list_all_files failed: %s", exc)
             return {"success": False, "error": str(exc)}

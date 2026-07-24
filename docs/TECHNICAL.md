@@ -636,7 +636,25 @@ Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) 
 
 **Charting data flow.** `create_chart_from_source` keeps raw data out of the LLM context: for SQL sources the `GROUP BY` is pushed into the database (`build_sql_aggregation_query`); for Data Lake files the whole file is read into MCP-server memory and aggregated in Python. Either way only a small JSON spec (the chart) is returned — no file is written, and the aggregation covers the full dataset (`full_dataset`/`rows_scanned` report any sampling). The spec is emitted as a ` ```chart ` fenced code block; the chat frontend renders it via `frontend/src/components/ChartBlock.jsx` (registered for the `chart` language in `ChatHelpers.jsx`, mirroring how `MermaidBlock` handles `mermaid`) using `recharts`. 13 chart types span XY, proportion, and multi-series families.
 
-### 6.10 Declarative Parameter Injection
+### 6.10 SharePoint Server (port 9014)
+
+Read-only access to SharePoint sites via Microsoft Graph API. Uses delegated (OBO) authentication — the agent reads as the logged-in user. Requires Entra ID brokering and the `sharepoint` docker-compose profile.
+
+| Tool | Approval | Description |
+|------|----------|-------------|
+| `list_sites` | None | List SharePoint sites the user can access (search query optional) |
+| `resolve_site_url` | None | Resolve a SharePoint URL to its Graph site ID |
+| `list_all_files` | None | Folder-level summary via Graph delta endpoint: paths, file counts, sizes, type breakdown |
+| `list_files` | None | List individual files and folders in a specific folder |
+| `read_file` | None | Read text content or get metadata + web_url for binary files |
+| `get_file_metadata` | None | Get file/folder metadata without downloading |
+| `search_files` | None | Search files within a site by keyword |
+
+**Site allowlist.** `SHAREPOINT_ALLOWED_SITES` env var restricts which sites agents can access: `all` (default when unset), empty (block all), or semicolon-separated site URLs. The module filters `list_sites`/`resolve_site_url` results by URL and caches allowed Graph site IDs for subsequent operations (`list_files`, `read_file`, etc.).
+
+**Token injection.** The `user_token` parameter is injected from `user.entra_token` (scope `https://graph.microsoft.com/.default`) and marked `hidden: true` so agents never see it.
+
+### 6.11 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -653,7 +671,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.11 Layered Approval System
+### 6.12 Layered Approval System
 
 Approvals have two layers:
 
@@ -691,6 +709,7 @@ module-filesearch   FastMCP           :9004   File search
 module-web          FastMCP           :9005   Web browsing
 module-archimate    FastMCP           :9006   ArchiMate models
 module-registry     FastMCP           :9007   Platform catalog/discovery
+module-sharepoint   FastMCP           :9014   SharePoint file access (MS Graph)
 adminer             Adminer           :8081   DB admin UI
 sandbox-control-plane  Node.js        :8787   Sandbox session/event management
 sandbox-manager     Node.js           :8000   Sandbox container lifecycle
