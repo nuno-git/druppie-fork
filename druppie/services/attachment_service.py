@@ -12,7 +12,7 @@ import structlog
 
 logger = structlog.get_logger()
 
-UPLOAD_DIR = Path(os.getenv("WORKSPACE_PATH", "/app/workspace")) / "uploads"
+UPLOAD_DIR = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace")) / "uploads"
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 MAX_EXTRACTED_TEXT = 50_000  # characters
 
@@ -251,5 +251,5 @@ def delete_file(storage_path: str) -> None:
             parent = path.parent
             if parent.exists() and not any(parent.iterdir()):
                 parent.rmdir()
-    except Exception:
-        logger.warning("file_delete_failed", path=storage_path)
+    except (OSError, ValueError) as e:
+        logger.warning("file_delete_failed", path=storage_path, error=str(e))

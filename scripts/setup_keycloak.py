@@ -7,6 +7,7 @@ This script:
 2. Creates roles (admin, developer, architect, infra-engineer, etc.)
 3. Creates users with appropriate roles
 4. Configures OAuth2 clients
+5. Configures Entra ID identity provider (when ENTRA_CLIENT_ID is set)
 """
 
 import os
@@ -83,7 +84,7 @@ class KeycloakAdmin:
         }
 
         if config:
-            realm_data.update({k: v for k, v in config.items() if k not in ["roles", "clients", "clientScopes"]})
+            realm_data.update({k: v for k, v in config.items() if k not in ["roles", "clients", "clientScopes", "identityProviders"]})
 
         response = requests.post(url, json=realm_data, headers=self._headers())
 
@@ -205,6 +206,161 @@ class KeycloakAdmin:
                     return client["id"]
         return None
 
+    def create_identity_provider(self, realm: str, idp_config: dict):
+        """Create or update an identity provider."""
+        url = f"{self.base_url}/admin/realms/{realm}/identity-provider/instances"
+        alias = idp_config.get("alias", "unknown")
+
+        response = requests.post(url, json=idp_config, headers=self._headers())
+
+        if response.status_code == 409:
+            print(f"  [UPDATE] IdP '{alias}' already exists, updating...")
+            update_url = f"{self.base_url}/admin/realms/{realm}/identity-provider/instances/{alias}"
+            existing = requests.get(update_url, headers=self._headers())
+            if existing.status_code == 200:
+                merged = existing.json()
+                merged_config = merged.get("config", {})
+                merged_config.update(idp_config.get("config", {}))
+                merged.update(idp_config)
+                merged["config"] = merged_config
+            else:
+                merged = idp_config
+            update_resp = requests.put(update_url, json=merged, headers=self._headers())
+            if update_resp.status_code in [200, 204]:
+                print(f"  [OK] Updated IdP '{alias}'")
+            else:
+                print(f"  [ERROR] Failed to update IdP '{alias}': {update_resp.text}")
+        elif response.status_code == 201:
+            print(f"  [OK] Created IdP '{alias}'")
+        else:
+            print(f"  [ERROR] Failed to create IdP '{alias}': {response.text}")
+
+    def grant_broker_read_token_role(self, realm: str, role_names: list):
+        """Grant the broker client's read-token role to specified realm roles.
+
+        The read-token role is required for users to call the broker token
+        endpoint (GET /realms/{realm}/broker/{alias}/token).
+        """
+        broker_uuid = self._get_client_uuid(realm, "broker")
+        if not broker_uuid:
+            print("  [WARN] 'broker' client not found — skipping read-token grant")
+            return
+
+        roles_url = f"{self.base_url}/admin/realms/{realm}/clients/{broker_uuid}/roles"
+        response = requests.get(roles_url, headers=self._headers())
+        if response.status_code != 200:
+            print(f"  [WARN] Could not list broker roles: {response.text}")
+            return
+
+        read_token_role = None
+        for role in response.json():
+            if role["name"] == "read-token":
+                read_token_role = role
+                break
+
+        if not read_token_role:
+            print("  [WARN] 'read-token' role not found on broker client")
+            return
+
+        for role_name in role_names:
+            role_url = f"{self.base_url}/admin/realms/{realm}/roles/{role_name}"
+            role_resp = requests.get(role_url, headers=self._headers())
+            if role_resp.status_code != 200:
+                print(f"  [WARN] Realm role '{role_name}' not found")
+                continue
+
+            realm_role = role_resp.json()
+            realm_role_id = realm_role["id"]
+
+            composites_url = f"{self.base_url}/admin/realms/{realm}/roles-by-id/{realm_role_id}/composites"
+            comp_resp = requests.post(
+                composites_url, json=[read_token_role], headers=self._headers()
+            )
+            if comp_resp.status_code in [200, 204]:
+                print(f"  [OK] Granted read-token to role '{role_name}'")
+            elif comp_resp.status_code == 409:
+                print(f"  [OK] Role '{role_name}' already has read-token")
+            else:
+                print(f"  [WARN] Could not grant read-token to '{role_name}': {comp_resp.text}")
+
+    def grant_service_account_client_role(
+        self, realm: str, client_id: str, target_client_id: str, role_name: str,
+    ):
+        """Grant a client role to a service account.
+
+        Used to give the backend service account permissions like view-users
+        from the realm-management client.
+        """
+        client_uuid = self._get_client_uuid(realm, client_id)
+        if not client_uuid:
+            print(f"  [WARN] Client '{client_id}' not found")
+            return
+
+        sa_url = f"{self.base_url}/admin/realms/{realm}/clients/{client_uuid}/service-account-user"
+        sa_resp = requests.get(sa_url, headers=self._headers())
+        if sa_resp.status_code != 200:
+            print(f"  [WARN] Could not get service account for '{client_id}'")
+            return
+        sa_user_id = sa_resp.json()["id"]
+
+        target_uuid = self._get_client_uuid(realm, target_client_id)
+        if not target_uuid:
+            print(f"  [WARN] Target client '{target_client_id}' not found")
+            return
+
+        role_url = f"{self.base_url}/admin/realms/{realm}/clients/{target_uuid}/roles/{role_name}"
+        role_resp = requests.get(role_url, headers=self._headers())
+        if role_resp.status_code != 200:
+            print(f"  [WARN] Role '{role_name}' not found on '{target_client_id}'")
+            return
+        role_data = role_resp.json()
+
+        mapping_url = (
+            f"{self.base_url}/admin/realms/{realm}"
+            f"/users/{sa_user_id}/role-mappings/clients/{target_uuid}"
+        )
+        resp = requests.post(mapping_url, json=[role_data], headers=self._headers())
+        if resp.status_code in [200, 204]:
+            print(f"  [OK] Granted '{role_name}' to service account of '{client_id}'")
+        elif resp.status_code == 409:
+            print(f"  [OK] Service account of '{client_id}' already has '{role_name}'")
+        else:
+            print(f"  [WARN] Could not grant '{role_name}': {resp.text}")
+
+    def create_idp_role_mapper(
+        self, realm: str, idp_alias: str, role_name: str,
+    ):
+        """Create a hardcoded role mapper on an identity provider.
+
+        Ensures all users brokered through this IdP get the specified realm role.
+        """
+        mapper_name = f"grant-{role_name}-role"
+        url = f"{self.base_url}/admin/realms/{realm}/identity-provider/instances/{idp_alias}/mappers"
+
+        existing = requests.get(url, headers=self._headers())
+        if existing.status_code == 200:
+            for m in existing.json():
+                if m.get("name") == mapper_name:
+                    print(f"  [OK] IdP mapper '{mapper_name}' already exists")
+                    return
+
+        mapper = {
+            "name": mapper_name,
+            "identityProviderAlias": idp_alias,
+            "identityProviderMapper": "oidc-hardcoded-role-idp-mapper",
+            "config": {
+                "syncMode": "INHERIT",
+                "role": role_name,
+            },
+        }
+        resp = requests.post(url, json=mapper, headers=self._headers())
+        if resp.status_code in [200, 201]:
+            print(f"  [OK] Created IdP mapper '{mapper_name}' on '{idp_alias}'")
+        elif resp.status_code == 409:
+            print(f"  [OK] IdP mapper '{mapper_name}' already exists")
+        else:
+            print(f"  [WARN] Could not create IdP mapper: {resp.text}")
+
     def set_realm_frontend_url(self, realm: str, frontend_url: str):
         if not frontend_url:
             print("[SKIP] No frontend URL configured, skipping frontendUrl attribute")
@@ -227,6 +383,49 @@ class KeycloakAdmin:
             print(f"[ERROR] Failed to set frontendUrl: {update.text}")
             return False
 
+    def create_client_scope(self, realm: str, scope_config: dict):
+        """Create a client scope with its protocol mappers."""
+        url = f"{self.base_url}/admin/realms/{realm}/client-scopes"
+        name = scope_config.get("name", "unknown")
+
+        response = requests.post(url, json=scope_config, headers=self._headers())
+        if response.status_code == 409:
+            print(f"  [OK] Client scope '{name}' already exists")
+        elif response.status_code == 201:
+            print(f"  [OK] Created client scope '{name}'")
+        else:
+            print(f"  [ERROR] Failed to create client scope '{name}': {response.text}")
+
+    def _get_client_scope_id(self, realm: str, scope_name: str) -> str | None:
+        """Get internal UUID for a client scope by name."""
+        url = f"{self.base_url}/admin/realms/{realm}/client-scopes"
+        response = requests.get(url, headers=self._headers())
+        if response.status_code == 200:
+            for scope in response.json():
+                if scope.get("name") == scope_name:
+                    return scope["id"]
+        return None
+
+    def assign_default_client_scope(self, realm: str, client_id: str, scope_name: str):
+        """Add a client scope as a default scope on a client."""
+        client_uuid = self._get_client_uuid(realm, client_id)
+        if not client_uuid:
+            print(f"  [WARN] Client '{client_id}' not found for scope assignment")
+            return
+        scope_uuid = self._get_client_scope_id(realm, scope_name)
+        if not scope_uuid:
+            print(f"  [WARN] Client scope '{scope_name}' not found")
+            return
+        url = (
+            f"{self.base_url}/admin/realms/{realm}"
+            f"/clients/{client_uuid}/default-client-scopes/{scope_uuid}"
+        )
+        response = requests.put(url, headers=self._headers())
+        if response.status_code in [200, 204]:
+            print(f"  [OK] Assigned scope '{scope_name}' to client '{client_id}'")
+        else:
+            print(f"  [WARN] Could not assign scope '{scope_name}': {response.text}")
+
     def create_client(self, realm: str, client_config: dict):
         """Create or update an OAuth2 client."""
         url = f"{self.base_url}/admin/realms/{realm}/clients"
@@ -240,7 +439,14 @@ class KeycloakAdmin:
             uuid = self._get_client_uuid(realm, client_id)
             if uuid:
                 update_url = f"{self.base_url}/admin/realms/{realm}/clients/{uuid}"
-                update_resp = requests.put(update_url, json=client_config, headers=self._headers())
+                existing = requests.get(update_url, headers=self._headers())
+                if existing.status_code == 200:
+                    merged = existing.json()
+                    merged.update(client_config)
+                else:
+                    merged = client_config
+                merged["id"] = uuid
+                update_resp = requests.put(update_url, json=merged, headers=self._headers())
                 if update_resp.status_code in [200, 204]:
                     print(f"  [OK] Updated client '{client_id}'")
                 else:
@@ -251,6 +457,17 @@ class KeycloakAdmin:
             print(f"  [OK] Created client '{client_id}'")
         else:
             print(f"  [ERROR] Failed to create client '{client_id}': {response.text}")
+
+
+def _deep_substitute(obj, substitute_fn):
+    """Recursively apply string substitution to all values in a nested dict/list."""
+    if isinstance(obj, str):
+        return substitute_fn(obj)
+    elif isinstance(obj, dict):
+        return {k: _deep_substitute(v, substitute_fn) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_deep_substitute(item, substitute_fn) for item in obj]
+    return obj
 
 
 def load_yaml(file_path: Path) -> dict:
@@ -306,6 +523,12 @@ def main():
             roles=user.get("realmRoles", []),
         )
 
+    # Create client scopes (from realm.yaml)
+    print("\n[STEP 3b] Creating client scopes...")
+    client_scopes = realm_config.get("clientScopes", [])
+    for scope in client_scopes:
+        kc.create_client_scope(REALM_NAME, scope)
+
     # Create clients
     print("\n[STEP 4] Creating OAuth2 clients...")
     clients = users_config.get("clients", [])
@@ -347,6 +570,9 @@ def main():
         "${GITEA_PORT}": gitea_port,
         "${GITEA_SSH_PORT}": os.getenv("GITEA_SSH_PORT", "2223"),
         "${BACKEND_PORT}": os.getenv("BACKEND_PORT", "8100"),
+        "${ENTRA_TENANT_ID}": os.getenv("ENTRA_TENANT_ID", ""),
+        "${ENTRA_CLIENT_ID}": os.getenv("ENTRA_CLIENT_ID", ""),
+        "${ENTRA_CLIENT_SECRET}": os.getenv("ENTRA_CLIENT_SECRET", ""),
     }
 
     def substitute_env(value: str) -> str:
@@ -468,8 +694,42 @@ def main():
     else:
         print("\n[STEP 4c] WORKSPACE_CLIENT_SECRET unset — skipping dev-workspace client")
 
+    # Assign client scopes from realm.yaml to their target clients
+    realm_clients = realm_config.get("clients", [])
+    for rc in realm_clients:
+        rc_id = rc.get("clientId")
+        for scope_name in rc.get("defaultClientScopes", []):
+            kc.assign_default_client_scope(REALM_NAME, rc_id, scope_name)
+
+    # Configure Entra ID identity provider (optional)
+    entra_client_id = os.getenv("ENTRA_CLIENT_ID", "")
+    if entra_client_id:
+        print("\n[STEP 5] Configuring Entra ID identity provider...")
+        idp_configs = realm_config.get("identityProviders", [])
+        for idp in idp_configs:
+            idp_substituted = _deep_substitute(idp, substitute_env)
+            kc.create_identity_provider(REALM_NAME, idp_substituted)
+
+        # Brokered users get developer role automatically
+        print("\n  Configuring Entra IdP role mapper...")
+        kc.create_idp_role_mapper(REALM_NAME, "entra-id", "developer")
+
+        # Grant read-token to roles that need Azure access (H3: not all users)
+        print("\n[STEP 6] Granting broker read-token role...")
+        kc.grant_broker_read_token_role(
+            REALM_NAME, ["admin", "developer", "architect"]
+        )
+
+        # Backend service account needs view-users to check federated identities
+        print("\n[STEP 7] Granting view-users to backend service account...")
+        kc.grant_service_account_client_role(
+            REALM_NAME, "druppie-backend", "realm-management", "view-users",
+        )
+    else:
+        print("\n[SKIP] ENTRA_CLIENT_ID not set — skipping Entra ID identity provider")
+
     # Set realm frontendUrl so tokens always have the correct HTTPS issuer
-    print("\n[STEP 5] Setting realm frontend URL...")
+    print("\n[STEP 8] Setting realm frontend URL...")
     kc.set_realm_frontend_url(REALM_NAME, keycloak_public_url)
 
     print("\n" + "=" * 60)

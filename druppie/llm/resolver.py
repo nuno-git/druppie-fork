@@ -19,6 +19,7 @@ import yaml
 from druppie.domain.agent_definition import AgentDefinition
 
 from .litellm_provider import PROVIDER_CONFIGS, has_api_key
+from .local_models import apply_local_availability
 
 logger = structlog.get_logger()
 
@@ -188,6 +189,11 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
     if chain:
         # Build list of available entries (API key is set)
         available = [e for e in chain if has_api_key(e["provider"])]
+
+        # llmkube availability is per-model, not per-key: filter local entries
+        # against what the endpoint actually serves (preference order = chain
+        # order; 'auto' picks up newly deployed, not-yet-ranked models).
+        available = apply_local_availability(available)
 
         # Append global LLM_PROVIDER as last-resort if not already in chain
         global_provider = os.getenv("LLM_PROVIDER", "zai").lower()

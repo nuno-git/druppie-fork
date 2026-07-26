@@ -321,16 +321,15 @@ def build_helmrelease_yaml(
             # layout_service is excluded — it's not an MCP module.
             "embedModules": [m for m in ALL_MODULES if m != "layout_service"],
         },
-# Per-instance sandbox: each branch env gets its own sandbox namespace,
+        # Per-instance sandbox: each branch env gets its own sandbox namespace,
         # SandboxTemplate, WarmPool, and RBAC — no shared infrastructure.
+        # (2 warm replicas instead of the chart-default 5: branch envs are
+        # single-developer, and 5 warm gVisor pods per env would crowd the
+        # shared node.)
         "agentSandbox": {
             "enabled": True,
             "warmPool": {"replicas": 2},
         },
-        # Agent sandbox (gVisor) — branch envs share the cluster-wide
-        # SandboxTemplate + WarmPool in sandbox-runtime; we only need the
-        # per-instance RBAC so the workspace pod can create SandboxClaims.
-        "agentSandbox": {"enabled": True},
     }
     if recovery_mode:
         values["recoveryMode"] = True

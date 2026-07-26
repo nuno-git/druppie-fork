@@ -26,6 +26,7 @@ from .documentation_service import DocumentationService
 from .job_service import JobService
 from .deploy_service import DeployService
 from .branch_environment_service import BranchEnvironmentService
+from .document_formatter_service import DocumentFormatterService
 from .model_management_service import ModelManagementService
 
 __all__ = [
@@ -42,5 +43,6 @@ __all__ = [
     "JobService",
     "DeployService",
     "BranchEnvironmentService",
+    "DocumentFormatterService",
     "ModelManagementService",
 ]

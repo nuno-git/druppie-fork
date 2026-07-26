@@ -3,16 +3,20 @@
 from datetime import datetime
 from uuid import UUID
 
-from .base import BaseRepository
+from sqlalchemy import case, func
+
+from ..db.models.job import JobDefinition, JobRun
+from ..db.models.llm_call import LlmCall
+from ..domain.common import JobRunStatus
 from ..domain.job import (
     JobDefinitionDetail,
     JobDefinitionList,
     JobRunDetail,
     JobRunList,
     JobRunSummary,
+    JobRunUsage,
 )
-from ..db.models.job import JobDefinition, JobRun
-from ..domain.common import JobRunStatus
+from .base import BaseRepository
 
 
 class JobRepository(BaseRepository):
@@ -49,6 +53,42 @@ class JobRepository(BaseRepository):
 
     def get_definition_by_job_id(self, job_id: str) -> JobDefinition | None:
         return self.db.query(JobDefinition).filter(JobDefinition.job_id == job_id).first()
+
+    def update_definition_from_yaml(
+        self, job_id: str, data: dict, yaml_path: str
+    ) -> bool:
+        """Update an existing definition from YAML data. Returns False if absent."""
+        definition = self.get_definition_by_job_id(job_id)
+        if not definition:
+            return False
+        definition.name = data.get("name", definition.name)
+        definition.description = data.get("description", definition.description)
+        definition.schedule = data.get("schedule", definition.schedule)
+        definition.agent_id = data.get("agent_id", definition.agent_id)
+        definition.prompt = data.get("prompt", definition.prompt)
+        definition.approval_required = data.get("approval_required", definition.approval_required)
+        definition.required_role = data.get("required_role", definition.required_role)
+        # `enabled` is user-owned once a definition exists — the pause/resume
+        # buttons write it directly, and a YAML file value must NOT clobber that
+        # on the next startup re-sync (every git push redeploys here). The file
+        # value only seeds `enabled` at creation. The one exception is the ops
+        # kill-switch JOB_<ID>_ENABLED, flagged via `_enabled_from_env`, which
+        # stays authoritative per environment.
+        if data.get("_enabled_from_env"):
+            definition.enabled = data["enabled"]
+        definition.yaml_path = yaml_path
+        return True
+
+    def set_definition_enabled(
+        self, definition_id: UUID, enabled: bool
+    ) -> JobDefinition | None:
+        """Pause (enabled=False) or resume (enabled=True) a schedule. None if absent."""
+        definition = self.get_definition_by_id(definition_id)
+        if not definition:
+            return None
+        definition.enabled = enabled
+        self.db.flush()
+        return definition
 
     def get_definition_by_id(self, definition_id: UUID) -> JobDefinition | None:
         return self.db.query(JobDefinition).filter(JobDefinition.id == definition_id).first()
@@ -147,6 +187,19 @@ class JobRepository(BaseRepository):
             {"required_role": required_role}
         )
 
+    def set_job_run_approved(self, run_id: UUID, user_id: UUID) -> None:
+        """Record who approved a run and when."""
+        from ..db.models.base import utcnow
+        self.db.query(JobRun).filter(JobRun.id == run_id).update(
+            {"approved_by": user_id, "approved_at": utcnow()}
+        )
+
+    def get_system_user_id(self) -> UUID | None:
+        """Lookup the 'admin' user to own sessions created by scheduled jobs."""
+        from ..db.models.user import User
+        admin = self.db.query(User).filter_by(username="admin").first()
+        return admin.id if admin else None
+
     def get_pending_approval_runs(
         self, roles: list[str] | None = None
     ) -> list[JobRun]:
@@ -233,7 +286,7 @@ class JobRepository(BaseRepository):
             self.db.query(JobDefinition)
             .filter(
                 JobDefinition.id == definition_id,
-                (JobDefinition.last_triggered_at == None)
+                (JobDefinition.last_triggered_at.is_(None))
                 | (JobDefinition.last_triggered_at < last_scheduled),
             )
             .update({"last_triggered_at": now})
@@ -247,7 +300,21 @@ class JobRepository(BaseRepository):
             JobDefinition.id == definition_id
         ).update({"last_triggered_at": utcnow()})
 
+    @staticmethod
+    def _next_run_at(schedule: str) -> datetime | None:
+        """Next scheduled trigger in UTC (matches the scheduler's croniter
+        evaluation in JobSchedulerService._should_run). None on a bad cron."""
+        from datetime import timezone
+
+        from croniter import croniter
+
+        try:
+            return croniter(schedule, datetime.now(timezone.utc)).get_next(datetime)
+        except Exception:
+            return None
+
     def to_definition_detail(self, definition: JobDefinition) -> JobDefinitionDetail:
+        enabled = definition.enabled if definition.enabled is not None else True
         return JobDefinitionDetail(
             id=definition.id,
             job_id=definition.job_id,
@@ -258,9 +325,10 @@ class JobRepository(BaseRepository):
             approval_required=definition.approval_required or False,
             required_role=definition.required_role,
             prompt=definition.prompt,
-            enabled=definition.enabled if definition.enabled is not None else True,
+            enabled=enabled,
             yaml_path=definition.yaml_path,
             last_triggered_at=definition.last_triggered_at,
+            next_run_at=self._next_run_at(definition.schedule) if enabled else None,
             created_at=definition.created_at,
             updated_at=definition.updated_at,
         )
@@ -283,8 +351,45 @@ class JobRepository(BaseRepository):
             rejection_reason=run.rejection_reason,
         )
 
+    def get_job_run_usage(self, session_id: UUID | None) -> JobRunUsage | None:
+        """Aggregate the LLM usage of a run's session (cost per run)."""
+        if not session_id:
+            return None
+        row = (
+            self.db.query(
+                func.count(LlmCall.id),
+                func.coalesce(func.sum(LlmCall.prompt_tokens), 0),
+                func.coalesce(func.sum(LlmCall.completion_tokens), 0),
+                func.coalesce(func.sum(LlmCall.total_tokens), 0),
+                func.coalesce(func.sum(LlmCall.duration_ms), 0),
+                func.coalesce(
+                    func.sum(case((LlmCall.fallback_used.is_(True), 1), else_=0)), 0
+                ),
+            )
+            .filter(LlmCall.session_id == session_id)
+            .one()
+        )
+        if not row[0]:
+            return None
+        models = [
+            f"{provider}/{model}"
+            for provider, model in self.db.query(LlmCall.provider, LlmCall.model)
+            .filter(LlmCall.session_id == session_id)
+            .distinct()
+        ]
+        return JobRunUsage(
+            llm_calls=row[0],
+            prompt_tokens=row[1],
+            completion_tokens=row[2],
+            total_tokens=row[3],
+            duration_ms=row[4],
+            fallback_calls=row[5],
+            models=models,
+        )
+
     def to_job_run_detail(self, run: JobRun) -> JobRunDetail:
         return JobRunDetail(
+            usage=self.get_job_run_usage(run.session_id),
             id=run.id,
             job_definition_id=run.job_definition_id,
             session_id=run.session_id,

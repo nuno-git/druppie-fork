@@ -11,13 +11,13 @@ export const SkeletonLine = ({ width = 'w-full', height = 'h-4' }) => (
 )
 
 export const SkeletonStatCard = () => (
-  <div className="bg-white rounded-xl border border-gray-100 p-6">
-    <div className="flex items-center justify-between">
-      <div className="space-y-3 flex-1">
+  <div className="bg-white rounded-xl border border-gray-200/60 p-5 shadow-sm">
+    <div className="flex items-center justify-between gap-4">
+      <div className="space-y-2 flex-1">
         <Pulse className="h-3 w-20" />
-        <Pulse className="h-8 w-16" />
+        <Pulse className="h-7 w-16" />
       </div>
-      <Pulse className="w-10 h-10 rounded-lg" />
+      <Pulse className="w-11 h-11 rounded-xl" />
     </div>
   </div>
 )
@@ -51,12 +51,12 @@ export const SkeletonProjectCard = () => (
 )
 
 export const SkeletonListItem = () => (
-  <div className="flex items-center justify-between p-3 rounded-lg">
-    <div className="space-y-2 flex-1">
+  <div className="flex items-center justify-between px-6 py-3.5">
+    <div className="space-y-2 flex-1 mr-4">
       <Pulse className="h-4 w-2/5" />
       <Pulse className="h-3 w-1/4" />
     </div>
-    <Pulse className="h-5 w-16 rounded-full" />
+    <Pulse className="h-6 w-20 rounded-full" />
   </div>
 )
 

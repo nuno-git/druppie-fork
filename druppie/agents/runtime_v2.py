@@ -611,6 +611,8 @@ class AgentV2:
                         return "waiting_approval"
                     if "sandbox" in str(reason).lower():
                         return "waiting_sandbox"
+                    if "entra" in str(reason).lower():
+                        return "waiting_entra_auth"
                     return "waiting_answer"
         return "waiting_answer"
 

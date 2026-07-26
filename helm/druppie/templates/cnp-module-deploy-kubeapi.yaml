@@ -1,0 +1,33 @@
+{{- if .Values.modules.docker.enabled }}
+# CiliumNetworkPolicy: allow the module-deploy pod to reach the Kubernetes API
+# server for its in-cluster reads/writes (logs, list_pods, scale,
+# get_helmrelease) via the pod ServiceAccount token.
+#
+# The app-net NetworkPolicy blocks egress to private IPs (10/8), but the kube
+# API Service VIP is DNATed to control-plane node IPs, so a plain ipBlock won't
+# match. Cilium's kube-apiserver entity tracks the real API endpoints reliably.
+# Same pattern as cnp-dev-workspace-kubeapi.yaml and cnp-backend-kubeapi in
+# branch-env-deployer-rbac.yaml. Without this, ClusterClient calls to
+# kubernetes.default.svc are dropped (deploy:logs etc. fail).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-deploy-kubeapi
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-deploy
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+{{- end }}

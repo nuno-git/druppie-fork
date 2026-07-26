@@ -16,20 +16,24 @@ let keycloakAvailable = false
 // Token storage keys
 const TOKEN_KEY = 'kc_token'
 const REFRESH_TOKEN_KEY = 'kc_refresh_token'
+const ID_TOKEN_KEY = 'kc_id_token'
 
-const saveTokens = (token, refreshToken) => {
-  if (token) localStorage.setItem(TOKEN_KEY, token)
-  if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+const saveTokens = (token, refreshToken, idToken) => {
+  if (token) sessionStorage.setItem(TOKEN_KEY, token)
+  if (refreshToken) sessionStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+  if (idToken) sessionStorage.setItem(ID_TOKEN_KEY, idToken)
 }
 
 const loadTokens = () => ({
-  token: localStorage.getItem(TOKEN_KEY),
-  refreshToken: localStorage.getItem(REFRESH_TOKEN_KEY),
+  token: sessionStorage.getItem(TOKEN_KEY),
+  refreshToken: sessionStorage.getItem(REFRESH_TOKEN_KEY),
+  idToken: sessionStorage.getItem(ID_TOKEN_KEY),
 })
 
 const clearTokens = () => {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(REFRESH_TOKEN_KEY)
+  sessionStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY)
+  sessionStorage.removeItem(ID_TOKEN_KEY)
 }
 
 /**
@@ -101,6 +105,10 @@ export const initKeycloak = async () => {
   if (hasStoredSession) {
     initOptions.token = savedTokens.token
     initOptions.refreshToken = savedTokens.refreshToken
+    // Re-adopt the stored idToken too, so keycloakInstance.idToken is
+    // populated immediately after a reload — logout() needs it as the
+    // id_token_hint for a clean (non-interactive) single logout.
+    if (savedTokens.idToken) initOptions.idToken = savedTokens.idToken
   } else {
     initOptions.onLoad = 'check-sso'
     initOptions.silentCheckSsoFallback = true
@@ -120,14 +128,14 @@ export const initKeycloak = async () => {
     }
 
     if (authenticated) {
-      saveTokens(keycloakInstance.token, keycloakInstance.refreshToken)
+      saveTokens(keycloakInstance.token, keycloakInstance.refreshToken, keycloakInstance.idToken)
     } else {
       clearTokens()
     }
 
     keycloakInstance.onTokenExpired = () => {
       keycloakInstance.updateToken(30).then(() => {
-        saveTokens(keycloakInstance.token, keycloakInstance.refreshToken)
+        saveTokens(keycloakInstance.token, keycloakInstance.refreshToken, keycloakInstance.idToken)
       }).catch(() => {
         clearTokens()
         keycloakInstance.logout()
@@ -161,12 +169,34 @@ export const login = () => {
 export const logout = () => {
   clearTokens()
   if (keycloakInstance) {
-    keycloakInstance.logout()
+    keycloakInstance.logout({
+      redirectUri: window.location.origin,
+      id_token_hint: keycloakInstance.idToken,
+    })
   }
 }
 
 export const getToken = () => {
   return keycloakInstance?.token
+}
+
+export const ensureValidToken = async (minValidity = 30) => {
+  if (!keycloakInstance || !keycloakInstance.authenticated) {
+    return false
+  }
+  try {
+    const refreshed = await keycloakInstance.updateToken(minValidity)
+    if (refreshed) {
+      saveTokens(keycloakInstance.token, keycloakInstance.refreshToken, keycloakInstance.idToken)
+    }
+    return true
+  } catch (error) {
+    return false
+  }
+}
+
+export const redirectToLogin = () => {
+  keycloakInstance?.login?.()
 }
 
 export const isAuthenticated = () => {

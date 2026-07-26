@@ -271,7 +271,6 @@ def test_helmrelease_yaml_contains_branch_overrides():
     manifest = yaml.safe_load(
         build_helmrelease_yaml(
             "foo", "feature/foo", "druppie-foo.rijnland.dev", "tag-1", "now",
-            developer="robbe",
         )
     )
     values = manifest["spec"]["values"]
@@ -286,9 +285,12 @@ def test_helmrelease_yaml_contains_branch_overrides():
     dw = values["devWorkspace"]
     assert dw["enabled"] is True
     assert dw["stackMode"] == "real"
-    assert dw["developer"] == "robbe"
     assert dw["gitBranch"] == "feature/foo"
     assert dw["codeServer"]["devHost"] == "druppie-foo-dev.rijnland.dev"
+    # Modules are embedded into the workspace pod (no separate Deployments), so
+    # the env pulls no per-module images and needs no RWO-PVC co-location.
+    assert "coding" in dw["embedModules"]
+    assert "docker" in dw["embedModules"]
 
 
 # ---------------------------------------------------------------------------
@@ -580,9 +582,10 @@ def test_create_enables_workspace_by_default(client, as_owner, fake_gitea):
     assert values["persistence"]["storageClass"] == "longhorn-local"
     dw = values["devWorkspace"]
     assert dw["enabled"] is True
-    assert dw["developer"] == "robbe"
     assert dw["gitBranch"] == "feature/foo"
     assert dw["codeServer"]["devHost"] == "druppie-feature-foo-dev.rijnland.dev"
+    # Modules run inside the workspace pod, not as separate Deployments.
+    assert "coding" in dw["embedModules"]
     body = client.get("/api/branch-environments/feature-foo").json()
     assert body["workspace_enabled"] is True
     assert body["workspace_url"] == "https://druppie-feature-foo-dev.rijnland.dev"
