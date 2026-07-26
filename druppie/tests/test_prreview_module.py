@@ -738,3 +738,20 @@ def test_post_pr_review_without_comments_posts_no_review(mod, module):
     assert result["success"] is True
     assert result["inline_comments_posted"] == 0
     assert module._client.created_reviews == []  # summary-only path unchanged
+
+
+def test_no_inline_rereview_still_clears_prior_bot_review(mod, module):
+    # An APPROVE after the author fixed everything carries no inline comments,
+    # but must still wipe the earlier commit's REQUEST_CHANGES inline review —
+    # otherwise the stale review lingers and contradicts the new verdict.
+    module._client.reviews = [
+        {"id": 42, "user": {"login": _BOT}},          # bot's stale review -> delete
+        {"id": 43, "user": {"login": "some-human"}},  # human review -> keep
+    ]
+    result = asyncio.run(
+        module.post_pr_review(_REPO, 1, "bbb2222", "APPROVE", "All findings resolved.")
+    )
+    assert result["success"] is True
+    assert result["inline_comments_posted"] == 0
+    assert module._client.created_reviews == []       # nothing new posted
+    assert module._client.deleted_reviews == [42]     # stale bot review removed

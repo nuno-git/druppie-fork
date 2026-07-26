@@ -610,38 +610,25 @@ class PrReviewModule:
             logger.warning("get_pr_diff(%s#%s) failed: %s", repo, pr_number, exc)
             return {"success": False, "error": str(exc)}
 
-    async def _publish_inline_review(
-        self, owner: str, name: str, pr_number: int, head_sha: str, findings: list[dict]
-    ) -> tuple[int, list[dict]]:
-        """Post ``findings`` as one PR review of line-anchored comments.
+    async def _delete_prior_bot_reviews(
+        self, owner: str, name: str, pr_number: int
+    ) -> None:
+        """Drop the bot's earlier reviews so inline comments don't accumulate
+        across re-review rounds (the issue-comment marker is edited in place,
+        but each POST /reviews creates a NEW review — hence the cleanup).
 
-        Fetches the PR diff to learn which NEW-file lines are anchorable, maps
-        the findings with plan_inline_comments, then — to keep the 'reviews
-        never stack' guarantee for inline comments too — deletes the bot's
-        previous reviews before creating the fresh one. The event is always
-        COMMENT so the bot never changes the PR's merge/approval state; the
-        verdict lives in the sticky marker comment. Returns (posted_count,
-        overflow) where overflow is the findings that could not be anchored
-        (wrong file / line outside any hunk / over the cap) and belong in the
-        summary body instead.
+        Must run on EVERY re-review, including one that posts no inline comments
+        (e.g. an APPROVE after the author fixed everything) — otherwise a stale
+        REQUEST_CHANGES review from an earlier commit would linger and
+        contradict the new verdict. Best-effort: a listing or delete failure is
+        logged, not raised, so it can never lose the summary/marker.
         """
-        diff = await self._client.get_pull_diff(owner, name, pr_number)
-        positions = diff_new_line_positions(diff)
-        inline, overflow = plan_inline_comments(
-            findings, positions, self._max_inline_comments
-        )
-        if not inline:
-            return 0, overflow
-
-        # Drop the bot's earlier reviews so inline comments don't accumulate
-        # across re-review rounds (the issue-comment marker is edited in place,
-        # but each POST /reviews creates a NEW review — hence the cleanup).
         bot_login = await self._bot_user_login()
         try:
             existing = await self._client.list_pull_reviews(owner, name, pr_number)
         except Exception as exc:  # non-fatal: worst case is a stale prior review
             logger.warning("list_pull_reviews(%s/%s#%s) failed: %s", owner, name, pr_number, exc)
-            existing = []
+            return
         for review in existing:
             if (review.get("user") or {}).get("login") == bot_login:
                 try:
@@ -653,6 +640,29 @@ class PrReviewModule:
                         "delete_pull_review(%s/%s#%s id=%s) failed: %s",
                         owner, name, pr_number, review.get("id"), exc,
                     )
+
+    async def _publish_inline_review(
+        self, owner: str, name: str, pr_number: int, head_sha: str, findings: list[dict]
+    ) -> tuple[int, list[dict]]:
+        """Post ``findings`` as one PR review of line-anchored comments.
+
+        Fetches the PR diff to learn which NEW-file lines are anchorable, maps
+        the findings with plan_inline_comments, then creates the fresh review.
+        The bot's previous reviews are cleared separately by the caller (see
+        _delete_prior_bot_reviews) so the cleanup happens even when this round
+        yields no inline comments. The event is always COMMENT so the bot never
+        changes the PR's merge/approval state; the verdict lives in the sticky
+        marker comment. Returns (posted_count, overflow) where overflow is the
+        findings that could not be anchored (wrong file / line outside any hunk
+        / over the cap) and belong in the summary body instead.
+        """
+        diff = await self._client.get_pull_diff(owner, name, pr_number)
+        positions = diff_new_line_positions(diff)
+        inline, overflow = plan_inline_comments(
+            findings, positions, self._max_inline_comments
+        )
+        if not inline:
+            return 0, overflow
 
         await self._client.create_pull_review(
             owner, name, pr_number,
@@ -697,9 +707,15 @@ class PrReviewModule:
             if not (body or "").strip():
                 return {"success": False, "error": "body must be non-empty"}
 
-            # Publish inline comments first: the overflow (findings that could
-            # not be anchored) is appended to the sticky body so nothing is
-            # silently dropped. A failure here must not lose the summary/marker.
+            # Clear the bot's prior inline review unconditionally — even a
+            # summary-only APPROVE with no findings must wipe an earlier
+            # commit's REQUEST_CHANGES inline comments, or they linger and
+            # contradict the new verdict. Best-effort (never raises).
+            await self._delete_prior_bot_reviews(owner, name, pr_number)
+
+            # Publish inline comments: the overflow (findings that could not be
+            # anchored) is appended to the sticky body so nothing is silently
+            # dropped. A failure here must not lose the summary/marker.
             inline_posted = 0
             overflow: list[dict] = []
             inline_error: str | None = None
