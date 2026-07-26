@@ -3368,13 +3368,19 @@ async def get_pr_diff(repo: str, pr_number: int) -> dict:
 
 @mcp.tool()
 async def post_pr_review(
-    repo: str, pr_number: int, head_sha: str, verdict: str, body: str
+    repo: str,
+    pr_number: int,
+    head_sha: str,
+    verdict: str,
+    body: str,
+    comments: list[dict] | None = None,
 ) -> dict:
-    """Publish the review as the PR's single sticky comment (create or update).
+    """Publish the review: a sticky summary comment plus optional inline notes.
 
     Posting also marks the PR as reviewed at head_sha, so it will not be
-    reviewed again until new commits are pushed. Reviews never stack — an
-    existing sticky comment is edited in place.
+    reviewed again until new commits are pushed. Summaries never stack — the
+    sticky comment is edited in place — and inline comments never stack either:
+    the bot's previous review is deleted before the new one is posted.
 
     Args:
         repo: '<owner>/<repo>' — must come from list_prs_needing_review.
@@ -3382,13 +3388,19 @@ async def post_pr_review(
         head_sha: The head_sha value from list_prs_needing_review (records
             exactly which commit was reviewed).
         verdict: One of APPROVE, REQUEST_CHANGES, COMMENT, SKIPPED_TOO_LARGE.
-        body: The review body in Markdown (findings with severities, or a
-            one-line approval).
+        body: The review body in Markdown (one-line summary + verdict rationale).
+        comments: Optional list of line-anchored findings, each a dict with
+            keys: file (path), line (NEW-file line number in the diff),
+            severity (BLOCKER/MAJOR/MINOR/NIT), title, body (Markdown). Lines
+            that fall outside a changed hunk are folded into the summary body
+            instead of being dropped. The inline review is always posted with
+            event=COMMENT, so the bot never changes the PR's merge state.
 
     Returns:
-        Dict with action (created/updated), comment_id and comment_url.
+        Dict with action (created/updated), comment_id, comment_url, and the
+        inline_comments_posted / inline_comments_overflow counts.
     """
     module = _pr_review_module()
     if module is None:
         return dict(_PR_REVIEW_UNCONFIGURED)
-    return await module.post_pr_review(repo, pr_number, head_sha, verdict, body)
+    return await module.post_pr_review(repo, pr_number, head_sha, verdict, body, comments)

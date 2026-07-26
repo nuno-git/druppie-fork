@@ -134,6 +134,10 @@ class _FakeClient:
         self.created: list[tuple[int, str]] = []
         self.edited: list[tuple[int, str]] = []
         self.diff = ""
+        # review-API state (inline comments)
+        self.reviews: list[dict] = []
+        self.created_reviews: list[dict] = []
+        self.deleted_reviews: list[int] = []
 
     async def get_authenticated_user(self):
         return {"login": _BOT}
@@ -154,6 +158,24 @@ class _FakeClient:
     async def edit_issue_comment(self, owner, repo, comment_id, body):
         self.edited.append((comment_id, body))
         return {"id": comment_id, "html_url": f"https://x/c/{comment_id}"}
+
+    async def list_pull_reviews(self, owner, repo, index):
+        return self.reviews
+
+    async def delete_pull_review(self, owner, repo, index, review_id):
+        self.deleted_reviews.append(review_id)
+        self.reviews = [r for r in self.reviews if r.get("id") != review_id]
+
+    async def create_pull_review(self, owner, repo, index, *, commit_id, event, body, comments):
+        review = {
+            "id": 5000 + index,
+            "commit_id": commit_id,
+            "event": event,
+            "body": body,
+            "comments": comments,
+        }
+        self.created_reviews.append(review)
+        return review
 
 
 def _pull(number, sha, draft=False):
@@ -611,3 +633,108 @@ def test_list_issue_comments_paginates(mod, monkeypatch):
     result = asyncio.run(client.list_issue_comments("ai", "druppie", 7))
     assert [c["id"] for c in result] == list(range(53))  # sticky on any page is seen
     assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Inline comments — diff-position parsing, comment planning, review posting
+# ---------------------------------------------------------------------------
+
+# A hunk whose new side starts at line 10: context 10, added 11 and 12.
+_DIFF = (
+    "diff --git a/a.py b/a.py\n"
+    "--- a/a.py\n"
+    "+++ b/a.py\n"
+    "@@ -10,2 +10,3 @@\n"
+    " ctx10\n"
+    "-old\n"
+    "+new11\n"
+    "+new12\n"
+)
+
+
+def test_diff_new_line_positions_tracks_added_and_context_lines(mod):
+    pos = mod.diff_new_line_positions(_DIFF)
+    assert pos == {"a.py": {10, 11, 12}}  # deletion advances no new line
+
+
+def test_diff_new_line_positions_ignores_pure_deletion_target(mod):
+    diff = (
+        "diff --git a/gone.py b/gone.py\n"
+        "--- a/gone.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,2 +0,0 @@\n"
+        "-a\n"
+        "-b\n"
+    )
+    assert mod.diff_new_line_positions(diff) == {}  # nothing anchorable on new side
+
+
+def test_plan_inline_comments_anchors_snaps_and_overflows(mod):
+    pos = {"a.py": {10, 11, 12}}
+    findings = [
+        {"file": "a.py", "line": 11, "severity": "MAJOR", "title": "exact", "body": "b"},
+        {"file": "a.py", "line": 9, "severity": "BLOCKER", "title": "snap", "body": "b"},
+        {"file": "a.py", "line": 99, "severity": "MINOR", "title": "far", "body": "b"},
+        {"file": "other.py", "line": 1, "severity": "NIT", "title": "wrongfile", "body": "b"},
+    ]
+    inline, overflow = mod.plan_inline_comments(findings, pos, max_inline=30)
+    # BLOCKER first (severity order), snapped 9 -> 10; then exact 11.
+    assert [(c["path"], c["new_position"]) for c in inline] == [("a.py", 10), ("a.py", 11)]
+    assert {(f["file"], f["line"]) for f in overflow} == {("a.py", 99), ("other.py", 1)}
+    assert "anchored near L9" in inline[0]["body"]  # snap is disclosed
+
+
+def test_plan_inline_comments_cap_keeps_most_severe_inline(mod):
+    pos = {"a.py": {10, 11, 12}}
+    findings = [
+        {"file": "a.py", "line": 12, "severity": "MINOR", "title": "m", "body": "b"},
+        {"file": "a.py", "line": 11, "severity": "BLOCKER", "title": "b", "body": "b"},
+    ]
+    inline, overflow = mod.plan_inline_comments(findings, pos, max_inline=1)
+    assert [(c["path"], c["new_position"]) for c in inline] == [("a.py", 11)]  # BLOCKER kept
+    assert [f["line"] for f in overflow] == [12]  # MINOR overflowed by the cap
+
+
+def test_post_pr_review_publishes_inline_comments_and_folds_overflow(mod, module):
+    module._client.diff = _DIFF
+    comments = [
+        {"file": "a.py", "line": 11, "severity": "MAJOR", "title": "real bug", "body": "fix it"},
+        {"file": "a.py", "line": 99, "severity": "MINOR", "title": "outside hunk", "body": "note"},
+    ]
+    result = asyncio.run(
+        module.post_pr_review(_REPO, 1, "aaa1111", "REQUEST_CHANGES", "summary", comments)
+    )
+    assert result["success"] is True
+    assert result["inline_comments_posted"] == 1
+    assert result["inline_comments_overflow"] == 1
+    # one review created, event COMMENT (never touches merge state)
+    assert len(module._client.created_reviews) == 1
+    review = module._client.created_reviews[0]
+    assert review["event"] == "COMMENT"
+    assert review["commit_id"] == "aaa1111"
+    assert [c["new_position"] for c in review["comments"]] == [11]
+    # the out-of-hunk finding is folded into the sticky body, not dropped
+    _, sticky_body = module._client.created[0]
+    assert "outside hunk" in sticky_body
+    assert "a.py:99" in sticky_body
+
+
+def test_post_pr_review_deletes_prior_bot_review_so_inline_never_stacks(mod, module):
+    module._client.diff = _DIFF
+    module._client.reviews = [
+        {"id": 42, "user": {"login": _BOT}},        # bot's previous review -> delete
+        {"id": 43, "user": {"login": "some-human"}},  # human review -> keep
+    ]
+    comments = [{"file": "a.py", "line": 11, "severity": "MAJOR", "title": "t", "body": "b"}]
+    asyncio.run(module.post_pr_review(_REPO, 1, "aaa1111", "REQUEST_CHANGES", "s", comments))
+    assert module._client.deleted_reviews == [42]  # only the bot's stale review removed
+    assert len(module._client.created_reviews) == 1
+
+
+def test_post_pr_review_without_comments_posts_no_review(mod, module):
+    result = asyncio.run(
+        module.post_pr_review(_REPO, 1, "aaa1111", "APPROVE", "LGTM — no findings.")
+    )
+    assert result["success"] is True
+    assert result["inline_comments_posted"] == 0
+    assert module._client.created_reviews == []  # summary-only path unchanged

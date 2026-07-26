@@ -2,22 +2,38 @@
 
 Automated review of open PRs on the GitOps Gitea (`aigit.waterschap.org`),
 running centrally on the AI platform as a cron job — replacing the ad-hoc
-local setup. One agent (`pr_reviewer`) reviews only PRs that changed since
-their last review, strictly within the PR diff, on local (in-cluster) models
-only.
+local setup. The `pr_reviewer` agent reviews only PRs that changed since their
+last review, strictly within the PR diff. For each changed PR it **fans out**
+one reviewer per lens (correctness / security / architecture / tests-docs),
+**adversarially verifies** their findings, then publishes one sticky verdict
+plus line-anchored inline comments.
+
+> **Data egress / cost.** The reviewer runs on `llm_profile: standard`
+> (hosted providers — zai glm-5, glm-4.7, DeepSeek, gpt-oss, GPT-5-MINI; the
+> resolver picks the first with a key). The local-only `llmkube` endpoint did
+> not reliably serve this unattended run. **Consequence:** every scheduled run
+> sends the PR diff of an allowlisted repo to an external hosted LLM, and runs
+> are billed per token. Keep the allowlist to repos whose code may leave the
+> cluster, or switch the agent back to a local profile if that is unacceptable.
 
 ## Architecture
 
 ```
 JobScheduler (backend, every minute)
   └─ pr_review_job (cron, default */20) ── creates session + agent run
-       └─ pr_reviewer agent (llm_profile: llmkube — local models only)
+       └─ pr_reviewer agent  (role: primary, llm_profile: standard)
+            ├─ subagents(): 4× pr_review_dimension  (parallel, one per lens)
+            │                 └─ get_pr_diff + read-only ai/druppie checkout
+            ├─ subagents(): 1× pr_review_verifier    (adversarial filter)
             └─ coding MCP module
                  ├─ list_prs_needing_review   (dedup decided in code)
                  ├─ get_pr_diff               (size-guarded)
-                 ├─ post_pr_review            (one sticky comment per PR)
-                 └─ read_file/grep/find/...   (read-only ai/druppie checkout)
+                 └─ post_pr_review            (sticky verdict + inline review)
 ```
+
+The dimension and verifier subagents inherit the orchestrator's read-only
+`update_core` checkout (subagents share the parent's sandbox scope). The
+orchestrator itself only calls the three Gitea tools plus `subagents()`.
 
 Everything that must not depend on LLM discipline is enforced in code, not
 in the prompt:
@@ -29,7 +45,15 @@ in the prompt:
   reviewed PR carries exactly one sticky comment starting with a marker
   (`<!-- druppie-pr-review sha:<head_sha> verdict:<verdict> -->`). A PR needs
   review only when its head SHA differs from the marker SHA; posting again
-  edits the same comment. Draft PRs are skipped.
+  edits the same comment. Draft PRs are skipped. The inline comments do not
+  stack either: each run deletes the bot's previous PR review before posting
+  the fresh one (the marker comment is the durable dedup record; the review
+  just carries the line-anchored notes).
+- **Inline anchoring in code, not the LLM** — the LLM only names `file` + a
+  NEW-file `line` per finding; `post_pr_review` parses the diff, maps each to
+  an anchorable hunk line (snapping a near miss), and folds anything outside a
+  changed hunk into the summary body — so a wrong line never makes Gitea reject
+  the whole review. Inline count is capped by `PRREVIEW_MAX_INLINE_COMMENTS`.
 - **Cost caps** — `PRREVIEW_MAX_PRS_PER_RUN` (default 5) caps work per run;
   diffs over `PRREVIEW_MAX_DIFF_LINES` (default 3000) are not reviewed but
   marked `SKIPPED_TOO_LARGE` with a request to split the PR, so they are not
@@ -101,23 +125,26 @@ returns a `usage` block aggregated from the run's session:
 
 ```json
 "usage": {
-  "llm_calls": 12,
-  "prompt_tokens": 84213,
-  "completion_tokens": 6120,
-  "total_tokens": 90333,
-  "duration_ms": 421337,
-  "fallback_calls": 0,
-  "models": ["llmkube/Qwen/Qwen3.6-27B"]
+  "llm_calls": 47,
+  "prompt_tokens": 512480,
+  "completion_tokens": 21840,
+  "total_tokens": 534320,
+  "duration_ms": 620145,
+  "fallback_calls": 3,
+  "models": ["zai/glm-5", "zai/glm-4.7"]
 }
 ```
 
-Local models have no per-token price, so cost is expressed in what drives it:
-calls, tokens and wall time. `fallback_calls > 0` is the signal that an
-external (paid) provider was involved after all — by design that can only
-happen with explicit approval, which an unattended cron run never gives.
+The usage aggregates the orchestrator **and all its subagents** (the fan-out
+runs many LLM calls per PR), so tokens are the real cost driver — these are
+hosted, per-token-billed providers. `fallback_calls > 0` means the resolver
+dropped to a later provider in the `standard` chain.
 
-Expensive patterns are avoided structurally: one agent per run (no fan-out),
-capped PR count, capped diff size, `max_iterations: 45`, `temperature: 0.1`.
+The fan-out trades cost for depth. It is bounded structurally so a run cannot
+run away: the per-run PR cap, the diff-size guard, exactly **4 lenses + 1
+verifier per PR** (no verifier loop, no extra rounds), `temperature: 0.1`, and
+the per-agent `max_iterations`. Tune `PRREVIEW_MAX_PRS_PER_RUN` and the cron
+interval down first if a run is too expensive.
 
 ## Design decisions
 
@@ -148,14 +175,20 @@ Open follow-ups (owned outside this repo):
 - **Azure backlog**: this implementation belongs to the existing "PR review
   agent" PBI; scope alignment happens on that PBI.
 
-### Sticky issue comment instead of a native Gitea review
+### Sticky verdict comment + a non-blocking inline review
 
-The verdict (`APPROVE` / `REQUEST_CHANGES` / `COMMENT` /
-`SKIPPED_TOO_LARGE`) is recorded in one editable issue comment, **not** as a
-native Gitea PR review. Native reviews cannot be edited in place, so every
-run would add a new review and reviews would stack — exactly what the dedup
-design must prevent. Consequence: a `REQUEST_CHANGES` verdict does not block
-merging in Gitea; it is advisory. If blocking is ever wanted, that is a
+The verdict (`APPROVE` / `REQUEST_CHANGES` / `COMMENT` / `SKIPPED_TOO_LARGE`)
+lives in one editable **issue comment** carrying the dedup marker — the
+durable record, edited in place so it never stacks. The per-line findings are
+posted as a native Gitea **PR review**, which is what allows line-anchored
+inline comments. Native reviews cannot be edited, so instead of editing, each
+run **deletes the bot's previous review** before creating the new one — that
+keeps the "never stack" guarantee for inline comments too.
+
+The inline review is always submitted with `event: COMMENT`, never
+`APPROVED`/`REQUEST_CHANGES`, so the bot never changes the PR's merge or
+approval state — even a `REQUEST_CHANGES` *verdict* stays advisory (it is text
+in the sticky comment). If blocking is ever wanted, that is a
 branch-protection rule, not a change to this agent.
 
 ### Review scope
@@ -176,6 +209,7 @@ BLOCKER/MAJOR; when unsure, the finding is dropped.
 | `PRREVIEW_GITEA_TOKEN` | `EXTERNAL_GITEA_TOKEN` | Bot token (Vault) |
 | `PRREVIEW_MAX_PRS_PER_RUN` | `5` | PR cap per cron run |
 | `PRREVIEW_MAX_DIFF_LINES` | `3000` | Diff size guard |
+| `PRREVIEW_MAX_INLINE_COMMENTS` | `30` | Inline comments per review; overflow folds into the summary |
 | `PRREVIEW_SSL_CA_BUNDLE` | *(system CAs)* | Private CA bundle path; TLS verification has no off-switch |
 
 | Env var (backend) | Default | Meaning |

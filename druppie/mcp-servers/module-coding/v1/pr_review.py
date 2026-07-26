@@ -93,6 +93,129 @@ def parse_marker(body: str | None) -> tuple[str, str] | None:
     return (match.group(1), match.group(2)) if match else None
 
 
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def diff_new_line_positions(diff: str) -> dict[str, set[int]]:
+    """Map each file in a unified diff to the NEW-file line numbers that can
+    carry an inline review comment.
+
+    Gitea attaches an inline comment only when its ``new_position`` is a line
+    the diff actually shows on the new side — an added ('+') or context (' ')
+    line inside a hunk. A ``new_position`` outside every hunk makes Gitea
+    reject the whole review, so post_pr_review validates every requested line
+    against this map and diverts the misses to the summary instead.
+
+    The path is taken from the ``+++ b/<path>`` header; a pure deletion whose
+    new side is ``/dev/null`` contributes no attachable lines.
+    """
+    positions: dict[str, set[int]] = {}
+    current: str | None = None
+    new_ln = 0
+    for raw in diff.splitlines():
+        if raw.startswith("+++ "):
+            target = raw[4:].strip()
+            if target == "/dev/null":
+                current = None
+            else:
+                # strip the "b/" (or "a/") prefix git prepends
+                current = target[2:] if target[:2] in ("b/", "a/") else target
+                positions.setdefault(current, set())
+            continue
+        if raw.startswith("@@"):
+            m = _HUNK_RE.match(raw)
+            if m:
+                new_ln = int(m.group(1))
+            continue
+        if current is None:
+            continue
+        if raw.startswith("+"):
+            positions[current].add(new_ln)
+            new_ln += 1
+        elif raw.startswith("-"):
+            # old side only — does not advance the new-file line counter
+            continue
+        elif raw.startswith(" "):
+            positions[current].add(new_ln)
+            new_ln += 1
+    return positions
+
+
+INLINE_SNAP_DISTANCE = 8
+
+
+def plan_inline_comments(
+    findings: list[dict],
+    positions: dict[str, set[int]],
+    max_inline: int,
+    snap: int = INLINE_SNAP_DISTANCE,
+) -> tuple[list[dict], list[dict]]:
+    """Split findings into Gitea inline comments and a summary overflow list.
+
+    A finding is ``{"path"|"file", "line", "severity", "body", "title"?}``. It
+    becomes an inline comment only when its line is a diff-anchorable NEW-file
+    line for that file (``positions``); a near miss (<= ``snap`` lines from an
+    anchorable line, e.g. the LLM pointed at the declaration rather than the
+    changed line) is snapped to the closest one. Everything else — a wrong
+    file, a line far outside any hunk, or anything past ``max_inline`` — is
+    returned as overflow so the caller can fold it into the summary body
+    instead of letting Gitea reject the whole review.
+
+    Returns (inline_comments, overflow_findings). Findings are ordered by
+    severity (BLOCKER first) so the cap keeps the most important ones inline.
+    """
+    order = {"BLOCKER": 0, "MAJOR": 1, "MINOR": 2, "NIT": 3, "QUESTION": 4}
+    ranked = sorted(findings, key=lambda f: order.get(f.get("severity", ""), 9))
+
+    inline: list[dict] = []
+    overflow: list[dict] = []
+    for finding in ranked:
+        path = finding.get("path") or finding.get("file")
+        line = finding.get("line")
+        valid = positions.get(path or "")
+        if not path or not valid or line is None:
+            overflow.append(finding)
+            continue
+        anchor = line if line in valid else min(
+            valid, key=lambda candidate: abs(candidate - line)
+        )
+        if anchor not in valid or abs(anchor - line) > snap:
+            overflow.append(finding)
+            continue
+        if len(inline) >= max_inline:
+            overflow.append(finding)
+            continue
+        severity = finding.get("severity", "")
+        title = finding.get("title", "")
+        header = " — ".join(part for part in (severity, title) if part)
+        body = f"**{header}**\n\n{finding.get('body', '')}" if header else finding.get("body", "")
+        if anchor != line:
+            body += f"\n\n<sub>(anchored near L{line})</sub>"
+        inline.append({"path": path, "new_position": anchor, "body": body})
+    return inline, overflow
+
+
+def _render_overflow(overflow: list[dict]) -> str:
+    """Render findings that could not be diff-anchored as a summary section."""
+    lines = [
+        "### Findings not anchored to the diff",
+        "_(the referenced line falls outside a changed hunk)_",
+        "",
+    ]
+    for finding in overflow:
+        path = finding.get("path") or finding.get("file") or "?"
+        loc = f"`{path}:{finding.get('line')}`"
+        header = " — ".join(
+            part for part in (finding.get("severity", ""), finding.get("title", "")) if part
+        )
+        lines.append(f"- {loc} {header}".rstrip())
+        text = (finding.get("body") or "").strip()
+        if text:
+            for para in text.splitlines():
+                lines.append(f"  > {para}")
+    return "\n".join(lines)
+
+
 class GiteaPRClient:
     """REST client bound to a single Gitea instance."""
 
@@ -210,6 +333,11 @@ class GiteaPRClient:
     async def _patch(self, path: str, json_body: dict) -> dict:
         return await self._request("PATCH", path, json_body=json_body)
 
+    async def _delete(self, path: str) -> None:
+        # raw=True: a successful DELETE is 204 No Content, so resp.json() would
+        # raise on the empty body — take the text and discard it.
+        await self._request("DELETE", path, raw=True)
+
     async def get_authenticated_user(self) -> dict:
         """Return the user the token belongs to (GET /user)."""
         return await self._get("user")
@@ -240,6 +368,47 @@ class GiteaPRClient:
         """Edit an existing PR comment by its comment id."""
         return await self._patch(
             f"repos/{owner}/{repo}/issues/comments/{comment_id}", {"body": body}
+        )
+
+    async def list_pull_reviews(self, owner: str, repo: str, index: int) -> list[dict]:
+        """List ALL reviews on a PR (paged). A review carries the inline
+        line-anchored comments; issue comments (above) carry the sticky marker."""
+        return await self._get_paginated(f"repos/{owner}/{repo}/pulls/{index}/reviews")
+
+    async def delete_pull_review(
+        self, owner: str, repo: str, index: int, review_id: int
+    ) -> None:
+        """Delete a review and its inline comments (used to prevent stacking)."""
+        await self._delete(f"repos/{owner}/{repo}/pulls/{index}/reviews/{review_id}")
+
+    async def create_pull_review(
+        self,
+        owner: str,
+        repo: str,
+        index: int,
+        *,
+        commit_id: str,
+        event: str,
+        body: str,
+        comments: list[dict],
+    ) -> dict:
+        """Create a PR review carrying inline comments.
+
+        ``comments`` is a list of ``{"path", "new_position", "body"}`` dicts;
+        ``new_position`` must be a NEW-file line that the diff shows (validated
+        by the caller via diff_new_line_positions) or Gitea rejects the whole
+        review. ``event`` is one of Gitea's APPROVED / REQUEST_CHANGES /
+        COMMENT / PENDING; the reviewer always uses COMMENT so the bot never
+        alters the PR's merge/approval state.
+        """
+        return await self._post(
+            f"repos/{owner}/{repo}/pulls/{index}/reviews",
+            {
+                "commit_id": commit_id,
+                "event": event,
+                "body": body,
+                "comments": comments,
+            },
         )
 
 
@@ -289,6 +458,9 @@ class PrReviewModule:
 
         self._max_prs_per_run = _env_int("PRREVIEW_MAX_PRS_PER_RUN", 5)
         self._max_diff_lines = _env_int("PRREVIEW_MAX_DIFF_LINES", 3000)
+        # Cap inline comments per review so a pathological run cannot flood a PR
+        # with hundreds of anchored notes; the overflow stays in the summary body.
+        self._max_inline_comments = _env_int("PRREVIEW_MAX_INLINE_COMMENTS", 30)
         ca_bundle = os.getenv("PRREVIEW_SSL_CA_BUNDLE", "").strip()
         self._client = GiteaPRClient(
             base_url,
@@ -438,13 +610,76 @@ class PrReviewModule:
             logger.warning("get_pr_diff(%s#%s) failed: %s", repo, pr_number, exc)
             return {"success": False, "error": str(exc)}
 
-    async def post_pr_review(
-        self, repo: str, pr_number: int, head_sha: str, verdict: str, body: str
-    ) -> dict:
-        """Create or update the single sticky review comment on a PR.
+    async def _publish_inline_review(
+        self, owner: str, name: str, pr_number: int, head_sha: str, findings: list[dict]
+    ) -> tuple[int, list[dict]]:
+        """Post ``findings`` as one PR review of line-anchored comments.
 
-        Embeds the reviewed head SHA in the marker, so posting the review and
-        marking the PR as reviewed are one atomic step.
+        Fetches the PR diff to learn which NEW-file lines are anchorable, maps
+        the findings with plan_inline_comments, then — to keep the 'reviews
+        never stack' guarantee for inline comments too — deletes the bot's
+        previous reviews before creating the fresh one. The event is always
+        COMMENT so the bot never changes the PR's merge/approval state; the
+        verdict lives in the sticky marker comment. Returns (posted_count,
+        overflow) where overflow is the findings that could not be anchored
+        (wrong file / line outside any hunk / over the cap) and belong in the
+        summary body instead.
+        """
+        diff = await self._client.get_pull_diff(owner, name, pr_number)
+        positions = diff_new_line_positions(diff)
+        inline, overflow = plan_inline_comments(
+            findings, positions, self._max_inline_comments
+        )
+        if not inline:
+            return 0, overflow
+
+        # Drop the bot's earlier reviews so inline comments don't accumulate
+        # across re-review rounds (the issue-comment marker is edited in place,
+        # but each POST /reviews creates a NEW review — hence the cleanup).
+        bot_login = await self._bot_user_login()
+        try:
+            existing = await self._client.list_pull_reviews(owner, name, pr_number)
+        except Exception as exc:  # non-fatal: worst case is a stale prior review
+            logger.warning("list_pull_reviews(%s/%s#%s) failed: %s", owner, name, pr_number, exc)
+            existing = []
+        for review in existing:
+            if (review.get("user") or {}).get("login") == bot_login:
+                try:
+                    await self._client.delete_pull_review(
+                        owner, name, pr_number, review["id"]
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "delete_pull_review(%s/%s#%s id=%s) failed: %s",
+                        owner, name, pr_number, review.get("id"), exc,
+                    )
+
+        await self._client.create_pull_review(
+            owner, name, pr_number,
+            commit_id=head_sha,
+            event="COMMENT",
+            body=f"{len(inline)} inline finding(s) — see the sticky summary for the verdict.",
+            comments=inline,
+        )
+        return len(inline), overflow
+
+    async def post_pr_review(
+        self,
+        repo: str,
+        pr_number: int,
+        head_sha: str,
+        verdict: str,
+        body: str,
+        comments: list[dict] | None = None,
+    ) -> dict:
+        """Publish the review: a sticky summary comment plus optional inline notes.
+
+        The sticky issue comment carries the ``sha:<head>`` marker (dedup) and
+        the verdict + summary, edited in place so summaries never stack.
+        ``comments`` (each ``{"file"/"path", "line", "severity", "title", "body"}``)
+        are posted as line-anchored inline comments via a single PR review;
+        those that cannot be anchored to the diff are folded into the summary.
+        Posting also marks the PR as reviewed at head_sha.
         """
         try:
             owner, name = self._split_repo(repo)
@@ -462,12 +697,33 @@ class PrReviewModule:
             if not (body or "").strip():
                 return {"success": False, "error": "body must be non-empty"}
 
+            # Publish inline comments first: the overflow (findings that could
+            # not be anchored) is appended to the sticky body so nothing is
+            # silently dropped. A failure here must not lose the summary/marker.
+            inline_posted = 0
+            overflow: list[dict] = []
+            inline_error: str | None = None
+            if comments:
+                try:
+                    inline_posted, overflow = await self._publish_inline_review(
+                        owner, name, pr_number, head_sha, comments
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "inline review for %s#%s failed, falling back to summary only: %s",
+                        repo, pr_number, exc,
+                    )
+                    inline_error = str(exc)
+                    overflow = list(comments)
+
             comment_body = (
                 f"{build_marker(head_sha, verdict)}\n\n"
                 f"## Druppie PR review — {verdict}\n"
                 f"_Reviewed commit `{head_sha[:10]}` (automated scheduled review)._\n\n"
                 f"{body.strip()}\n"
             )
+            if overflow:
+                comment_body += "\n" + _render_overflow(overflow) + "\n"
 
             sticky, _ = await self._find_sticky_comment(owner, name, pr_number)
             if sticky:
@@ -490,6 +746,9 @@ class PrReviewModule:
                 "reviewed_sha": head_sha,
                 "comment_id": result.get("id"),
                 "comment_url": result.get("html_url"),
+                "inline_comments_posted": inline_posted,
+                "inline_comments_overflow": len(overflow),
+                "inline_error": inline_error,
             }
         except Exception as exc:
             logger.warning("post_pr_review(%s#%s) failed: %s", repo, pr_number, exc)
