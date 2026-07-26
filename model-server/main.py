@@ -90,6 +90,27 @@ MODEL_CONFIGS = {
             "--linear-backend", "b12x",
         ],
     },
+    "laguna-s-2.1": {
+        "model": "poolside/Laguna-S-2.1-NVFP4",
+        "tensor_parallel_size": 2,
+        "cuda_devices": "0,1",
+        "extra_args": [
+            "--served-model-name", "laguna-s-2.1",
+            "--trust-remote-code",
+            "--kv-cache-dtype", "fp8",
+            "--gpu-memory-utilization", "0.90",
+            "--max-model-len", "262144",
+            "--max-num-seqs", "32",
+            "--max-num-batched-tokens", "8192",
+            "--enable-chunked-prefill",
+            "--enable-prefix-caching",
+            "--async-scheduling",
+            "--enable-auto-tool-choice",
+            "--tool-call-parser", "poolside_v1",
+            "--reasoning-parser", "poolside_v1",
+            "--default-chat-template-kwargs.enable_thinking", "true",
+        ],
+    },
 }
 
 VLLM_BIN = os.getenv("VLLM_BIN", "vllm")
@@ -199,6 +220,8 @@ class ModelManager:
         env["HF_HOME"] = HF_HOME
         if model_id == "deepseek-v4-flash":
             env.update(self._deepseek_env())
+        elif model_id == "laguna-s-2.1":
+            env.update(self._laguna_env())
 
         logger.info("starting %s on GPU=%s TP=%d",
                      model_id, cfg["cuda_devices"], cfg["tensor_parallel_size"])
@@ -299,6 +322,16 @@ class ModelManager:
             "B12X_MHC_MAX_TOKENS": "16384",
             "B12X_DENSE_SPLITK_TURBO": "1",
             "B12X_W4A16_TC_DECODE": "1",
+        }
+
+    @staticmethod
+    def _laguna_env() -> dict:
+        return {
+            "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+            "NCCL_IB_DISABLE": "1",
+            "NCCL_P2P_LEVEL": "SYS",
+            "NCCL_PROTO": "LL,LL128,Simple",
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         }
 
 

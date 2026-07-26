@@ -82,7 +82,7 @@ APP_BASE_BRANCH = os.getenv("BRANCH_ENV_APP_BASE_BRANCH", "colab-dev")
 BRANCH_ENV_REGISTRY = os.getenv("BRANCH_ENV_REGISTRY", "harbor.rijnland.dev/druppie")
 BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
 # Ephemeral StorageClass: 1 replica, strict-local, reclaimPolicy=Delete.
-BRANCH_ENV_STORAGE_CLASS = os.getenv("BRANCH_ENV_STORAGE_CLASS", "longhorn-branch-env")
+BRANCH_ENV_STORAGE_CLASS = os.getenv("BRANCH_ENV_STORAGE_CLASS", "longhorn-local")
 
 # Secrets source for branch envs: determines the Vault path prefix for env
 # secrets. "colab-dev" → druppie/colab-dev/*, any other value maps to

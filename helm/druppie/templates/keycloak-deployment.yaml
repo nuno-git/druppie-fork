@@ -43,6 +43,97 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
+        {{- if and .Values.keycloak.realmImport.enabled (not .Values.keycloak.dbPersistent) }}
+        - name: realm-reset
+          image: {{ .Values.keycloak.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Starting Keycloak to reset realm..."
+              /opt/keycloak/bin/kc.sh start &
+              KC_PID=$!
+
+              echo "Waiting for Keycloak to be ready..."
+              for i in $(seq 1 60); do
+                if (echo > /dev/tcp/localhost/8080) 2>/dev/null; then
+                  break
+                fi
+                sleep 2
+              done
+
+              REALM=$(grep -o '"realm": *"[^"]*"' /opt/keycloak/data/import/*.json | head -1 | sed 's/.*: *"//;s/"//')
+              echo "Deleting realm: ${REALM}..."
+              /opt/keycloak/bin/kcadm.sh delete realms/"${REALM}" || true
+
+              echo "Stopping Keycloak..."
+              kill $KC_PID
+              wait $KC_PID 2>/dev/null || true
+              echo "Realm reset complete."
+          env:
+            - name: KC_DB
+              value: "postgres"
+            - name: KC_DB_URL
+              {{- if .Values.cnpg.enabled }}
+              value: "jdbc:postgresql://{{ include "druppie.fullname" . }}-keycloak-db-rw:5432/{{ .Values.postgresql.keycloak.database }}"
+              {{- else }}
+              value: "jdbc:postgresql://{{ include "druppie.fullname" . }}-keycloak-db:5432/{{ .Values.postgresql.keycloak.database }}"
+              {{- end }}
+            - name: KC_DB_USERNAME
+              value: {{ .Values.postgresql.keycloak.username | quote }}
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: KEYCLOAK_DB_PASSWORD
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: KEYCLOAK_ADMIN
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            {{- if .Values.global.subdomains.keycloak }}
+            - name: KC_HOSTNAME
+              value: {{ .Values.global.subdomains.keycloak | quote }}
+            {{- else }}
+            - name: KC_HOSTNAME
+              value: {{ .Values.global.domain | quote }}
+            {{- end }}
+            - name: KC_HOSTNAME_STRICT
+              value: {{ .Values.global.ingress.tls.enabled | quote }}
+            - name: KC_PROXY
+              value: "edge"
+            - name: KC_PROXY_HEADERS
+              value: "xforwarded"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: QUARKUS_HTTP_PROXY_PROXY_ADDRESS_FORWARDING
+              value: "true"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: JAVA_OPTS_APPEND
+              value: "-Xms256m -Xmx512m -XX:MaxGCPauseMillis=100 -Djava.net.preferIPv4Stack=true -Dquarkus.http.proxy.proxy-address-forwarding=true"
+            - name: KC_CACHE
+              value: "local"
+            - name: KC_CACHE_STACK
+              value: "udp"
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+        {{- end }}
       {{- with .Values.global.tolerateGpu }}
       tolerations:
         - key: nvidia.com/gpu
