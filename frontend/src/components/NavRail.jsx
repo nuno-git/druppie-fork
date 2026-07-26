@@ -217,7 +217,13 @@ const UserMenu = ({ user, authenticated }) => {
     let revoke = null
     let cancelled = false
     getAvatarUrl().then(url => {
-      if (cancelled) return
+      if (cancelled) {
+        // Unmounted (or deps changed) before the fetch resolved — the
+        // cleanup already ran with revoke still null, so revoke the freshly
+        // created blob URL here or it leaks.
+        if (url) URL.revokeObjectURL(url)
+        return
+      }
       if (url) {
         setAvatarUrl(url)
         revoke = url

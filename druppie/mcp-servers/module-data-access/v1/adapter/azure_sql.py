@@ -113,48 +113,56 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
         (client_credentials) or connection string.
         """
         if self.use_obo and user_token:
-            driver = self.obo_config.get("driver", "ODBC Driver 18 for SQL Server")
-            server = self.obo_config.get("server")
-            database = self.obo_config.get("database")
-
-            conn_str = (
-                f"DRIVER={{{driver}}};"
-                f"SERVER={server};"
-                f"DATABASE={database};"
-                "Encrypt=yes;"
-                "TrustServerCertificate=yes;"
-                "Login Timeout=90;"
+            logger.info(
+                "connecting_as_user server=%s database=%s",
+                self.obo_config.get("server"),
+                self.obo_config.get("database"),
             )
-            logger.info("connecting_as_user server=%s database=%s", server, database)
-            return _token_connect(conn_str, user_token)
-
-        if self.use_obo and not user_token:
-            raise PermissionError(
-                "This data source requires Microsoft authentication. "
-                "Please sign in with your Microsoft account to access it."
-            )
-
-        if self._connection:
-            return self._connection
+            return _token_connect(self._obo_conn_str(), user_token)
 
         if self.use_obo:
-            access_token = await self._fetch_service_token()
-            driver = self.obo_config.get("driver", "ODBC Driver 18 for SQL Server")
-            server = self.obo_config.get("server")
-            database = self.obo_config.get("database")
+            # No user token: fall back to the service principal only when its
+            # client_credentials are configured. Otherwise this really is an
+            # interactive-only source and the caller must sign in.
+            if not self._has_service_principal():
+                raise PermissionError(
+                    "This data source requires Microsoft authentication. "
+                    "Please sign in with your Microsoft account to access it."
+                )
+            if self._connection is None:
+                access_token = await self._fetch_service_token()
+                self._connection = _token_connect(self._obo_conn_str(), access_token)
+            return self._connection
 
-            conn_str = (
-                f"DRIVER={{{driver}}};"
-                f"SERVER={server};"
-                f"DATABASE={database};"
-                "Encrypt=yes;"
-                "TrustServerCertificate=yes;"
-                "Login Timeout=90;"
-            )
-            self._connection = _token_connect(conn_str, access_token)
-        else:
+        if self._connection is None:
             self._connection = pyodbc.connect(self.connection_string)
         return self._connection
+
+    def _obo_conn_str(self) -> str:
+        """Build the ODBC connection string for the OBO/SP token paths.
+
+        Encrypt=yes keeps the channel encrypted; the server certificate is
+        validated against the system trust store (Azure SQL / Synapse present
+        public-CA certs). We deliberately do NOT set TrustServerCertificate —
+        disabling validation would let a MITM capture the bearer access token.
+        """
+        driver = self.obo_config.get("driver", "ODBC Driver 18 for SQL Server")
+        server = self.obo_config.get("server")
+        database = self.obo_config.get("database")
+        return (
+            f"DRIVER={{{driver}}};"
+            f"SERVER={server};"
+            f"DATABASE={database};"
+            "Encrypt=yes;"
+            "Login Timeout=90;"
+        )
+
+    def _has_service_principal(self) -> bool:
+        """True when client_credentials are configured for a service-principal token."""
+        return all(
+            self.obo_config.get(key)
+            for key in ("tenant_id", "client_id", "client_secret", "scope")
+        )
 
     async def _ensure_connection(self):
         """Prove connectivity for the inherited test_connection()."""

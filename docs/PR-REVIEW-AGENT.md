@@ -156,9 +156,9 @@ Considered: running the review as a Gitea Actions workflow on PR events
 Chosen: **cron job on the AI platform**, because:
 
 - The reviewer needs the platform anyway — agent runtime, coding MCP module,
-  the in-cluster LLMKube/vLLM endpoint, and session/llm_calls bookkeeping all
-  live there. A CI job would call back into the platform and add a network
-  path plus a second set of credentials.
+  the `llm_profile` resolver + provider credentials, and session/llm_calls
+  bookkeeping all live there. A CI job would call back into the platform and
+  add a network path plus a second set of credentials.
 - Cost control is central here: one queue, `max PRs per run`, shared caps.
   Per-PR CI triggers fan out with push frequency and are much harder to cap.
 - Event-driven CI reviews on every push would re-review with every commit;

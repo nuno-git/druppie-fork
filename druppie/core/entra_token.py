@@ -244,14 +244,37 @@ async def get_entra_token(
             "needs_reauth": True,
         }
 
-    # If a specific scope is requested and we have a refresh token, exchange it
-    if scope and refresh_token:
+    # If a specific scope is requested we MUST return a token audienced for
+    # that resource. Never silently downgrade to the default (unscoped) broker
+    # token: the caller hands it to e.g. Azure SQL via SQL_COPT_SS_ACCESS_TOKEN
+    # and would get an opaque ODBC login failure instead of a clear "could not
+    # obtain a token for this resource" message.
+    if scope:
+        if not refresh_token:
+            logger.warning("entra_scope_requested_no_refresh_token")
+            return {
+                "access_token": None,
+                "error": (
+                    "Could not obtain a Microsoft token for the requested "
+                    "resource. Please sign in with Microsoft again."
+                ),
+                "needs_reauth": True,
+            }
         scoped_token = await _exchange_refresh_for_scope(refresh_token, scope)
-        if scoped_token:
-            scoped_error = _validate_entra_token_claims(scoped_token)
-            if scoped_error:
-                return {"access_token": None, "error": scoped_error, "needs_reauth": False}
-            return {"access_token": scoped_token, "error": None, "needs_reauth": False}
+        if not scoped_token:
+            logger.warning("entra_scope_exchange_failed")
+            return {
+                "access_token": None,
+                "error": (
+                    "Could not obtain a Microsoft token for the requested "
+                    "resource. Please sign in with Microsoft again."
+                ),
+                "needs_reauth": True,
+            }
+        scoped_error = _validate_entra_token_claims(scoped_token)
+        if scoped_error:
+            return {"access_token": None, "error": scoped_error, "needs_reauth": False}
+        return {"access_token": scoped_token, "error": None, "needs_reauth": False}
 
     # Check if the default access token is expired
     if _is_token_expired(access_token):

@@ -130,6 +130,15 @@ class PdfRenderService:
                         try:
                             img_bytes = base64.b64decode(raw_b64)
                             local_img = temp_dir / img_ref
+                            # img_ref is repo content and may contain '..' to
+                            # escape the build dir. Reject anything that
+                            # resolves outside temp_dir before writing.
+                            if not local_img.resolve().is_relative_to(temp_dir.resolve()):
+                                logger.warning(
+                                    "pdf_render_image_path_rejected",
+                                    img_ref=img_ref,
+                                )
+                                continue
                             local_img.parent.mkdir(parents=True, exist_ok=True)
                             local_img.write_bytes(img_bytes)
                         except (ValueError, OSError) as exc:

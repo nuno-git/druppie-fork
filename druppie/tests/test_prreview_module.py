@@ -125,6 +125,30 @@ def _load_module_under_test(monkeypatch):
     return mod
 
 
+class _AnySha(str):
+    """A live head SHA that satisfies post_pr_review's (pr, head_sha) cross-
+    check regardless of the value posted.
+
+    post_pr_review confirms the given head_sha against the PR's real current
+    head via ``get_pull`` before writing. The sticky/inline tests below are
+    about the write path, not that guard, so the default fake head matches any
+    posted SHA. The guard itself is exercised explicitly in
+    ``test_post_pr_review_rejects_forged_head_sha`` and
+    ``test_post_pr_review_fails_closed_when_pr_cannot_be_confirmed``.
+    """
+
+    def __eq__(self, other):  # noqa: D401 - matches any SHA
+        return True
+
+    def __ne__(self, other):
+        return False
+
+    def lower(self):
+        return self
+
+    __hash__ = str.__hash__
+
+
 class _FakeClient:
     """In-memory Gitea: open PRs + comments per (owner/repo, index)."""
 
@@ -134,6 +158,11 @@ class _FakeClient:
         self.created: list[tuple[int, str]] = []
         self.edited: list[tuple[int, str]] = []
         self.diff = ""
+        # live head reported by get_pull for the (pr, head_sha) cross-check.
+        # Matches any posted SHA unless a test overrides it or registers the
+        # PR in self.pulls.
+        self.head_sha = _AnySha("any")
+        self.get_pull_error: Exception | None = None
         # review-API state (inline comments)
         self.reviews: list[dict] = []
         self.created_reviews: list[dict] = []
@@ -144,6 +173,14 @@ class _FakeClient:
 
     async def list_open_pulls(self, owner, repo, limit=50):
         return self.pulls
+
+    async def get_pull(self, owner, repo, index):
+        if self.get_pull_error is not None:
+            raise self.get_pull_error
+        for p in self.pulls:
+            if p.get("number") == index:
+                return p
+        return {"number": index, "head": {"sha": self.head_sha}}
 
     async def get_pull_diff(self, owner, repo, index):
         return self.diff
@@ -399,6 +436,29 @@ def test_post_pr_review_validates_verdict_and_sha_and_body(mod, module):
     assert empty_body["success"] is False and "body" in empty_body["error"]
 
 
+def test_post_pr_review_rejects_forged_head_sha(mod, module):
+    # A jailbroken reviewer LLM could try to forge a head_sha to poison dedup
+    # (make a PR silently skip future reviews). The live head is authoritative:
+    # if the posted SHA doesn't match the PR's real head, fail closed and write
+    # nothing.
+    module._client.pulls = [_pull(1, "aaa1111")]
+    result = asyncio.run(module.post_pr_review(_REPO, 1, "dead1234", "APPROVE", "x"))
+    assert result["success"] is False
+    assert "does not match" in result["error"]
+    assert module._client.created == []
+    assert module._client.created_reviews == []
+
+
+def test_post_pr_review_fails_closed_when_pr_cannot_be_confirmed(mod, module):
+    # If Gitea can't confirm the PR (network/404), we cannot trust the
+    # (pr, head_sha) pair the LLM handed us — write nothing.
+    module._client.get_pull_error = RuntimeError("boom")
+    result = asyncio.run(module.post_pr_review(_REPO, 1, "aaa1111", "APPROVE", "x"))
+    assert result["success"] is False
+    assert "could not verify" in result["error"]
+    assert module._client.created == []
+
+
 # ---------------------------------------------------------------------------
 # Connection robustness — retry/backoff, total-failure signal, safe env ints
 # ---------------------------------------------------------------------------
@@ -561,6 +621,38 @@ def test_partial_failure_still_succeeds(mod, monkeypatch):
     assert result["success"] is True  # one repo listed fine
     assert [p["number"] for p in result["prs"]] == [1]
     assert any("ai/other" in e for e in result["errors"])
+
+
+def test_repo_error_message_carries_exception_type_when_str_is_blank(mod, monkeypatch):
+    # Transport failures like ConnectTimeout can stringify to "", which would
+    # otherwise surface as a bare "<repo>: " and read like "no PRs found".
+    # The type name must always be present so the outage is legible, and a
+    # failing repo must never abort the healthy ones.
+    monkeypatch.setenv("PRREVIEW_REPOS", "ai/druppie,ai/other")
+    m = mod.PrReviewModule()
+
+    class _BlankError(Exception):
+        def __str__(self):
+            return ""
+
+    class _Mixed:
+        async def get_authenticated_user(self):
+            return {"login": _BOT}
+
+        async def list_open_pulls(self, owner, repo, limit=50):
+            if repo == "other":
+                raise _BlankError()
+            return [_pull(1, "aaa1111")]
+
+        async def list_issue_comments(self, *a, **k):
+            return []
+
+    m._client = _Mixed()
+    result = asyncio.run(m.list_prs_needing_review())
+    assert result["success"] is True  # healthy repo still processed
+    assert [p["number"] for p in result["prs"]] == [1]
+    blank_err = next(e for e in result["errors"] if "ai/other" in e)
+    assert "_BlankError" in blank_err  # type name survives the empty str()
 
 
 def test_env_int_falls_back_on_garbage_or_blank(mod, monkeypatch):

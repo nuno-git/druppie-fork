@@ -105,6 +105,10 @@ export const initKeycloak = async () => {
   if (hasStoredSession) {
     initOptions.token = savedTokens.token
     initOptions.refreshToken = savedTokens.refreshToken
+    // Re-adopt the stored idToken too, so keycloakInstance.idToken is
+    // populated immediately after a reload — logout() needs it as the
+    // id_token_hint for a clean (non-interactive) single logout.
+    if (savedTokens.idToken) initOptions.idToken = savedTokens.idToken
   } else {
     initOptions.onLoad = 'check-sso'
     initOptions.silentCheckSsoFallback = true
@@ -183,7 +187,7 @@ export const ensureValidToken = async (minValidity = 30) => {
   try {
     const refreshed = await keycloakInstance.updateToken(minValidity)
     if (refreshed) {
-      saveTokens(keycloakInstance.token, keycloakInstance.refreshToken)
+      saveTokens(keycloakInstance.token, keycloakInstance.refreshToken, keycloakInstance.idToken)
     }
     return true
   } catch (error) {

@@ -66,10 +66,18 @@ class ToolCallStatus:
 
 
 class EntraTokenMissing(Exception):
-    """Tool requires user.entra_token but it resolved to None."""
-    def __init__(self, user_id: str | None):
+    """Tool requires user.entra_token but it resolved to None.
+
+    Carries ``injected_args``: the fully-injected argument dict with every
+    other injection rule applied and the entra_token param stripped. Callers
+    that fall through (unlinked user, non-OBO source) must use this instead of
+    the pre-injection args, otherwise sibling injected params (session_id,
+    project_id, ...) are lost.
+    """
+    def __init__(self, user_id: str | None, injected_args: dict | None = None):
         super().__init__(f"user.entra_token is None for user_id={user_id}")
         self.user_id = user_id
+        self.injected_args = injected_args if injected_args is not None else {}
 
 
 # Builtin tool names (no MCP server needed)
@@ -272,6 +280,12 @@ class ToolExecutor:
 
         # Apply each rule
         injected_args = dict(args)
+        # Deferred signal: a non-optional user.entra_token that resolved to
+        # None. We record it but keep processing the remaining rules so the
+        # other params (session_id, project_id, ...) still get injected, then
+        # raise once at the end carrying the fully-injected dict.
+        entra_missing_user_id: str | None = None
+        entra_missing = False
         for rule in rules:
             # For hidden params: always override (LLM shouldn't provide these)
             # For non-hidden params: skip if LLM already provided a value
@@ -326,9 +340,15 @@ class ToolExecutor:
                         from_path=rule.from_path,
                     )
                 elif rule.from_path == "user.entra_token":
-                    # Non-optional entra_token missing → signal the caller to pause
-                    user_id = str(context.session.user_id) if context.session else None
-                    raise EntraTokenMissing(user_id=user_id)
+                    # Non-optional entra_token missing → signal the caller to
+                    # pause. Strip any LLM-guessed value and DEFER the raise so
+                    # the remaining rules still inject their params.
+                    if rule.param in injected_args:
+                        del injected_args[rule.param]
+                    entra_missing = True
+                    entra_missing_user_id = (
+                        str(context.session.user_id) if context.session else None
+                    )
                 else:
                     logger.warning(
                         "injection_value_is_none",
@@ -344,6 +364,15 @@ class ToolExecutor:
             tool=tool_name,
             final_args=list(injected_args.keys()),
         )
+
+        if entra_missing:
+            # All other params are injected; entra_token is stripped. Hand the
+            # fully-injected dict to the caller so an unlinked-user fallthrough
+            # runs the tool with the correct args.
+            raise EntraTokenMissing(
+                user_id=entra_missing_user_id,
+                injected_args=injected_args,
+            )
 
         return injected_args
 
@@ -1524,6 +1553,10 @@ class ToolExecutor:
             # User has no Entra identity — proceed without token so
             # non-OBO sources (datalake with key/public auth) still work.
             # OBO sources will fail at the adapter level with a clear error.
+            # Use the fully-injected args from the exception (every other
+            # param already injected, entra_token stripped) — NOT the stale
+            # pre-injection dict, which would drop session_id/project_id/etc.
+            args = e.injected_args
             args.pop("user_token", None)
 
         logger.info(

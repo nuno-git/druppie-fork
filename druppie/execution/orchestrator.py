@@ -940,11 +940,52 @@ class Orchestrator:
         db = self.execution_repo.db
         agent = Agent(agent_id, db=db, session_id=str(session_id))
 
-        result = await agent.continue_run(
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            context=context,
-        )
+        try:
+            result = await agent.continue_run(
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                context=context,
+            )
+        except asyncio.CancelledError:
+            self.execution_repo.db.rollback()
+            self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_USER)
+            self.execution_repo.commit()
+            logger.info(
+                "agent_resume_cancelled",
+                session_id=str(session_id),
+                agent_run_id=str(agent_run_id),
+                agent_id=agent_id,
+            )
+            raise
+        except Exception as e:
+            # Mark the run FAILED so it reaches a terminal state instead of
+            # being stuck in RUNNING (which also keeps counting toward the
+            # KEDA status='running' scaler). Rollback first in case the failure
+            # left the DB transaction in an ABORTED state.
+            error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
+            try:
+                self.execution_repo.db.rollback()
+                self.execution_repo.update_status(
+                    agent_run_id,
+                    AgentRunStatus.FAILED,
+                    error_message=error_msg,
+                )
+                self.execution_repo.commit()
+            except Exception as status_err:
+                logger.error(
+                    "failed_to_record_agent_run_error",
+                    session_id=str(session_id),
+                    agent_run_id=str(agent_run_id),
+                    status_error=str(status_err),
+                )
+            logger.error(
+                "agent_resume_failed",
+                session_id=str(session_id),
+                agent_run_id=str(agent_run_id),
+                agent_id=agent_id,
+                error=error_msg,
+            )
+            raise
 
         status = self._handle_agent_resume_result(
             session_id, agent_run_id, result, agent_id=agent_id,

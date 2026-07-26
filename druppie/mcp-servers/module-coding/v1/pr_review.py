@@ -348,6 +348,10 @@ class GiteaPRClient:
             f"repos/{owner}/{repo}/pulls", {"state": "open"}
         )
 
+    async def get_pull(self, owner: str, repo: str, index: int) -> dict:
+        """Fetch a single pull request (GET /repos/{owner}/{repo}/pulls/{index})."""
+        return await self._get(f"repos/{owner}/{repo}/pulls/{index}")
+
     async def get_pull_diff(self, owner: str, repo: str, index: int) -> str:
         """Fetch the unified diff of a pull request (base...head)."""
         return await self._get(f"repos/{owner}/{repo}/pulls/{index}.diff", raw=True)
@@ -706,6 +710,45 @@ class PrReviewModule:
                 }
             if not (body or "").strip():
                 return {"success": False, "error": "body must be non-empty"}
+
+            # Cross-validate (pr_number, head_sha) against the live PR before
+            # writing anything. The diff/title/body handed to the reviewing LLM
+            # are attacker-controlled, so an injected instruction could try to
+            # steer post_pr_review at a DIFFERENT PR or forge a marker SHA to
+            # poison dedup (making a PR silently skip future reviews). The repo
+            # allowlist alone doesn't stop that. This module is stateless (built
+            # per call), so the authoritative check is Gitea itself: the PR must
+            # exist in the allowlisted repo and head_sha must equal its real,
+            # current head. A jailbroken LLM cannot satisfy this for a forged
+            # PR/SHA. Fail closed if the PR can't be confirmed.
+            try:
+                pull = await self._client.get_pull(owner, name, pr_number)
+            except Exception as exc:
+                logger.warning(
+                    "post_pr_review: could not verify %s#%s: %s", repo, pr_number, exc
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        f"could not verify PR {repo}#{pr_number} against Gitea "
+                        f"before posting: {exc}"
+                    ),
+                }
+            actual_head_sha = (pull.get("head") or {}).get("sha") or ""
+            if actual_head_sha.lower() != head_sha.lower():
+                logger.warning(
+                    "post_pr_review: head_sha mismatch for %s#%s (given=%s actual=%s)",
+                    repo, pr_number, head_sha, actual_head_sha,
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        f"head_sha '{head_sha}' does not match the current head "
+                        f"'{actual_head_sha}' of {repo}#{pr_number}. Only review the "
+                        "exact repo/number/head_sha returned by "
+                        "list_prs_needing_review for the PR you are reviewing."
+                    ),
+                }
 
             # Clear the bot's prior inline review unconditionally — even a
             # summary-only APPROVE with no findings must wipe an earlier
