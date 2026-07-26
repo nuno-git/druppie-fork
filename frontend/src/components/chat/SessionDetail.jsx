@@ -400,7 +400,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
                 type="button"
                 onClick={() => {
                   if (window.confirm(`Download "${att.original_filename}"?`)) {
-                    window.open(getAttachmentUrl(att.id), '_blank')
+                    downloadAttachment(att.id)
                   }
                 }}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50 transition-colors"
@@ -923,7 +923,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        window.open(getAttachmentUrl(att.id), '_blank')
+                        downloadAttachment(att.id)
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
