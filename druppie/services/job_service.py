@@ -145,6 +145,12 @@ class JobService:
                             job_id=job_id,
                             error=error,
                         )
+                    # The YAML file is present but invalid (e.g. an impossible
+                    # or env-overridden bad cron). Mark it seen so the orphan
+                    # sweep below does NOT treat it as deleted-from-disk and
+                    # CASCADE-delete the existing definition + all its run
+                    # history. We skip the update, keeping the last-good row.
+                    seen_job_ids.add(job_id)
                     continue
                 seen_job_ids.add(job_id)
                 updated = self.job_repo.update_definition_from_yaml(job_id, data, filepath)

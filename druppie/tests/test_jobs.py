@@ -430,6 +430,36 @@ class TestJobServiceYamlLoading:
 
         assert result.total == 0
 
+    def test_reload_with_invalid_yaml_keeps_existing_definition(self, job_service: JobService, tmp_path):
+        # An existing definition whose on-disk YAML later becomes invalid (e.g.
+        # an operator sets a bad JOB_<ID>_SCHEDULE env override, or fat-fingers
+        # the cron) must NOT be treated as deleted-from-disk and orphan-purged,
+        # which would CASCADE-delete the definition and all its run history.
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        job_file = defs_dir / "keeper.yaml"
+        job_file.write_text(
+            "id: keeper\nname: Keeper\nschedule: '0 0 * * *'\n"
+            "agent_id: summarizer\nprompt: Keep\nenabled: true\n"
+        )
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            first = job_service.load_definitions_from_yaml(str(defs_dir))
+        assert first.total == 1
+
+        # Same file, now an impossible cron — validation fails on reload.
+        job_file.write_text(
+            "id: keeper\nname: Keeper\nschedule: '0 0 31 2 *'\n"
+            "agent_id: summarizer\nprompt: Keep\nenabled: true\n"
+        )
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            second = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        # The definition survives (last-good schedule retained), not deleted.
+        assert second.total == 1
+        assert second.items[0].job_id == "keeper"
+        assert second.items[0].schedule == "0 0 * * *"
+
     def test_load_definitions_from_yaml_skips_invalid_agent(self, job_service: JobService, tmp_path):
         defs_dir = tmp_path / "defs"
         defs_dir.mkdir()
