@@ -82,7 +82,7 @@ APP_BASE_BRANCH = os.getenv("BRANCH_ENV_APP_BASE_BRANCH", "colab-dev")
 BRANCH_ENV_REGISTRY = os.getenv("BRANCH_ENV_REGISTRY", "harbor.rijnland.dev/druppie")
 BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
 # Ephemeral StorageClass: 1 replica, strict-local, reclaimPolicy=Delete.
-BRANCH_ENV_STORAGE_CLASS = os.getenv("BRANCH_ENV_STORAGE_CLASS", "longhorn-branch-env")
+BRANCH_ENV_STORAGE_CLASS = os.getenv("BRANCH_ENV_STORAGE_CLASS", "longhorn-local")
 
 # Secrets source for branch envs: determines the Vault path prefix for env
 # secrets. "colab-dev" → druppie/colab-dev/*, any other value maps to
@@ -321,16 +321,15 @@ def build_helmrelease_yaml(
             # layout_service is excluded — it's not an MCP module.
             "embedModules": [m for m in ALL_MODULES if m != "layout_service"],
         },
-# Per-instance sandbox: each branch env gets its own sandbox namespace,
+        # Per-instance sandbox: each branch env gets its own sandbox namespace,
         # SandboxTemplate, WarmPool, and RBAC — no shared infrastructure.
+        # (2 warm replicas instead of the chart-default 5: branch envs are
+        # single-developer, and 5 warm gVisor pods per env would crowd the
+        # shared node.)
         "agentSandbox": {
             "enabled": True,
             "warmPool": {"replicas": 2},
         },
-        # Agent sandbox (gVisor) — branch envs share the cluster-wide
-        # SandboxTemplate + WarmPool in sandbox-runtime; we only need the
-        # per-instance RBAC so the workspace pod can create SandboxClaims.
-        "agentSandbox": {"enabled": True},
     }
     if recovery_mode:
         values["recoveryMode"] = True

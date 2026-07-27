@@ -56,6 +56,9 @@ from .evaluation import (
 # Documentation models
 from .documentation import DocumentationEntry
 
+# Document formatter models
+from .document_formatter import DocumentMetadata
+
 # Common models
 from .common import (
     AgentRunStatus,
@@ -101,7 +104,15 @@ from .session import (
     TimelineEntryType,
 )
 
-from .job import JobDefinitionDetail, JobDefinitionList, JobDefinitionSummary, JobRunDetail, JobRunList, JobRunSummary
+from .job import (
+    JobDefinitionDetail,
+    JobDefinitionList,
+    JobDefinitionSummary,
+    JobRunDetail,
+    JobRunList,
+    JobRunSummary,
+    JobRunUsage,
+)
 
 # Model override models
 from .model_override import (
@@ -181,6 +192,8 @@ __all__ = [
     "UserInfo",
     # Documentation
     "DocumentationEntry",
+    # Document formatter
+    "DocumentMetadata",
     # Agent definition
     "AgentDefinition",
     "ApprovalOverride",
@@ -207,6 +220,7 @@ __all__ = [
     "JobRunSummary",
     "JobRunDetail",
     "JobRunList",
+    "JobRunUsage",
     # Model override
     "ModelOverrideSummary",
     "ModelOverrideDetail",

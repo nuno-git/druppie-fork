@@ -318,6 +318,65 @@ class TestJobServiceYamlLoading:
         assert result.total == 1
         assert result.items[0].name == "New Name"
 
+    def test_set_enabled_pauses_and_resumes(self, job_service: JobService):
+        definition = job_service.job_repo.create_definition(
+            job_id="toggle", name="Toggle", description=None,
+            schedule="0 0 * * *", agent_id="summarizer", prompt="Hi",
+            approval_required=False, required_role=None, enabled=True,
+            yaml_path=None,
+        )
+        job_service.job_repo.commit()
+
+        paused = job_service.set_enabled(definition.id, False)
+        assert paused.enabled is False
+
+        resumed = job_service.set_enabled(definition.id, True)
+        assert resumed.enabled is True
+
+    def test_set_enabled_unknown_definition_raises(self, job_service: JobService):
+        from druppie.api.errors import NotFoundError
+
+        with pytest.raises(NotFoundError):
+            job_service.set_enabled(uuid.uuid4(), False)
+
+    def test_pause_survives_yaml_resync(self, job_service: JobService, tmp_path):
+        """A user pause must not be clobbered when YAML re-syncs on startup."""
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "p.yaml").write_text(
+            "id: p\nname: P\nschedule: '0 0 * * *'\n"
+            "agent_id: summarizer\nprompt: Do\nenabled: true\n"
+        )
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            created = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        # User pauses the schedule.
+        job_service.set_enabled(created.items[0].id, False)
+
+        # A redeploy re-runs the YAML sync; the file still says enabled: true.
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is False  # pause preserved
+
+    def test_env_override_still_wins_over_pause(self, job_service: JobService, tmp_path):
+        """The ops kill-switch JOB_<ID>_ENABLED stays authoritative."""
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "e.yaml").write_text(
+            "id: e\nname: E\nschedule: '0 0 * * *'\n"
+            "agent_id: summarizer\nprompt: Do\nenabled: true\n"
+        )
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            created = job_service.load_definitions_from_yaml(str(defs_dir))
+        job_service.set_enabled(created.items[0].id, False)
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)), \
+                patch.dict(os.environ, {"JOB_E_ENABLED": "true"}):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is True  # env override re-enables
+
     def test_load_definitions_removes_orphans(self, job_service: JobService, tmp_path):
         defs_dir = tmp_path / "defs"
         defs_dir.mkdir()
@@ -354,6 +413,52 @@ class TestJobServiceYamlLoading:
             result = job_service.load_definitions_from_yaml(str(defs_dir))
 
         assert result.total == 0
+
+    def test_load_definitions_from_yaml_skips_impossible_cron(self, job_service: JobService, tmp_path):
+        # "0 0 31 2 *" = Feb 31: syntactically valid but an impossible date.
+        # croniter constructs it fine, so it must be rejected via get_next(),
+        # otherwise the scheduler raises CroniterBadDateError on every tick.
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "impossible_cron.yaml").write_text(
+            "id: impossible_cron\nname: Impossible Cron\nschedule: '0 0 31 2 *'\n"
+            "agent_id: summarizer\nprompt: Do it\nenabled: true\n"
+        )
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 0
+
+    def test_reload_with_invalid_yaml_keeps_existing_definition(self, job_service: JobService, tmp_path):
+        # An existing definition whose on-disk YAML later becomes invalid (e.g.
+        # an operator sets a bad JOB_<ID>_SCHEDULE env override, or fat-fingers
+        # the cron) must NOT be treated as deleted-from-disk and orphan-purged,
+        # which would CASCADE-delete the definition and all its run history.
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        job_file = defs_dir / "keeper.yaml"
+        job_file.write_text(
+            "id: keeper\nname: Keeper\nschedule: '0 0 * * *'\n"
+            "agent_id: summarizer\nprompt: Keep\nenabled: true\n"
+        )
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            first = job_service.load_definitions_from_yaml(str(defs_dir))
+        assert first.total == 1
+
+        # Same file, now an impossible cron — validation fails on reload.
+        job_file.write_text(
+            "id: keeper\nname: Keeper\nschedule: '0 0 31 2 *'\n"
+            "agent_id: summarizer\nprompt: Keep\nenabled: true\n"
+        )
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            second = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        # The definition survives (last-good schedule retained), not deleted.
+        assert second.total == 1
+        assert second.items[0].job_id == "keeper"
+        assert second.items[0].schedule == "0 0 * * *"
 
     def test_load_definitions_from_yaml_skips_invalid_agent(self, job_service: JobService, tmp_path):
         defs_dir = tmp_path / "defs"
@@ -461,6 +566,73 @@ class TestJobSchedulerShouldRun:
 
 
 # ---------------------------------------------------------------------------
+# JobScheduler — _check_jobs overlap guard
+# ---------------------------------------------------------------------------
+
+
+class TestJobSchedulerOverlapGuard:
+    """A scheduled run must not stack on top of one that is still active."""
+
+    def _scheduler_with(self, job_service):
+        from druppie.services.job_service import JobScheduler
+
+        return JobScheduler(lambda _db: job_service)
+
+    def test_skips_trigger_when_run_already_active(self):
+        definition = MagicMock()
+        definition.id = uuid.uuid4()
+        definition.job_id = "pr_review_job"
+        definition.enabled = True
+
+        job_service = MagicMock()
+        job_service.list_definitions.return_value.items = [definition]
+        job_service.job_repo.has_active_runs_for_definition.return_value = True
+
+        scheduler = self._scheduler_with(job_service)
+        due = (True, datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc))
+        with patch("druppie.db.database.SessionLocal"), \
+                patch.object(scheduler, "_should_run", return_value=due):
+            pending = scheduler._check_jobs()
+
+        assert pending == []
+        job_service.job_repo.has_active_runs_for_definition.assert_called_once_with(
+            definition.id
+        )
+        # The slot is neither claimed nor triggered while a run is active.
+        job_service.job_repo.claim_job_trigger.assert_not_called()
+        job_service.trigger_job.assert_not_called()
+
+    def test_triggers_when_no_active_run(self):
+        from druppie.domain.common import JobRunStatus
+
+        definition = MagicMock()
+        definition.id = uuid.uuid4()
+        definition.job_id = "pr_review_job"
+        definition.enabled = True
+
+        run = MagicMock()
+        run.id = uuid.uuid4()
+        run.session_id = uuid.uuid4()
+        run.status = JobRunStatus.PENDING.value
+
+        job_service = MagicMock()
+        job_service.list_definitions.return_value.items = [definition]
+        job_service.job_repo.has_active_runs_for_definition.return_value = False
+        job_service.job_repo.claim_job_trigger.return_value = True
+        job_service.trigger_job.return_value = run
+
+        scheduler = self._scheduler_with(job_service)
+        due = (True, datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc))
+        with patch("druppie.db.database.SessionLocal"), \
+                patch.object(scheduler, "_should_run", return_value=due):
+            pending = scheduler._check_jobs()
+
+        assert pending == [(run.id, run.session_id)]
+        job_service.job_repo.claim_job_trigger.assert_called_once()
+        job_service.trigger_job.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # Domain models
 # ---------------------------------------------------------------------------
 
@@ -551,3 +723,170 @@ class TestJobModelToDict:
         assert d["trigger_type"] == "manual"
         assert d["status"] == "completed"
         assert "id" in d
+
+
+# ---------------------------------------------------------------------------
+# JobService — per-environment env overrides (JOB_<ID>_ENABLED / _SCHEDULE)
+# ---------------------------------------------------------------------------
+
+
+def _write_job_yaml(defs_dir, job_id: str = "ovr_job", enabled: str = "false"):
+    (defs_dir / f"{job_id}.yaml").write_text(
+        f"id: {job_id}\nname: Override Job\nschedule: '*/20 * * * *'\n"
+        f"agent_id: summarizer\nprompt: Do it\nenabled: {enabled}\n"
+    )
+
+
+class TestJobEnvOverrides:
+    def test_enabled_override_turns_job_on(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, enabled="false")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "true")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 1
+        assert result.items[0].enabled is True
+
+    def test_enabled_override_turns_job_off(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, enabled="true")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "false")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is False
+
+    def test_enabled_override_applies_on_resync(self, job_service: JobService, tmp_path, monkeypatch):
+        """The override must survive a YAML re-sync (which resets DB state)."""
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, enabled="false")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "true")
+
+        job_service.load_definitions_from_yaml(str(defs_dir))
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is True
+
+    def test_invalid_enabled_value_keeps_yaml(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, enabled="false")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "banana")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is False
+
+    def test_schedule_override(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir)
+        monkeypatch.setenv("JOB_OVR_JOB_SCHEDULE", "0 6 * * *")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].schedule == "0 6 * * *"
+
+    def test_invalid_schedule_override_skips_job(self, job_service: JobService, tmp_path, monkeypatch):
+        """An overridden schedule is validated like a YAML one."""
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir)
+        monkeypatch.setenv("JOB_OVR_JOB_SCHEDULE", "not a cron")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 0
+
+    def test_override_ignores_other_jobs(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, job_id="ovr_job", enabled="false")
+        _write_job_yaml(defs_dir, job_id="other_job", enabled="false")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "true")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        by_id = {d.job_id: d for d in result.items}
+        assert by_id["ovr_job"].enabled is True
+        assert by_id["other_job"].enabled is False
+
+
+# ---------------------------------------------------------------------------
+# JobRepository — usage aggregation (cost per run)
+# ---------------------------------------------------------------------------
+
+
+def _add_llm_call(db, session_id, **kwargs):
+    from druppie.db.models.llm_call import LlmCall
+
+    call = LlmCall(
+        session_id=session_id,
+        provider=kwargs.get("provider", "llmkube"),
+        model=kwargs.get("model", "Qwen/Qwen3.6-27B"),
+        prompt_tokens=kwargs.get("prompt_tokens", 100),
+        completion_tokens=kwargs.get("completion_tokens", 10),
+        total_tokens=kwargs.get("total_tokens", 110),
+        duration_ms=kwargs.get("duration_ms", 500),
+        fallback_used=kwargs.get("fallback_used", False),
+    )
+    db.add(call)
+    return call
+
+
+class TestJobRunUsage:
+    def test_no_session_returns_none(self, job_repo: JobRepository):
+        assert job_repo.get_job_run_usage(None) is None
+
+    def test_no_llm_calls_returns_none(self, job_repo: JobRepository):
+        assert job_repo.get_job_run_usage(uuid.uuid4()) is None
+
+    def test_aggregates_calls_of_the_session_only(
+        self, job_repo: JobRepository, db_session: DbSession
+    ):
+        session_id = uuid.uuid4()
+        _add_llm_call(db_session, session_id, prompt_tokens=100, completion_tokens=10, total_tokens=110)
+        _add_llm_call(
+            db_session, session_id,
+            provider="zai", model="glm-4.7",
+            prompt_tokens=200, completion_tokens=20, total_tokens=220,
+            duration_ms=700, fallback_used=True,
+        )
+        _add_llm_call(db_session, uuid.uuid4(), prompt_tokens=999)  # other session
+        db_session.commit()
+
+        usage = job_repo.get_job_run_usage(session_id)
+
+        assert usage is not None
+        assert usage.llm_calls == 2
+        assert usage.prompt_tokens == 300
+        assert usage.completion_tokens == 30
+        assert usage.total_tokens == 330
+        assert usage.duration_ms == 1200
+        assert usage.fallback_calls == 1
+        assert sorted(usage.models) == ["llmkube/Qwen/Qwen3.6-27B", "zai/glm-4.7"]
+
+    def test_job_run_detail_includes_usage(
+        self, job_repo: JobRepository, db_session: DbSession
+    ):
+        definition = _make_definition(job_repo)
+        job_repo.commit()
+        session_id = uuid.uuid4()
+        run = job_repo.create_job_run(
+            job_definition_id=definition.id,
+            session_id=session_id,
+            trigger_type="scheduled",
+            status="completed",
+        )
+        _add_llm_call(db_session, session_id)
+        db_session.commit()
+
+        detail = job_repo.to_job_run_detail(run)
+
+        assert detail.usage is not None
+        assert detail.usage.llm_calls == 1
+        assert detail.usage.total_tokens == 110

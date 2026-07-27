@@ -2,25 +2,61 @@
 
 import asyncio
 import os
+import re
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Any, Callable
 from uuid import UUID
 
 import structlog
 import yaml
+from croniter import CroniterBadDateError, croniter
 
-from croniter import croniter
-from sqlalchemy.orm import Session
-
-from ..repositories import JobRepository, SessionRepository, ExecutionRepository
-from ..domain.job import JobDefinitionList, JobDefinitionDetail, JobRunList, JobRunDetail
-from ..db.models.job import JobDefinition
-from ..domain.common import AgentRunStatus, SessionStatus, JobRunStatus
-from ..core.background_tasks import create_tracked_task, run_session_task
+from ..core.background_tasks import create_session_task, run_session_task
+from ..domain.common import AgentRunStatus, JobRunStatus, SessionStatus
+from ..domain.job import JobDefinitionDetail, JobDefinitionList, JobRunDetail, JobRunList
+from ..repositories import ExecutionRepository, JobRepository, SessionRepository
 
 logger = structlog.get_logger()
 
 DEFAULT_JOBS_DIR = os.path.join(os.path.dirname(__file__), "..", "jobs", "definitions")
+
+_TRUTHY = {"1", "true", "yes", "on"}
+_FALSY = {"0", "false", "no", "off"}
+
+
+def _apply_job_env_overrides(data: dict) -> dict:
+    """Apply per-deployment env overrides to a YAML job definition.
+
+    JOB_<ID>_ENABLED and JOB_<ID>_SCHEDULE (id uppercased, e.g.
+    JOB_PR_REVIEW_JOB_ENABLED) override the YAML values, so the same image
+    can run a job enabled in one environment and disabled in another —
+    the YAML stays the single default, the HelmRelease decides per env.
+    """
+    prefix = f"JOB_{re.sub(r'[^A-Z0-9]', '_', str(data['id']).upper())}_"
+
+    enabled_raw = os.getenv(f"{prefix}ENABLED", "").strip().lower()
+    if enabled_raw in _TRUTHY | _FALSY:
+        data["enabled"] = enabled_raw in _TRUTHY
+        # Mark this as an ops kill-switch so it stays authoritative on every
+        # YAML re-sync. Without this marker a file's `enabled` only seeds a new
+        # definition and never overwrites a user pause/resume (see
+        # JobRepository.update_definition_from_yaml).
+        data["_enabled_from_env"] = True
+        logger.info("job_enabled_env_override", job_id=data["id"], enabled=data["enabled"])
+    elif enabled_raw:
+        logger.warning(
+            "job_enabled_env_override_invalid",
+            job_id=data["id"],
+            value=enabled_raw,
+            hint="expected true/false; keeping YAML value",
+        )
+
+    schedule = os.getenv(f"{prefix}SCHEDULE", "").strip()
+    if schedule:
+        data["schedule"] = schedule
+        logger.info("job_schedule_env_override", job_id=data["id"], schedule=schedule)
+
+    return data
 
 
 class JobService:
@@ -47,8 +83,12 @@ class JobService:
             errors.append("schedule is required")
         else:
             try:
-                croniter(str(schedule))
-            except ValueError:
+                # Construction validates syntax; get_next() additionally rejects
+                # syntactically-valid-but-impossible dates (e.g. "0 0 31 2 *" =
+                # Feb 31), which otherwise pass here and then make the scheduler
+                # raise CroniterBadDateError on every tick.
+                croniter(str(schedule)).get_next()
+            except (ValueError, CroniterBadDateError):
                 errors.append(f"invalid cron schedule: '{schedule}'")
 
         agent_id = data.get("agent_id")
@@ -57,11 +97,13 @@ class JobService:
         else:
             from ..agents.definition_loader import AgentDefinitionLoader
 
-            definitions_path = AgentDefinitionLoader._get_definitions_path()
-            agent_file = os.path.join(definitions_path, f"{agent_id}.yaml")
-            if not os.path.exists(agent_file):
+            # Agents live in subdirectories (general/, coding/core/, ...), so
+            # search recursively — a flat path check would reject valid agents.
+            agent_file = AgentDefinitionLoader._find_agent_yaml(str(agent_id))
+            if not agent_file:
+                definitions_path = AgentDefinitionLoader._get_definitions_path()
                 errors.append(
-                    f"agent_id '{agent_id}' not found (looked in {agent_file})"
+                    f"agent_id '{agent_id}' not found (searched {definitions_path})"
                 )
 
         prompt = data.get("prompt")
@@ -91,6 +133,9 @@ class JobService:
                 if not job_id:
                     logger.warning("job_yaml_missing_id", file=filename)
                     continue
+                # Env overrides before validation, so an overridden cron
+                # schedule is validated like a YAML one.
+                data = _apply_job_env_overrides(data)
                 validation_errors = self._validate_job_data(data, filepath)
                 if validation_errors:
                     for error in validation_errors:
@@ -100,12 +145,16 @@ class JobService:
                             job_id=job_id,
                             error=error,
                         )
+                    # The YAML file is present but invalid (e.g. an impossible
+                    # or env-overridden bad cron). Mark it seen so the orphan
+                    # sweep below does NOT treat it as deleted-from-disk and
+                    # CASCADE-delete the existing definition + all its run
+                    # history. We skip the update, keeping the last-good row.
+                    seen_job_ids.add(job_id)
                     continue
                 seen_job_ids.add(job_id)
-                existing = self.job_repo.get_definition_by_job_id(job_id)
-                if existing:
-                    self._update_definition_from_yaml(existing, data, filepath)
-                else:
+                updated = self.job_repo.update_definition_from_yaml(job_id, data, filepath)
+                if not updated:
                     self.job_repo.create_definition(
                         job_id=job_id,
                         name=data.get("name", job_id),
@@ -138,19 +187,6 @@ class JobService:
 
         return self.list_definitions()
 
-    def _update_definition_from_yaml(
-        self, definition: JobDefinition, data: dict, filepath: str
-    ) -> None:
-        definition.name = data.get("name", definition.name)
-        definition.description = data.get("description", definition.description)
-        definition.schedule = data.get("schedule", definition.schedule)
-        definition.agent_id = data.get("agent_id", definition.agent_id)
-        definition.prompt = data.get("prompt", definition.prompt)
-        definition.approval_required = data.get("approval_required", definition.approval_required)
-        definition.required_role = data.get("required_role", definition.required_role)
-        definition.enabled = data.get("enabled", True) if data.get("enabled") is not None else definition.enabled
-        definition.yaml_path = filepath
-
     def list_definitions(self) -> JobDefinitionList:
         return self.job_repo.list_definitions()
 
@@ -158,6 +194,27 @@ class JobService:
         definition = self.job_repo.get_definition_by_id(definition_id)
         if not definition:
             return None
+        return self.job_repo.to_definition_detail(definition)
+
+    def set_enabled(self, definition_id: UUID, enabled: bool) -> JobDefinitionDetail:
+        """Pause (enabled=False) or resume (enabled=True) a schedule.
+
+        The scheduler skips definitions with enabled=False, so this is the
+        pause/resume for the cron trigger. Manual "Run Now" still works while
+        paused. Persists in the DB and survives redeploys (YAML re-sync no
+        longer overwrites a user-set value).
+        """
+        from ..api.errors import NotFoundError
+
+        definition = self.job_repo.set_definition_enabled(definition_id, enabled)
+        if not definition:
+            raise NotFoundError("job_definition", str(definition_id))
+        self.job_repo.commit()
+        logger.info(
+            "job_definition_enabled_changed",
+            job_definition_id=str(definition_id),
+            enabled=enabled,
+        )
         return self.job_repo.to_definition_detail(definition)
 
     def get_job_run(self, run_id: UUID) -> JobRunDetail | None:
@@ -185,10 +242,7 @@ class JobService:
 
     def _get_system_user_id(self) -> UUID | None:
         """Lookup the 'admin' user to own sessions created by scheduled jobs."""
-        from ..db.models.user import User as UserModel
-
-        admin = self.job_repo.db.query(UserModel).filter_by(username="admin").first()
-        return admin.id if admin else None
+        return self.job_repo.get_system_user_id()
 
     def trigger_job(self, definition_id: UUID, user_id: UUID | None = None, trigger_type: str = "manual") -> JobRunDetail:
         """Create a new job run, session, and agent run for a job definition.
@@ -246,7 +300,7 @@ class JobService:
 
         self.job_repo.set_job_run_session(run.id, session.id, agent_run.id)
         self.job_repo.commit()
-        self.job_repo.db.refresh(run)
+        run = self.job_repo.get_job_run_by_id(run.id)
 
         if definition.approval_required:
             self.job_repo.set_job_run_approval_required(run.id, definition.required_role or "admin")
@@ -281,7 +335,7 @@ class JobService:
         user_id: UUID,
         user_roles: list[str],
     ) -> JobRunDetail:
-        from ..api.errors import NotFoundError, AuthorizationError, ConflictError
+        from ..api.errors import AuthorizationError, ConflictError, NotFoundError
 
         run = self.job_repo.get_job_run_by_id(job_run_id)
         if not run:
@@ -297,11 +351,7 @@ class JobService:
                 required_roles=[required_role],
             )
 
-        from datetime import datetime, timezone
-        from ..db.models.base import utcnow
-        self.job_repo.db.query(JobRun).filter(JobRun.id == job_run_id).update(
-            {"approved_by": user_id, "approved_at": utcnow()}
-        )
+        self.job_repo.set_job_run_approved(job_run_id, user_id)
 
         if run.session_id:
             self.session_repo.update_status(run.session_id, SessionStatus.ACTIVE)
@@ -325,7 +375,7 @@ class JobService:
         user_roles: list[str],
         reason: str,
     ) -> JobRunDetail:
-        from ..api.errors import NotFoundError, AuthorizationError, ConflictError
+        from ..api.errors import AuthorizationError, ConflictError, NotFoundError
 
         run = self.job_repo.get_job_run_by_id(job_run_id)
         if not run:
@@ -433,7 +483,8 @@ class JobService:
                 )
                 job_repo.commit()
 
-        create_tracked_task(
+        create_session_task(
+            session_id,
             run_session_task(session_id, _execute, "job_execution"),
             name=f"job_execution-{session_id}",
             skip_lock=True,
@@ -441,7 +492,7 @@ class JobService:
 
 
 class JobScheduler:
-    def __init__(self, job_service_factory: Callable[[Session], JobService]):
+    def __init__(self, job_service_factory: Callable[[Any], JobService]):
         self._job_service_factory = job_service_factory
         self._running = False
         self._task: asyncio.Task | None = None
@@ -498,6 +549,23 @@ class JobScheduler:
                     continue
                 should_run, last_scheduled = self._should_run(definition, now)
                 if not should_run:
+                    continue
+                # Don't stack runs of the same definition. A run can take up to
+                # the 30-min execution timeout, longer than a tight cron gap
+                # (e.g. pr_review_job's */20), so a new tick can fire while the
+                # previous run is still active. Two concurrent PR-review rounds
+                # would each find no sticky comment and both create one, so the
+                # reviews stack — exactly what the marker dedup is meant to
+                # prevent. Skip WITHOUT claiming: last_triggered_at stays put,
+                # so the slot is retried on the next tick once the run finishes
+                # (no missed round). claim_job_trigger's CAS still guards the
+                # multi-instance race; this guards the single-instance overlap.
+                if job_service.job_repo.has_active_runs_for_definition(definition.id):
+                    logger.info(
+                        "job_scheduler_skip_active_run",
+                        job_id=definition.job_id,
+                        hint="previous_run_still_active",
+                    )
                     continue
                 claimed = job_service.job_repo.claim_job_trigger(
                     definition.id, last_scheduled, now
@@ -605,7 +673,8 @@ class JobScheduler:
                 )
                 job_repo.commit()
 
-        create_tracked_task(
+        create_session_task(
+            session_id,
             run_session_task(session_id, _execute, "job_execution"),
             name=f"job_execution-{session_id}",
             skip_lock=True,

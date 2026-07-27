@@ -68,6 +68,26 @@ data:
   MCP_SEARXNG_URL: "http://{{ include "druppie.fullname" . }}-module-searxng:{{ .Values.modules.searxng.port }}"
   MCP_BROWSER_URL: "http://{{ include "druppie.fullname" . }}-module-browser:{{ .Values.modules.browser.port }}"
   LAYOUT_SERVICE_URL: "http://{{ include "druppie.fullname" . }}-layout-service:8090"
+  {{- if .Values.prReview.repos }}
+
+  # Scheduled PR review (module-coding tools; empty repos = disabled).
+  # Gitea URL/token default to EXTERNAL_GITEA_* inside the module.
+  PRREVIEW_REPOS: {{ .Values.prReview.repos | quote }}
+  PRREVIEW_MAX_PRS_PER_RUN: {{ .Values.prReview.maxPrsPerRun | quote }}
+  PRREVIEW_MAX_DIFF_LINES: {{ .Values.prReview.maxDiffLines | quote }}
+  # Per-environment override of the pr_review_job YAML (consumed by the
+  # backend's job loader): the same image runs with the cron enabled here
+  # and disabled elsewhere.
+  JOB_PR_REVIEW_JOB_ENABLED: {{ .Values.prReview.jobEnabled | quote }}
+  {{- if .Values.prReview.jobSchedule }}
+  JOB_PR_REVIEW_JOB_SCHEDULE: {{ .Values.prReview.jobSchedule | quote }}
+  {{- end }}
+  {{- if .Values.prReview.caConfigMap }}
+  # Private Waterschap CA so the reviewer's Gitea HTTPS calls verify — aigit's
+  # internal CA is absent from the system trust store. Mounted by module-coding.
+  PRREVIEW_SSL_CA_BUNDLE: /etc/prreview-ca/chain.pem
+  {{- end }}
+  {{- end }}
 
   # CORS
   CORS_ORIGINS: "{{ include "druppie.frontendExternalUrl" . }}"

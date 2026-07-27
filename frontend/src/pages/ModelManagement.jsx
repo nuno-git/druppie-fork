@@ -315,6 +315,7 @@ const MODEL_LABELS = {
   'deepseek-v4-flash': 'DeepSeek V4 Flash',
   'qwen3.6-27b': 'Qwen 3.6 27B',
   'qwen3.6-35b-a3b': 'Qwen 3.6 35B A3B',
+  'laguna-s-2.1': 'Laguna S 2.1',
 }
 
 const MODES = [
@@ -332,6 +333,14 @@ const MODES = [
     description: 'Both GPUs, tensor parallelism 2',
     models: ['deepseek-v4-flash'],
     loadModel: 'deepseek-v4-flash',
+    icon: Cpu,
+  },
+  {
+    id: 'laguna',
+    label: 'Laguna S 2.1',
+    description: 'Both GPUs, tensor parallelism 2 (118B MoE)',
+    models: ['laguna-s-2.1'],
+    loadModel: 'laguna-s-2.1',
     icon: Cpu,
   },
 ]
@@ -363,6 +372,7 @@ const LocalModelsSection = () => {
     'deepseek-v4-flash': 'deepseek-v4-flash',
     'qwen3.6-27b': 'qwen-27b',
     'qwen3.6-35b-a3b': 'qwen-35b',
+    'laguna-s-2.1': 'laguna-s-2.1',
   }
 
   const getServiceForModel = (modelId) => modelToService[modelId] || modelId

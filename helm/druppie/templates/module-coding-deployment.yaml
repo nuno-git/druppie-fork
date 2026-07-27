@@ -95,6 +95,14 @@ spec:
             - name: workspace
               mountPath: /workspaces
             {{- end }}
+            {{- if .Values.prReview.caConfigMap }}
+            # Private Waterschap CA (chain.pem) so the scheduled PR reviewer's
+            # aigit HTTPS calls verify (PRREVIEW_SSL_CA_BUNDLE in the ConfigMap
+            # points here). Same aigit-ca pattern module-deploy uses for GitOps.
+            - name: prreview-ca
+              mountPath: /etc/prreview-ca
+              readOnly: true
+            {{- end }}
           {{- if $dev }}
           livenessProbe:
             tcpSocket:
@@ -147,5 +155,10 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
+        {{- end }}
+        {{- if .Values.prReview.caConfigMap }}
+        - name: prreview-ca
+          configMap:
+            name: {{ .Values.prReview.caConfigMap }}
         {{- end }}
 {{- end }}

@@ -178,7 +178,20 @@ def _gitops_client() -> GitopsClient:
 # ---------------------------------------------------------------------------
 class ClusterClient:
     def __init__(self) -> None:
-        self._base = "https://kubernetes.default.svc"
+        # Prefer the kubelet-injected API service env (an IP, e.g. 10.43.0.1) so
+        # reaching the API needs no DNS — kubernetes.default.svc resolution has
+        # failed intermittently in-cluster ([Errno -2] Name or service not
+        # known). Fall back to the DNS name only if the env is absent.
+        host = os.getenv("KUBERNETES_SERVICE_HOST")
+        port = os.getenv("KUBERNETES_SERVICE_PORT_HTTPS") or os.getenv(
+            "KUBERNETES_SERVICE_PORT", "443"
+        )
+        if host:
+            # IPv6 literals need bracketing for the URL authority.
+            host_part = f"[{host}]" if ":" in host else host
+            self._base = f"https://{host_part}:{port}"
+        else:
+            self._base = "https://kubernetes.default.svc"
         self._token = os.getenv("K8S_SA_TOKEN")
         if not self._token:
             try:

@@ -41,7 +41,7 @@ database:
     size: 8Gi
     # MANDATORY: Delete reclaim, 1 replica — user-apps are ephemeral and would
     # otherwise leak orphaned Longhorn volumes (see D6 / longhorn-storage-issue.md).
-    storageClass: longhorn-branch-env
+    storageClass: longhorn-local
   resources:
     requests:
       cpu: 50m

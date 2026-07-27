@@ -556,6 +556,9 @@ secrets:
   keycloakClientSecret: ''
   giteaToken: ''
   moduleApiToken: ''
+  # Dedicated PR-review bot token (read + PR-comment). Empty = the module falls
+  # back to EXTERNAL_GITEA_TOKEN. See templates/secrets.yaml.
+  prreviewGiteaToken: ''
 autoscaling:
   backend:
     enabled: false
@@ -617,3 +620,18 @@ agentSandbox:
     workspaceSize: 20Gi
   warmPool:
     replicas: 5
+# Scheduled PR-review agent (runs in the module-coding pod). Empty repos =
+# disabled: no PRREVIEW_* config is rendered and cnp-module-coding-gitea is not
+# created. Per-env values (repos, jobEnabled) are set in the ai/k8s HelmRelease.
+prReview:
+  # Space-separated Gitea repo allowlist, e.g. "ai/druppie". Empty = disabled.
+  repos: ''
+  maxPrsPerRun: 5
+  maxDiffLines: 2000
+  # Enables the pr_review_job cron for this environment (JOB_PR_REVIEW_JOB_ENABLED).
+  jobEnabled: false
+  # Optional cron override (JOB_PR_REVIEW_JOB_SCHEDULE); empty = job YAML default.
+  jobSchedule: ''
+  # Optional ConfigMap holding the private Waterschap CA (chain.pem) mounted into
+  # module-coding so the reviewer's aigit HTTPS calls verify. Empty = system trust.
+  caConfigMap: ''

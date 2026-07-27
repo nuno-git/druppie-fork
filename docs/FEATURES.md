@@ -147,7 +147,7 @@ Authentication is handled by Keycloak via OAuth 2.0 / OIDC. Roles control what e
 |------|-------------|
 | admin | Full platform access; can act on any approval regardless of required role |
 | architect | Can approve architecture designs |
-| developer | Can approve Docker operations and pull request merges |
+| developer | Can approve Docker operations and pull request merges; includes `read-token` composite role for broker token access |
 | business_analyst | Can approve functional design writes |
 
 Users can hold multiple roles. For example, the `architect` test user has both `architect` and `developer` roles, so they can approve both architecture and Docker operations.
@@ -174,6 +174,64 @@ Users can hold multiple roles. For example, the `architect` test user has both `
 - JWT Bearer token injected on all API requests
 - Silent SSO check on page load; automatic token refresh on expiry
 - User profile and role display on the Settings page
+
+---
+
+## Entra ID Identity Brokering (User-Scoped Azure Access)
+
+When MCP tools need access to Azure resources (Azure SQL, Azure DevOps), they can use **user-scoped Entra ID tokens** instead of shared service-principal credentials. This is implemented via Keycloak identity brokering.
+
+### How It Works
+
+1. **Login**: Users see a "Microsoft (Entra ID)" button on the Keycloak login page. Clicking it triggers an OIDC login with Azure AD. Microsoft-brokered users are created as **separate Keycloak accounts** from local users (Keycloak's default `first broker login` flow — no auto-linking). Keycloak stores the resulting Entra tokens (`storeToken: true`). An **IdP role mapper** (`oidc-hardcoded-role-idp-mapper`) on the Entra identity provider automatically grants the `developer` realm role to all Microsoft-brokered users, giving them access to developer-level approvals and the `read-token` composite role (required to retrieve stored broker tokens). The role mapper is created by `scripts/setup_keycloak.py` during initialization.
+
+2. **Token retrieval**: When an MCP tool needs a `user.entra_token` (configured via injection rules in `mcp_config.yaml`), the tool executor checks if the user has a linked Entra identity. If linked but the token isn't available, the agent pauses with `waiting_entra_auth` status.
+
+3. **Frontend auto-submit**: The frontend detects the `paused_entra_auth` status and automatically POSTs to `/api/sessions/{id}/authorize-entra`. The backend uses the caller's Keycloak token to call the broker endpoint server-side and retrieve the Entra token. The agent then resumes automatically.
+
+4. **Multi-resource support**: A single Entra refresh token can be exchanged for access tokens targeting different Azure resources (e.g., `https://database.windows.net/.default` for Azure SQL, `https://app.vssps.visualstudio.com/.default` for Azure DevOps).
+
+### Security
+
+- **Tokens are never persisted in Druppie's database** — they exist only in-memory during tool execution
+- **Frontend never sees Entra tokens** — all broker calls happen server-side
+- **Session owner enforcement** — only the session owner can authorize Entra access (no admin override)
+- **Separate accounts** — Microsoft-brokered users are distinct Keycloak accounts, not auto-linked to local users. `trustEmail: false` prevents account takeover via email matching
+- **Sensitive values are redacted** in all log output
+
+### Profile Photo Avatars
+
+When a user logs in via Entra ID, their Microsoft profile photo is displayed in the NavRail user menu (bottom-left). The photo is fetched from Microsoft Graph API via the KC broker token and cached on disk with a 24-hour TTL. Users without an Entra identity or without a photo set in Microsoft 365 see their username initial as a fallback.
+
+- **Endpoint**: `GET /api/users/me/avatar` — serves cached photo or fetches on demand
+- **Security**: content-type validation (image/jpeg, image/png, image/gif, image/bmp), 1 MB size limit, filesystem path sanitization, `Cache-Control: private, no-store` and `Vary: Authorization` headers to prevent cross-user cache leakage
+
+### Connected Services
+
+The **Services** button in the chat session header shows a dropdown of all connected services and their status:
+
+- **Entra ID link status**: whether the current user has linked their Microsoft account
+- **Azure DevOps**: connection status (configured + Entra linked = accessible)
+- **Data Sources**: each configured data source with its auth type and accessibility
+
+### Configuration
+
+Set these environment variables to enable Entra ID brokering (all optional — when unset, brokering is disabled):
+
+```
+ENTRA_TENANT_ID=<your-azure-tenant-id>
+ENTRA_CLIENT_ID=<app-registration-client-id>
+ENTRA_CLIENT_SECRET=<app-registration-secret>
+ENTRA_ALLOWED_EMAILS=user1@example.com,user2@example.com
+```
+
+The App Registration must be a **separate** registration from any existing service principal, configured with **delegated** (not application) permissions.
+
+`ENTRA_ALLOWED_EMAILS` is a comma-separated list of email addresses authorized to use Druppie via Entra ID. When set, only users whose Entra email matches the allowlist can log in. When empty, all Entra-brokered logins are denied (fail-closed).
+
+### Graceful Degradation
+
+When Entra ID is not configured or the user hasn't linked their Microsoft account, tools that need Azure access fail with a user-friendly message. Existing service-principal based access continues to work independently.
 
 ---
 
@@ -276,6 +334,7 @@ Users can **stop** any running session and **resume** it later -- all context is
 | `paused` | Stopped by user or recovered after reboot | Amber dot |
 | `paused_approval` | Waiting for tool approval | Amber dot |
 | `paused_hitl` | Waiting for user answer (HITL) | Amber dot |
+| `paused_entra_auth` | Waiting for Entra ID authorization | Amber dot |
 | `paused_sandbox` | Waiting for sandbox completion | Amber dot |
 | `completed` | All agents finished | Green dot |
 | `failed` | Error occurred | Red dot |
@@ -1284,3 +1343,59 @@ Where the CLI runner benchmarks one endpoint, the automated sweep
 > ⚠️ **Test-cluster impact.** The sweep frees a GPU by scaling one served model to
 > 0 and suspending Flux (parent + child), restoring both on exit. See the
 > [runbook](../benchmarks/README.md#in-cluster-automated-sweep) before running.
+
+## Document Formatter (PDF Generation)
+
+Druppie converts agent-authored **Typst** (`.typ`) source files into professionally formatted PDFs that follow the Rijnland corporate identity (Huisstijlhandboek). Agents write native Typst directly — the old Markdown pipeline was replaced in Phase 2.
+
+### Supported Document Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `functional_design` | Functioneel Ontwerp (FO) | User requirements, functional specifications |
+| `technical_design` | Technisch Ontwerp (TO) | Architecture, data models, NFRs |
+| `technical_research` | Technisch Onderzoek | Proof-of-concepts, technology evaluations |
+| `core_documentation` | Platform documentation | Internal system docs, API guides |
+
+### How It Works
+
+1. The **Documenter agent** writes a native `.typ` file using the Rijnland template (`#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`).
+2. The agent **pushes to Gitea** — this is mandatory because `PdfRenderService` reads source from Gitea, not the local workspace.
+3. The agent calls `builtin:make_pdf_document` with the `.typ` path.
+4. `PdfRenderService.get_or_create_pdf()` fetches the source from Gitea, builds a cache key from `(project_id, typ_path, git_blob_sha)`, and checks the `pdf_renders` table.
+   - **Cache hit** → serves the cached PDF instantly.
+   - **Cache miss** → `DocumentFormatterService.compile_typ()` compiles via Typst CLI subprocess; the PDF is written to `/app/workspace/uploads/pdf-cache/` and the cache record is inserted.
+5. A `MessageAttachment` record is created so the frontend serves the PDF via `/api/attachments/{id}`.
+
+### Corporate Identity Applied
+
+- **Primary color:** `#0065BD` (Rijnland blue, PMS 300)
+- **Typography:** Neusa Next Pro (brand headings) with Lato as fallback. Body text is light-weight; headings are bold.
+- **Logo:** `Logo-hoogheemraadschap-rijnland.png`, centered on the title page at 12cm wide (not shown on content pages).
+- **Pay-off:** "droge voeten, schoon water" rendered on the title page.
+- **Layout:** Grid-based margins (25mm sides, 32mm bottom), subtle blue header line on page 2+.
+- **Watermark:** Semi-transparent "DRAFT" or "Niet-definitief — ter goedkeuring" in the foreground layer when `include_watermark == true && status != "FINAL"`. Suppressed entirely when `status == "FINAL"`.
+- **Footer:** Full-bleed dijk-en-sloot shape above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page/total". Footer appears on all pages except the title page.
+
+### Template Features
+
+- **Table of contents:** Optional, auto-generated from Typst headings (`include_toc: true`).
+- **Tables:** Blue header row with white text, subtle striped rows, rounded corners.
+- **Code blocks:** Light blue background (`#E9EFFA`), rounded corners, monospace font.
+- **Blockquotes:** Light sand background with a Rijnland-blue left border.
+- **Mermaid diagrams:** Rendered inline by the `@preview/mmdr:0.2.2` Typst package (no Chromium/Node.js). Agents embed them with `#mermaid("...")`.
+- **ArchiMate diagrams:** The `archimate:save_model` MCP tool exports each view to SVG via pure-Python `svg_export.py`. Agents embed them in Typst with `#image("docs/diagrams/view-name.svg")`.
+- **Section breaks:** Optional page break before every H1 (`section_breaks: true`).
+- **Fonts:** Lato (Google Fonts, system fallback) + Neusa Next Pro (brand font, installed in `assets/fonts/`). Verified with `typst fonts`.
+
+### Current Phase
+
+Phase 2 is **live**. The agent pipeline is wired:
+- **Documenter agent** (`documenter.yaml`) has instructions for native Typst authoring and a step-by-step PDF export workflow.
+- **Builtin tools** `make_pdf_document` and `verify_typst` are registered in `builtin_tools.py` and exposed to the Documenter agent.
+- **`PdfRenderService`** (`pdf_render_service.py`) provides render caching keyed by Git blob SHA so identical source revisions compile once.
+- **22 pytest tests** cover compilation, watermark logic, document types, Typst syntax validation, timeout/failure branches, cache hit/miss, and image dependency resolution over Gitea.
+
+**Remaining work:**
+- Full `DocumentSummary`/`DocumentDetail` domain models and REST endpoints for direct user-initiated PDF generation without an agent.
+- Frontend "Download PDF" convenience button outside the chat flow.

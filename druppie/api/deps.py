@@ -55,6 +55,7 @@ from druppie.services import (
     JobService,
     DeployService,
     BranchEnvironmentService,
+    DocumentFormatterService,
 )
 
 # Initialize database tables on import
@@ -106,6 +107,13 @@ def get_attachment_repository(db: Session = Depends(get_db)) -> "AttachmentRepos
     """Get AttachmentRepository with DB session injected."""
     from druppie.repositories import AttachmentRepository
     return AttachmentRepository(db)
+
+
+def get_mcp_http() -> "MCPHttp":
+    """Get MCPHttp client for MCP server communication."""
+    from druppie.execution.mcp_http import MCPHttp
+    from druppie.core.mcp_config import get_mcp_config
+    return MCPHttp(get_mcp_config())
 
 
 # =============================================================================
@@ -216,6 +224,14 @@ def get_documentation_service(
     return DocumentationService(project_repo, cache_repo)
 
 
+def get_document_formatter_service() -> DocumentFormatterService:
+    """Get DocumentFormatterService.
+
+    Stateless service with no repository dependencies.
+    """
+    return DocumentFormatterService()
+
+
 def get_workflow_service(
     orchestrator: "Orchestrator" = Depends(get_orchestrator),
 ) -> WorkflowService:
@@ -278,10 +294,22 @@ async def get_current_user(
             # Re-raise - user must exist in DB for operations to work
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to sync user to database: {str(e)}",
+                detail="Failed to sync user to database. Please try again or contact an administrator.",
             )
         finally:
             db.close()
+
+    # H2: gate Entra-brokered users against the email allowlist
+    from druppie.core.entra_token import is_entra_configured, ALLOWED_ENTRA_EMAILS
+    idp = user.get("identity_provider")
+    if is_entra_configured() and ALLOWED_ENTRA_EMAILS and idp == "entra-id":
+        email = (user.get("email") or user.get("preferred_username") or "").lower()
+        if email and email not in ALLOWED_ENTRA_EMAILS:
+            logger.warning("entra_user_not_in_allowlist", email=email, user_id=user.get("sub", ""))
+            raise HTTPException(
+                status_code=403,
+                detail="Your Entra ID account is not authorized for this application. Contact your administrator.",
+            )
 
     return user
 
@@ -292,6 +320,15 @@ async def get_optional_user(
 ) -> dict | None:
     """Get current user if authenticated, or None."""
     return auth.validate_request(authorization)
+
+
+def get_bearer_token(
+    authorization: str | None = Header(None),
+) -> str:
+    """Extract the raw Bearer token from the Authorization header."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    return authorization.split(" ", 1)[1]
 
 
 # Internal API key for MCP servers to call backend.

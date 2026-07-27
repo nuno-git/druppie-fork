@@ -251,6 +251,9 @@ class SessionService:
             SessionStatus.PAUSED.value,
             SessionStatus.PAUSED_HITL.value,
             SessionStatus.PAUSED_CRASHED.value,
+            SessionStatus.PAUSED_HITL.value,
+            SessionStatus.PAUSED_ENTRA_AUTH.value,
+            SessionStatus.PAUSED_SANDBOX.value,
             SessionStatus.FAILED.value,
         }
         if session.status not in resumable:

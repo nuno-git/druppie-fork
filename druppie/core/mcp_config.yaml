@@ -127,6 +127,18 @@ mcps:
       - name: list_project_files
         requires_approval: false
 
+      # Scheduled PR review (fixed Gitea repo allowlist via PRREVIEW_REPOS).
+      # Instance/token/allowlist are server-side config, never tool arguments.
+      # Dedup is decided in code (head SHA vs sticky-comment marker) and
+      # post_pr_review edits one sticky comment per PR, so reviews never
+      # stack. Ungated: they run from a scheduled job with no session owner.
+      - name: list_prs_needing_review
+        requires_approval: false
+      - name: get_pr_diff
+        requires_approval: false
+      - name: post_pr_review
+        requires_approval: false
+
       # Internal tools (not visible to agents, callable by backend)
       - name: validate_design
         requires_approval: false
@@ -429,6 +441,7 @@ mcps:
   dataaccess:
     url: ${MCP_DATA_ACCESS_URL:-http://module-data-access:9010}
     type: module
+    entra_scope: "https://database.windows.net/.default"
     inject:
       session_id:
         from: session.id
@@ -438,6 +451,10 @@ mcps:
         from: project.id
         hidden: true
         tools: [download_data]
+      user_token:
+        from: user.entra_token
+        hidden: true
+        tools: [test_connection, list_available_data, get_schema, read_data, execute_query, download_data, create_chart_from_source]
     tools:
       - name: list_sources
         requires_approval: false
@@ -488,6 +505,12 @@ mcps:
   azuredevops:
     url: ${MCP_AZUREDEVOPS_URL:-http://module-azuredevops:9012}
     type: module
+    entra_scope: "499b84ac-1321-427f-aa17-267ca6975798/.default"
+    inject:
+      user_token:
+        from: user.entra_token
+        hidden: true
+        tools: [list_backlog_items, get_work_item, search_work_items, get_current_sprint, get_sprint_summary, get_work_item_comments, add_work_item_comment, create_work_item, update_work_item]
     tools:
       - name: list_backlog_items
         requires_approval: false
@@ -499,6 +522,11 @@ mcps:
         requires_approval: false
       - name: get_sprint_summary
         requires_approval: false
+      - name: get_work_item_comments
+        requires_approval: false
+      - name: add_work_item_comment
+        requires_approval: true
+        required_role: session_owner
       - name: create_work_item
         requires_approval: true
         required_role: session_owner
