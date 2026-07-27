@@ -39,7 +39,7 @@ spec:
             - bash
             - /scripts/module-dev-entrypoint.sh
             - "docker"
-            - "module-docker"
+            - "module-deploy"
             - {{ .Values.modules.docker.port | quote }}
           {{- else }}
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
