@@ -308,7 +308,7 @@ def test_create_commits_manifests(client, as_owner, fake_gitea):
     assert body["owner_id"] == OWNER_SUB
 
     d = _env_dir("feature-foo")
-    for f in ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml", "externalsecrets.yaml"):
+    for f in ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml"):
         assert f"{d}/{f}" in fake_gitea.files, f"missing {f}"
 
     ns = yaml.safe_load(fake_gitea.files[f"{d}/namespace.yaml"])
@@ -384,15 +384,14 @@ def test_create_default_secrets_source_is_colab_dev(client, as_owner, fake_gitea
     assert r.status_code == 202, r.text
     assert r.json()["secrets_source"] == "colab-dev"
 
-    # externalsecrets.yaml should only contain druppie-tls + harbor-regcred
-    # (app secrets are synced by the chart's dev-workspace-secrets template).
-    docs = list(yaml.safe_load_all(fake_gitea.files[f"{_env_dir('feature-foo')}/externalsecrets.yaml"]))
-    names = {d["metadata"]["name"] for d in docs}
-    assert "branch-env-secrets" not in names
-    assert "druppie-tls" in names
-    assert "harbor-regcred" in names
+    # ExternalSecrets (druppie-tls, harbor-regcred, git token) and the CA
+    # ConfigMap are now chart templates — not committed as separate files.
+    # The chart's values-branch-env.yaml sets externalSecrets.managed=true.
+    assert "externalsecrets.yaml" not in fake_gitea.files
 
     hr = yaml.safe_load(fake_gitea.files[f"{_env_dir('feature-foo')}/helmrelease.yaml"])
+    values_files = hr["spec"]["chart"]["spec"]["valuesFiles"]
+    assert "helm/druppie/values-branch-env.yaml" in values_files
     assert "extraEnvFromSecret" not in hr["spec"]["values"]["global"]
 
 
