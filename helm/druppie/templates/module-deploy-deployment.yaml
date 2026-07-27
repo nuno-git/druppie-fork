@@ -25,6 +25,9 @@ spec:
         reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       serviceAccountName: {{ include "druppie.fullname" . }}-module-deploy
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
