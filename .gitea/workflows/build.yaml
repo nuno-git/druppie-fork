@@ -260,7 +260,7 @@ jobs:
               -t "$REGISTRY/druppie/dev-workspace:$TAG" \
               -f Dockerfile.dev-workspace --push .
           else
-            if ! docker pull "$REGISTRY/druppie/dev-workspace:latest"; then
+            if ! docker buildx imagetools inspect "$REGISTRY/druppie/dev-workspace:latest" >/dev/null 2>&1; then
               echo ":latest not found — building instead"
               docker buildx build --build-arg CACHEBUST="$SHA" \
                 --cache-from "type=registry,ref=$CACHE_REF" \
@@ -268,13 +268,15 @@ jobs:
                 -t "$REGISTRY/druppie/dev-workspace:$TAG" \
                 -f Dockerfile.dev-workspace --push .
             else
-              docker tag "$REGISTRY/druppie/dev-workspace:latest" "$REGISTRY/druppie/dev-workspace:$TAG"
-              docker push "$REGISTRY/druppie/dev-workspace:$TAG"
+              docker buildx imagetools create \
+                -t "$REGISTRY/druppie/dev-workspace:$TAG" \
+                "$REGISTRY/druppie/dev-workspace:latest"
             fi
           fi
           if [ "$BRANCH" = "colab-dev" ] || [ "$BRANCH" = "main" ]; then
-            docker tag "$REGISTRY/druppie/dev-workspace:$TAG" "$REGISTRY/druppie/dev-workspace:latest"
-            docker push "$REGISTRY/druppie/dev-workspace:latest"
+            docker buildx imagetools create \
+              -t "$REGISTRY/druppie/dev-workspace:latest" \
+              "$REGISTRY/druppie/dev-workspace:$TAG"
           fi
 
       - name: Summary
