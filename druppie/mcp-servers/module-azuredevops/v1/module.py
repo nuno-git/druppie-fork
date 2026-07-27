@@ -8,6 +8,8 @@ caller-supplied project.
 
 import logging
 import os
+import re
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -35,6 +37,19 @@ _DETAIL_FIELDS = _SUMMARY_FIELDS + [
 ]
 
 VALID_WORK_ITEM_TYPES = {"Epic", "Feature", "Product Backlog Item", "Task", "Bug"}
+
+_MENTION_RE = re.compile(
+    r"@("
+    r"[\wÀ-ɏ][\wÀ-ɏ'-]*"
+    r"(?:"
+    r",\s*[\wÀ-ɏ][\wÀ-ɏ'-]*"
+    r"|"
+    r"(?:\s+[A-ZÀ-ɏ][\wÀ-ɏ'-]*){1,2}"
+    r")?"
+    r")"
+)
+
+_IDENTITY_CACHE_TTL = 3600.0
 
 _FIELD_MAP = {
     "title": "System.Title",
@@ -92,6 +107,8 @@ class AzureDevOpsModule:
             client_id=client_id,
             client_secret=client_secret,
         )
+        self._identity_cache: dict[str, str | None] = {}
+        self._identity_cache_ts: dict[str, float] = {}
         logger.info("Azure DevOps MCP bound to project '%s'", self._project)
 
     @property
@@ -120,6 +137,72 @@ class AzureDevOpsModule:
             return int(url.rstrip("/").split("/")[-1])
         except (ValueError, IndexError):
             return None
+
+    async def _resolve_identity(self, display_name: str, user_token: str | None = None) -> str | None:
+        """Resolve a display name to an Azure DevOps identity GUID, with caching."""
+        key = display_name.lower().strip()
+        now = time.monotonic()
+        if key in self._identity_cache and (now - self._identity_cache_ts.get(key, 0)) < _IDENTITY_CACHE_TTL:
+            return self._identity_cache[key]
+        try:
+            identities = await self._client.search_identity(display_name, user_token)
+            guid = None
+            if identities:
+                with_id = [i for i in identities if i.get("localId")]
+                if with_id:
+                    exact = next(
+                        (i for i in with_id if i.get("displayName", "").lower() == key),
+                        None,
+                    )
+                    guid = (exact or with_id[0])["localId"]
+            self._identity_cache[key] = guid
+            self._identity_cache_ts[key] = now
+            return guid
+        except Exception as exc:
+            logger.warning("_resolve_identity(%s) failed: %s", display_name, exc)
+            self._identity_cache[key] = None
+            self._identity_cache_ts[key] = now
+            return None
+
+    async def _resolve_mentions(self, text: str, user_token: str | None = None) -> str:
+        """Replace ``@Display Name`` patterns with Azure DevOps mention HTML."""
+        matches = list(_MENTION_RE.finditer(text))
+        if not matches:
+            return text
+
+        seen: dict[str, str | None] = {}
+        for m in matches:
+            name = m.group(1)
+            if name not in seen:
+                seen[name] = await self._resolve_identity(name, user_token)
+
+        for m in reversed(matches):
+            name = m.group(1)
+            guid = seen[name]
+            if guid:
+                replacement = f'<a href="#" data-vss-mention="version:2.0,{guid}">@{name}</a>'
+                text = text[:m.start()] + replacement + text[m.end():]
+        return text
+
+    async def resolve_user(self, display_name: str, user_token: str | None = None) -> dict:
+        """Look up Azure DevOps identities matching *display_name*."""
+        try:
+            identities = await self._client.search_identity(display_name, user_token)
+            return {
+                "success": True,
+                "query": display_name,
+                "results": [
+                    {
+                        "display_name": i.get("displayName"),
+                        "guid": i.get("localId"),
+                        "mail": i.get("mail"),
+                    }
+                    for i in identities
+                ],
+                "count": len(identities),
+            }
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
 
     async def get_current_sprint(self, user_token: str | None = None) -> dict:
         """Return info about the current sprint (iteration) based on today's date."""
@@ -423,7 +506,8 @@ class AzureDevOpsModule:
     async def add_work_item_comment(self, item_id: int, text: str, user_token: str | None = None) -> dict:
         """Add a comment to a work item."""
         try:
-            result = await self._client.add_work_item_comment(item_id, text, user_token=user_token)
+            processed_text = await self._resolve_mentions(text, user_token=user_token)
+            result = await self._client.add_work_item_comment(item_id, processed_text, user_token=user_token)
             return {
                 "success": True,
                 "project": self._project,
@@ -476,6 +560,9 @@ class AzureDevOpsModule:
                 "error": f"Invalid work item type '{work_item_type}'. "
                          f"Valid types: {', '.join(sorted(VALID_WORK_ITEM_TYPES))}",
             }
+
+        if description is not None:
+            description = await self._resolve_mentions(description, user_token=user_token)
 
         fields = {
             "title": title,
@@ -571,6 +658,9 @@ class AzureDevOpsModule:
                 "error": "Cannot set both state and board_column — "
                          "board_column automatically updates the state.",
             }
+
+        if description is not None:
+            description = await self._resolve_mentions(description, user_token=user_token)
 
         fields = {
             "title": title,

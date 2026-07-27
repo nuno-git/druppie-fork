@@ -249,11 +249,20 @@ Project isolation is enforced in two independent layers:
    at another project even if the credential were over-scoped.
 
 Read tools: `list_backlog_items`, `get_work_item`, `search_work_items`,
-`get_current_sprint`, `get_sprint_summary`, `get_work_item_comments` (all
-`requires_approval: false`). Write tools: `create_work_item`, `update_work_item`,
+`get_current_sprint`, `get_sprint_summary`, `get_work_item_comments`, `resolve_user`
+(all `requires_approval: false`). Write tools: `create_work_item`, `update_work_item`,
 `add_work_item_comment` (`requires_approval: true`, `required_role: session_owner`).
 Consumed by the **Product Owner** agent. Isolation is pinned by
 `druppie/tests/test_azuredevops_isolation.py`.
+
+**@mention resolution:** `add_work_item_comment`, `create_work_item`, and
+`update_work_item` automatically resolve `@Display Name` patterns to Azure DevOps
+identity GUIDs via the Identity Picker API (`vssps.dev.azure.com`). Resolved mentions
+are replaced with `<a href="#" data-vss-mention="version:2.0,{GUID}">@Name</a>` HTML
+so that tagged users receive notifications. Resolution results are cached in-memory
+with a 1-hour TTL. Unresolved mentions are left as plain text (graceful degradation).
+The `resolve_user` tool exposes identity lookup directly so agents can verify names
+before mentioning.
 
 ### 2.6 Document Formatter Service
 

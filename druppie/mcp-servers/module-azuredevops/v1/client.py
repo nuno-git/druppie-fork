@@ -210,5 +210,33 @@ class AzureDevOpsClient:
             user_token=user_token,
         )
 
+    @property
+    def _vssps_url(self) -> str:
+        return self._org_url.replace("://dev.azure.com", "://vssps.dev.azure.com")
+
+    async def search_identity(self, display_name: str, user_token: str | None = None) -> list[dict]:
+        """Search the identity picker for users matching *display_name*."""
+        headers = await self._auth_header(user_token)
+        body = {
+            "query": display_name,
+            "identityTypes": ["user"],
+            "operationScopes": ["ims", "source"],
+            "properties": ["DisplayName", "Mail"],
+            "options": {"MinResults": 1, "MaxResults": 5},
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{self._vssps_url}/_apis/identitypicker/identities",
+                params={"api-version": "7.0-preview.1"},
+                json=body,
+                headers=headers,
+            )
+            self._raise_for_status(resp)
+            data = resp.json()
+        results = data.get("results", [])
+        if not results:
+            return []
+        return results[0].get("identities", [])
+
     async def close(self) -> None:
         await self._credential.close()
