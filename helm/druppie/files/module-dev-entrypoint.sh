@@ -38,6 +38,8 @@ if [ -f "${REQ}" ]; then
   fi
 fi
 
+export PYTHONPATH="${REPO}/druppie/mcp-servers:${MOD_DIR}:${PYTHONPATH:-}"
+
 echo "[module-dev] starting ${KEY} on 0.0.0.0:${PORT} from ${DIR}"
 cd "${MOD_DIR}"
 exec "${VENV}/bin/python" -m uvicorn server:app \
