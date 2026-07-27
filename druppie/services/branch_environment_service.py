@@ -329,7 +329,7 @@ def build_helmrelease_yaml(
                 "install": {"timeout": "10m", "remediation": {"retries": 3}},
                 "upgrade": {
                     "timeout": "10m",
-                    "cleanupOnFail": True,
+                    "cleanupOnFail": False,
                     "remediation": {"retries": 3},
                 },
                 "values": values,
