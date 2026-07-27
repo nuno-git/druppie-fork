@@ -7,7 +7,7 @@ PORT="${3:?port required}"
 
 WORKSPACE="/workspace"
 REPO="${WORKSPACE}/druppie"
-MOD_DIR="${REPO}/mcp-servers/${DIR}"
+MOD_DIR="${REPO}/druppie/mcp-servers/${DIR}"
 VENV="${WORKSPACE}/.venvs/${KEY}"
 BAKED="/opt/venvs/${KEY}"
 DEP_DIR="${WORKSPACE}/.dep-hashes"
