@@ -121,7 +121,6 @@ devWorkspace:
     - registry
     - llm
     - vision
-    - data_access
     - azuredevops
 
 # Per-instance sandbox: each branch env gets its own sandbox namespace,

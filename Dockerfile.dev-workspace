@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libffi-dev \
         openssl \
         tini \
+        unixodbc-dev \
     && rm -rf /var/lib/apt/lists/* \
     && python --version && pip --version
 
