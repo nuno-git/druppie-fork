@@ -271,7 +271,6 @@ def test_helmrelease_yaml_contains_branch_overrides():
     manifest = yaml.safe_load(
         build_helmrelease_yaml(
             "foo", "feature/foo", "druppie-foo.rijnland.dev", "tag-1", "now",
-            developer="robbe",
         )
     )
     values = manifest["spec"]["values"]
@@ -282,13 +281,16 @@ def test_helmrelease_yaml_contains_branch_overrides():
     assert "helm/druppie/values-rijnland.yaml" in manifest["spec"]["chart"]["spec"]["valuesFiles"]
     # The branch namespace IS the hot-reload dev workspace.
     assert values["externalSecrets"]["managed"] is True
-    assert values["persistence"]["storageClass"] == "longhorn-branch-env"
+    assert values["persistence"]["storageClass"] == "longhorn-local"
     dw = values["devWorkspace"]
     assert dw["enabled"] is True
     assert dw["stackMode"] == "real"
-    assert dw["developer"] == "robbe"
     assert dw["gitBranch"] == "feature/foo"
     assert dw["codeServer"]["devHost"] == "druppie-foo-dev.rijnland.dev"
+    # Modules are embedded into the workspace pod (no separate Deployments), so
+    # the env pulls no per-module images and needs no RWO-PVC co-location.
+    assert "coding" in dw["embedModules"]
+    assert "docker" in dw["embedModules"]
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +308,7 @@ def test_create_commits_manifests(client, as_owner, fake_gitea):
     assert body["owner_id"] == OWNER_SUB
 
     d = _env_dir("feature-foo")
-    for f in ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml", "externalsecrets.yaml"):
+    for f in ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml"):
         assert f"{d}/{f}" in fake_gitea.files, f"missing {f}"
 
     ns = yaml.safe_load(fake_gitea.files[f"{d}/namespace.yaml"])
@@ -382,15 +384,14 @@ def test_create_default_secrets_source_is_colab_dev(client, as_owner, fake_gitea
     assert r.status_code == 202, r.text
     assert r.json()["secrets_source"] == "colab-dev"
 
-    # externalsecrets.yaml should only contain druppie-tls + harbor-regcred
-    # (app secrets are synced by the chart's dev-workspace-secrets template).
-    docs = list(yaml.safe_load_all(fake_gitea.files[f"{_env_dir('feature-foo')}/externalsecrets.yaml"]))
-    names = {d["metadata"]["name"] for d in docs}
-    assert "branch-env-secrets" not in names
-    assert "druppie-tls" in names
-    assert "harbor-regcred" in names
+    # ExternalSecrets (druppie-tls, harbor-regcred, git token) and the CA
+    # ConfigMap are now chart templates — not committed as separate files.
+    # The chart's values-branch-env.yaml sets externalSecrets.managed=true.
+    assert "externalsecrets.yaml" not in fake_gitea.files
 
     hr = yaml.safe_load(fake_gitea.files[f"{_env_dir('feature-foo')}/helmrelease.yaml"])
+    values_files = hr["spec"]["chart"]["spec"]["valuesFiles"]
+    assert "helm/druppie/values-branch-env.yaml" in values_files
     assert "extraEnvFromSecret" not in hr["spec"]["values"]["global"]
 
 
@@ -577,12 +578,13 @@ def test_create_enables_workspace_by_default(client, as_owner, fake_gitea):
     _deploy(client)
     values = _hr_values(fake_gitea)
     assert values["externalSecrets"]["managed"] is True
-    assert values["persistence"]["storageClass"] == "longhorn-branch-env"
+    assert values["persistence"]["storageClass"] == "longhorn-local"
     dw = values["devWorkspace"]
     assert dw["enabled"] is True
-    assert dw["developer"] == "robbe"
     assert dw["gitBranch"] == "feature/foo"
     assert dw["codeServer"]["devHost"] == "druppie-feature-foo-dev.rijnland.dev"
+    # Modules run inside the workspace pod, not as separate Deployments.
+    assert "coding" in dw["embedModules"]
     body = client.get("/api/branch-environments/feature-foo").json()
     assert body["workspace_enabled"] is True
     assert body["workspace_url"] == "https://druppie-feature-foo-dev.rijnland.dev"

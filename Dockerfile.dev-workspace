@@ -47,13 +47,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libffi-dev \
         openssl \
         tini \
+        unixodbc-dev \
     && rm -rf /var/lib/apt/lists/* \
     && python --version && pip --version
 
 # Union of system deps required by MCP modules that may be embedded into this
 # pod (see devWorkspace.embedModules). Only adds what the base Layer 1 doesn't
 # already provide:
-#   docker-ce-cli  — module-coding & module-docker talk to a mounted docker.sock
+#   docker-ce-cli  — module-coding & module-deploy talk to a mounted docker.sock
 #   poppler-utils  — module-vision PDF→image conversion
 # Chromium (module-coding's puppeteer + module-browser) is already installed in
 # Layer 1b below; playwright's own chromium is fetched per-venv in Layer 6.

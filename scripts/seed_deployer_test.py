@@ -153,7 +153,7 @@ def push_template_files(client: httpx.Client, repo_name: str):
 
 
 # ---------------------------------------------------------------------------
-# Deployer planned prompt — references compose_up workflow
+# Deployer planned prompt — references deploy workflow
 # ---------------------------------------------------------------------------
 DEPLOYER_PLANNED_PROMPT = """\
 Build and deploy the FAQ web application using Docker Compose. \
@@ -175,8 +175,8 @@ Agent builder: Implemented FAQ app — 2 models, 3 API routes, React frontend. A
 Build verification passed (docker compose up + health check OK). Pushed to main.
 
 ## Your Task
-1. Check for existing containers (docker_list_containers)
-2. Deploy with docker_compose_up (branch: main)
+1. Check for existing containers (docker_list_apps)
+2. Deploy with docker_deploy (branch: main)
 3. Verify health check passes
 4. Ask user for feedback via hitl_ask_question
 5. Report deployment URL with USER FEEDBACK in done()"""
@@ -547,7 +547,7 @@ def main():
     print("    1. Login as admin / Admin123!")
     print(f"    2. Open {session_url}")
     print("    3. Click retry on the failed deployer agent run")
-    print("    4. The deployer should now use compose_up instead of build+run")
+    print("    4. The deployer should now use deploy instead of build+run")
     print()
     print("=" * 60)
 

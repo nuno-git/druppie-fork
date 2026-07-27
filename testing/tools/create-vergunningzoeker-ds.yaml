@@ -1377,10 +1377,10 @@ tool-test:
     # Deployer (REAL — actually deploys the app)
     # =========================================================================
     - agent: deployer
-      tool: docker:list_containers
+      tool: docker:list_apps
 
     - agent: deployer
-      tool: docker:compose_up
+      tool: docker:deploy
       approval:
         status: approved
         by: developer

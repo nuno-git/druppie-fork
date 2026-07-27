@@ -73,25 +73,33 @@ class DataAccessModule:
                     adapter = AzureSQLAdapter(config)
 
                 elif source_type == "azure-sql-obo":
-                    # Interim client_credentials flow — true on-behalf-of and
-                    # a colon-safe config format are a separate follow-up.
-                    obo = config_blob.split(":")
-                    if len(obo) < 6:
+                    # Reads Entra credentials from ENTRA_* env vars (shared
+                    # with the Keycloak broker). Config blob only carries
+                    # scope:server:database.
+                    entra_tenant = os.getenv("ENTRA_TENANT_ID", "")
+                    entra_client = os.getenv("ENTRA_CLIENT_ID", "")
+                    entra_secret = os.getenv("ENTRA_CLIENT_SECRET", "")
+                    if not all([entra_tenant, entra_client, entra_secret]):
                         raise ValueError(
-                            "azure-sql-obo expects "
-                            "tenant:client:secret:scope:server:database"
+                            "azure-sql-obo requires ENTRA_TENANT_ID, "
+                            "ENTRA_CLIENT_ID and ENTRA_CLIENT_SECRET env vars"
+                        )
+                    obo = config_blob.rsplit(":", 2)
+                    if len(obo) < 3:
+                        raise ValueError(
+                            "azure-sql-obo expects scope:server:database"
                         )
                     config = {
                         "source_id": name,
                         "name": name,
                         "use_obo": True,
                         "obo_config": {
-                            "tenant_id": obo[0],
-                            "client_id": obo[1],
-                            "client_secret": obo[2],
-                            "scope": obo[3],
-                            "server": obo[4],
-                            "database": obo[5],
+                            "tenant_id": entra_tenant,
+                            "client_id": entra_client,
+                            "client_secret": entra_secret,
+                            "scope": obo[0],
+                            "server": obo[1],
+                            "database": obo[2],
                         },
                     }
                     adapter = AzureSQLAdapter(config)
@@ -116,6 +124,7 @@ class DataAccessModule:
                 "source_type": info.source_type,
                 "name": info.name,
                 "auth_type": info.auth_type,
+                "detail": info.detail,
             })
 
         return {
@@ -131,12 +140,12 @@ class DataAccessModule:
             raise ValueError(f"Unknown data source: {source_id}")
         return adapter
 
-    async def test_connection(self, source_id: str) -> dict:
+    async def test_connection(self, source_id: str, user_token: str | None = None) -> dict:
         """Test connection to a data source."""
         try:
             adapter = self.get_adapter(source_id)
-            return await adapter.test_connection()
-        except ValueError as e:
+            return await adapter.test_connection(user_token=user_token)
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
     async def list_available_data(
@@ -144,26 +153,27 @@ class DataAccessModule:
         source_id: str,
         path: str = "",
         recursive: bool = False,
+        user_token: str | None = None,
     ) -> dict:
         """List available data in a source."""
         try:
             adapter = self.get_adapter(source_id)
-            return await adapter.list_available_data(path, recursive)
-        except ValueError as e:
+            return await adapter.list_available_data(path, recursive, user_token=user_token)
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
-    async def get_schema(self, source_id: str, data_id: str) -> dict:
+    async def get_schema(self, source_id: str, data_id: str, user_token: str | None = None) -> dict:
         """Get schema for a data item."""
         try:
             adapter = self.get_adapter(source_id)
-            result = await adapter.get_schema(data_id)
+            result = await adapter.get_schema(data_id, user_token=user_token)
             if result.get("success") and "schema" in result:
                 result["schema"] = {
                     "columns": result["schema"].columns,
                     "metadata": result["schema"].metadata,
                 }
             return result
-        except ValueError as e:
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
     async def read_data(
@@ -173,12 +183,13 @@ class DataAccessModule:
         filter_expr: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        user_token: str | None = None,
     ) -> dict:
         """Read data from a source."""
         try:
             adapter = self.get_adapter(source_id)
-            return await adapter.read_data(data_id, filter_expr, limit, offset)
-        except ValueError as e:
+            return await adapter.read_data(data_id, filter_expr, limit, offset, user_token=user_token)
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
     async def execute_query(
@@ -186,12 +197,13 @@ class DataAccessModule:
         source_id: str,
         query: str,
         limit: int | None = None,
+        user_token: str | None = None,
     ) -> dict:
         """Run a free-form read-only query against a SQL source."""
         try:
             adapter = self.get_adapter(source_id)
-            return await adapter.execute_query(query, limit)
-        except ValueError as e:
+            return await adapter.execute_query(query, limit, user_token=user_token)
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
     async def download_data(
@@ -199,10 +211,11 @@ class DataAccessModule:
         source_id: str,
         data_id: str,
         destination_path: str,
+        user_token: str | None = None,
     ) -> dict:
         """Download data from a source."""
         try:
             adapter = self.get_adapter(source_id)
-            return await adapter.download_data(data_id, destination_path)
-        except ValueError as e:
+            return await adapter.download_data(data_id, destination_path, user_token=user_token)
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}

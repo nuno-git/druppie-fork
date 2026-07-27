@@ -59,9 +59,25 @@ class ToolCallStatus:
     EXECUTING = "executing"
     WAITING_APPROVAL = "waiting_approval"
     WAITING_ANSWER = "waiting_answer"
+    WAITING_ENTRA_AUTH = "waiting_entra_auth"
     WAITING_SANDBOX = "waiting_sandbox"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class EntraTokenMissing(Exception):
+    """Tool requires user.entra_token but it resolved to None.
+
+    Carries ``injected_args``: the fully-injected argument dict with every
+    other injection rule applied and the entra_token param stripped. Callers
+    that fall through (unlinked user, non-OBO source) must use this instead of
+    the pre-injection args, otherwise sibling injected params (session_id,
+    project_id, ...) are lost.
+    """
+    def __init__(self, user_id: str | None, injected_args: dict | None = None):
+        super().__init__(f"user.entra_token is None for user_id={user_id}")
+        self.user_id = user_id
+        self.injected_args = injected_args if injected_args is not None else {}
 
 
 # Builtin tool names (no MCP server needed)
@@ -106,9 +122,13 @@ ASK_EXPERT_CHOICE_TOOLS = {
 LONG_RUNNING_TOOLS = {
     "run_tests",
     "install_test_dependencies",
-    "compose_up",
+    "deploy",
 }
 LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
+
+# Servers where the first call can be slow (e.g. Synapse serverless cold start)
+SLOW_START_SERVERS = {"dataaccess"}
+SLOW_START_TIMEOUT = 120.0  # 2 minutes — covers SQL Login Timeout=90s + overhead
 
 # Tools where the LLM controls the timeout via an argument.
 # The agent specifies how long it expects the command to take,
@@ -210,6 +230,7 @@ class ToolExecutor:
         tool_name: str,
         args: dict,
         session_id: UUID | None,
+        context: "ToolContext | None" = None,
         agent_run_id: UUID | None = None,
     ) -> dict:
         """Apply declarative injection rules from mcp_config.yaml.
@@ -226,11 +247,12 @@ class ToolExecutor:
             tool_name: Tool name
             args: Original tool arguments
             session_id: Session ID for context resolution
+            context: Optional pre-built ToolContext (e.g. with Entra token already set)
 
         Returns:
             Updated args dict with injected values
         """
-        from druppie.execution.tool_context import ToolContext
+        from druppie.execution.tool_context import SENSITIVE_PATHS, ToolContext
 
         # Get injection rules for this server/tool
         rules = self.mcp_config.get_injection_rules(server, tool_name)
@@ -252,11 +274,18 @@ class ToolExecutor:
             original_args=list(args.keys()),
         )
 
-        # Create context for resolving paths
-        context = ToolContext(self._active_db, session_id, agent_run_id=agent_run_id)
+        # Use provided context or create a new one
+        if context is None:
+            context = ToolContext(self._active_db, session_id, agent_run_id=agent_run_id)
 
         # Apply each rule
         injected_args = dict(args)
+        # Deferred signal: a non-optional user.entra_token that resolved to
+        # None. We record it but keep processing the remaining rules so the
+        # other params (session_id, project_id, ...) still get injected, then
+        # raise once at the end carrying the fully-injected dict.
+        entra_missing_user_id: str | None = None
+        entra_missing = False
         for rule in rules:
             # For hidden params: always override (LLM shouldn't provide these)
             # For non-hidden params: skip if LLM already provided a value
@@ -266,14 +295,17 @@ class ToolExecutor:
             # Resolve the value from context
             value = context.resolve(rule.from_path)
             if value is not None:
+                is_sensitive = rule.from_path in SENSITIVE_PATHS
+                log_value = "<redacted>" if is_sensitive else value
+
                 if rule.hidden and rule.param in injected_args:
                     logger.warning(
                         "overriding_llm_value_for_hidden_param",
                         server=server,
                         tool=tool_name,
                         param=rule.param,
-                        llm_value=injected_args[rule.param],
-                        injected_value=value,
+                        llm_value="<redacted>" if is_sensitive else injected_args[rule.param],
+                        injected_value=log_value,
                     )
                 injected_args[rule.param] = value
                 logger.info(
@@ -282,16 +314,49 @@ class ToolExecutor:
                     tool=tool_name,
                     param=rule.param,
                     from_path=rule.from_path,
-                    value=value,
+                    value=log_value,
                 )
             else:
-                logger.warning(
-                    "injection_value_is_none",
-                    server=server,
-                    tool=tool_name,
-                    param=rule.param,
-                    from_path=rule.from_path,
-                )
+                # Value resolved to None.
+                # If the rule is optional, inject None and let the downstream
+                # tool/adapter decide whether it actually needs this value.
+                # This is critical for user.entra_token: key-based data sources
+                # (e.g., Azure Data Lake) don't need it, while OBO sources
+                # (e.g., waterschap) do — but the injection layer can't tell
+                # which source the tool will query.
+                if rule.optional:
+                    # Don't inject the param — let the MCP tool use its
+                    # default value (e.g. user_token="" which the tool
+                    # converts to None via `or None`).  This avoids
+                    # sending JSON null for a str-typed parameter.
+                    # Also strip any LLM-guessed value for hidden params.
+                    if rule.hidden and rule.param in injected_args:
+                        del injected_args[rule.param]
+                    logger.info(
+                        "skipping_optional_param_value_is_none",
+                        server=server,
+                        tool=tool_name,
+                        param=rule.param,
+                        from_path=rule.from_path,
+                    )
+                elif rule.from_path == "user.entra_token":
+                    # Non-optional entra_token missing → signal the caller to
+                    # pause. Strip any LLM-guessed value and DEFER the raise so
+                    # the remaining rules still inject their params.
+                    if rule.param in injected_args:
+                        del injected_args[rule.param]
+                    entra_missing = True
+                    entra_missing_user_id = (
+                        str(context.session.user_id) if context.session else None
+                    )
+                else:
+                    logger.warning(
+                        "injection_value_is_none",
+                        server=server,
+                        tool=tool_name,
+                        param=rule.param,
+                        from_path=rule.from_path,
+                    )
 
         logger.info(
             "injection_complete",
@@ -299,6 +364,15 @@ class ToolExecutor:
             tool=tool_name,
             final_args=list(injected_args.keys()),
         )
+
+        if entra_missing:
+            # All other params are injected; entra_token is stripped. Hand the
+            # fully-injected dict to the caller so an unlinked-user fallthrough
+            # runs the tool with the correct args.
+            raise EntraTokenMissing(
+                user_id=entra_missing_user_id,
+                injected_args=injected_args,
+            )
 
         return injected_args
 
@@ -1091,6 +1165,60 @@ class ToolExecutor:
 
         return ToolCallStatus.WAITING_APPROVAL
 
+    async def _handle_entra_token_missing(self, tool_call, user_id: str | None) -> str:
+        """Handle a tool that needs user.entra_token but it's not available.
+
+        Checks if the user has a linked Entra identity:
+        - If not linked: fails with a user-friendly message
+        - If linked: pauses with waiting_entra_auth for the HITL token flow
+        """
+        from druppie.core.entra_token import check_entra_linked, is_entra_configured
+
+        if not is_entra_configured():
+            self.execution_repo.update_tool_call(
+                tool_call.id,
+                status=ToolCallStatus.FAILED,
+                error=(
+                    "This tool requires Azure access, but Entra ID is not configured. "
+                    "Contact your administrator to set up Entra ID integration."
+                ),
+            )
+            self._active_db.commit()
+            return ToolCallStatus.FAILED
+
+        if not user_id:
+            self.execution_repo.update_tool_call(
+                tool_call.id,
+                status=ToolCallStatus.FAILED,
+                error="Cannot determine session owner for Entra ID authentication.",
+            )
+            self._active_db.commit()
+            return ToolCallStatus.FAILED
+
+        is_linked = await check_entra_linked(user_id)
+
+        if not is_linked:
+            logger.info(
+                "entra_token_missing_not_linked_proceeding",
+                tool_call_id=str(tool_call.id),
+                user_id=user_id,
+            )
+            return None
+
+        # User has a linked identity — pause and wait for frontend to provide token
+        self.execution_repo.update_tool_call(
+            tool_call.id,
+            status=ToolCallStatus.WAITING_ENTRA_AUTH,
+        )
+        self._active_db.commit()
+
+        logger.info(
+            "entra_token_missing_waiting_auth",
+            tool_call_id=str(tool_call.id),
+            user_id=user_id,
+        )
+        return ToolCallStatus.WAITING_ENTRA_AUTH
+
     async def _execute_hitl_tool(self, tool_call) -> str:
         """Execute a HITL or ask_expert tool by creating a Question record.
 
@@ -1241,6 +1369,38 @@ class ToolExecutor:
             choices_english=[{"text": c} for c in english_choices] if english_choices and is_translated else None,
         )
 
+        # Link attachments to the question if the agent provided attachment_ids.
+        attachment_ids = args.get("attachment_ids")
+        if attachment_ids:
+            raw_ids = [aid for aid in attachment_ids if isinstance(aid, str) and aid]
+            if raw_ids:
+                try:
+                    att_ids = [UUID(aid) for aid in raw_ids]
+                except ValueError as e:
+                    logger.warning(
+                        "hitl_attachment_invalid_uuid",
+                        error=str(e),
+                        question_id=str(question.id),
+                    )
+                else:
+                    from druppie.repositories import AttachmentRepository
+                    att_repo = AttachmentRepository(self._active_db)
+                    att_repo.validate_ownership(att_ids, tool_call.session_id)
+                    try:
+                        att_repo.link_to_question(att_ids, question.id, tool_call.session_id)
+                    except Exception as e:
+                        logger.warning(
+                            "hitl_attachment_link_failed",
+                            error=str(e),
+                            question_id=str(question.id),
+                        )
+                    else:
+                        logger.info(
+                            "hitl_attachments_linked",
+                            question_id=str(question.id),
+                            count=len(att_ids),
+                        )
+
         # Update tool call status to waiting
         self.execution_repo.update_tool_call(
             tool_call.id,
@@ -1378,13 +1538,26 @@ class ToolExecutor:
 
         # Apply declarative injection rules from mcp_config.yaml
         # This replaces all the hardcoded injection logic
-        args = self._apply_injection_rules(
-            server=tool_call.mcp_server,
-            tool_name=tool_call.tool_name,
-            args=args,
-            session_id=tool_call.session_id,
-            agent_run_id=tool_call.agent_run_id,
-        )
+        try:
+            args = self._apply_injection_rules(
+                server=tool_call.mcp_server,
+                tool_name=tool_call.tool_name,
+                args=args,
+                session_id=tool_call.session_id,
+                agent_run_id=tool_call.agent_run_id,
+            )
+        except EntraTokenMissing as e:
+            entra_result = await self._handle_entra_token_missing(tool_call, e.user_id)
+            if entra_result is not None:
+                return entra_result
+            # User has no Entra identity — proceed without token so
+            # non-OBO sources (datalake with key/public auth) still work.
+            # OBO sources will fail at the adapter level with a clear error.
+            # Use the fully-injected args from the exception (every other
+            # param already injected, entra_token stripped) — NOT the stale
+            # pre-injection dict, which would drop session_id/project_id/etc.
+            args = e.injected_args
+            args.pop("user_token", None)
 
         logger.info(
             "mcp_tool_post_injection",
@@ -1418,6 +1591,8 @@ class ToolExecutor:
                 timeout = min(requested, CUSTOM_TIMEOUT_MAX)
             elif tool_call.tool_name in LONG_RUNNING_TOOLS:
                 timeout = LONG_RUNNING_TIMEOUT
+            elif tool_call.mcp_server in SLOW_START_SERVERS:
+                timeout = SLOW_START_TIMEOUT
             else:
                 timeout = 60.0
 

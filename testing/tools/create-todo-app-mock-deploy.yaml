@@ -128,12 +128,12 @@ tool-test:
 
     # --- Deployer (mocked) ---
     - agent: deployer
-      tool: docker:list_containers
+      tool: docker:list_apps
       mock: true
       mock_result: '{"containers": []}'
 
     - agent: deployer
-      tool: docker:compose_up
+      tool: docker:deploy
       mock: true
       mock_result: '{"success": true, "containers": ["todo-app-1"], "url": "http://localhost:9101", "compose_project_name": "todo-app"}'
       arguments:

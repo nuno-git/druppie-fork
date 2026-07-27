@@ -1,9 +1,9 @@
 """Coding MCP Server - Security Module.
 
-Contains the BLOCKED_COMMAND_PATTERNS used by the bash tool for command safety.
-The sandbox orchestrator architecture moved all workspace/container management
-directly into tools.py. This module retains the security patterns for reference
-and potential reuse.
+Contains the BLOCKED_COMMAND_PATTERNS command blocklist. The sandbox
+orchestrator architecture moved all workspace/container management directly
+into tools.py (which carries its own copy of these patterns for the bash
+tool); this module retains the patterns for reference and potential reuse.
 """
 
 import re

@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-06-11
+Last updated: 2026-07-15
 
 ---
 
@@ -30,6 +30,7 @@ Last updated: 2026-06-11
 - ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 - ~~Scheduled Jobs (Cron Jobs)~~ ✅ DONE (see `feature/cronjobs` branch)
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
+- Entra ID Integration — Security Hardening (see details below)
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
 - ~~Language Matching~~ ✅ DONE
@@ -53,6 +54,10 @@ Last updated: 2026-06-11
 - Dependency Cache — Read-Only Cache Mount with Separate Write Service
 - Sandbox — Investigate Rootless Docker (dockerd-rootless) for E2E Testing
 - LLM Benchmark Candidate Backlog (untested / fast-fail-risk / too-large / API-only models)
+- ~~Document Formatter — Agent Pipeline Integration (Phase 2)~~ ✅ DONE
+- ~~Document Formatter — Mermaid/ArchiMate Rendering Inside PDFs~~ ✅ DONE (Mermaid via @preview/mmdr:0.2.2; ArchiMate via Python SVG export)
+- Document Formatter — Database Persistence & Download API (render cache exists; full document domain model + REST endpoints still needed)
+- ~~Document Formatter — Replace Lato with Neusa Next Std (if licensed)~~ ✅ DONE (Neusa Next Pro fonts added alongside Lato)
 
 ---
 
@@ -528,6 +533,54 @@ Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incr
 
 Deze items zijn out-of-scope voor de eerste Kubernetes migratie (Story 3) en worden in Phase 2 opgepakt.
 
+### Entra ID Integration — Security Hardening
+
+Security review findings from the Entra ID broker implementation. These are known issues to address before production use.
+
+#### Fixed
+
+- ~~**C1: `expected_user_id` verification is dead code**~~ — Partially fixed: compares KC token email vs Entra token email on every exchange. Full `expected_user_id` comparison (KC user ID vs Entra `oid` claim) is still backlogged.
+- ~~**H3: JWT audience verification disabled**~~ — Fixed: `verify_aud: True` with `audience: "account"`.
+- ~~**M3: `directAccessGrantsEnabled: true` on frontend client**~~ — Fixed: set to `false` in realm.yaml.
+- ~~**M4: `redirectUri: window.location.href` includes query params**~~ — Fixed: uses `origin + pathname`.
+- ~~**N1: LLM-provided `user_token` not scrubbed on fallthrough**~~ — Fixed: `args.pop("user_token", None)` after fallthrough.
+- ~~**N4: Internal infrastructure leaked in error messages**~~ — Fixed: sanitized to generic message.
+- ~~**N6: Path traversal via `work_item_type`**~~ — Fixed: URL-encoded with `quote()`.
+- ~~**L2: Bracket injection in SQL `data_id`**~~ — Fixed: `]` escaped to `]]` in identifier quoting.
+- ~~**L3: Broker 400 error body fully logged**~~ — Fixed: logs status code only.
+- ~~**H1: KC tokens in localStorage**~~ — Fixed: migrated to `sessionStorage` (clears on tab close).
+- ~~**H2: Allowlist only gates Azure API calls, not Druppie login**~~ — Fixed: email allowlist (`ENTRA_ALLOWED_EMAILS` env var) now gates Druppie login for Entra-brokered users.
+- ~~**H4: JWT allowlist relies on unverified claims**~~ — Fixed: config-driven audience + issuer validation from `entra_scope` in mcp_config.yaml.
+- ~~**N2: SQL injection filter bypassable**~~ — Fixed: expanded `_FILTER_FORBIDDEN` regex to match `_QUERY_FORBIDDEN` coverage.
+- ~~**M1: Dead ToolContext + fragile manual token injection**~~ — Fixed: pass pre-built `ToolContext` to `_apply_injection_rules`.
+- ~~**M5: KC bearer token captured in background task closure**~~ — Fixed: drop KC token reference after exchange in orchestrator.
+- ~~**N5: Hardcoded token scope mapping**~~ — Fixed: moved to `entra_scope` in mcp_config.yaml.
+- ~~**L1: Access token in URL query parameter**~~ — Fixed: fetch attachments via `Authorization` header + blob URL.
+- ~~**L4: No token expiry tracking**~~ — Fixed: track expiry in `ToolContext`, reject expired tokens (60s margin).
+- ~~**N-1: Audience validation bypass for HTTPS audiences**~~ — Fixed: removed `https://` bypass, added scope with `/.default` to known set.
+- ~~**N-2: Unbounded Entra-linked status cache**~~ — Fixed: TTL-based cache with 5-minute expiry.
+- ~~**N-3: Error message leaks internal details**~~ — Fixed: generic error message, details logged server-side.
+- ~~**N-6: SQL filter_expr blocklist bypassable**~~ — Fixed: added `CHAR(`, `0x`, `CONVERT(`, `CAST(`, `CONCAT(`, `STRING_AGG(`, `@@`, `DECLARE` to blocklist.
+- ~~**N-7: Dead code in 400 handler**~~ — Fixed: removed unused body parsing.
+- ~~**N-8: Entra token expiry bypass when exp claim missing**~~ — Fixed: log warning when exp claim missing.
+- ~~**N-9: WIQL queries from LLM not validated**~~ — Fixed: added `$top` server-side query parameter.
+
+#### Deferred — Accepted Risk
+
+- **C2: `storeToken: true` + `offline_access` = persistent credential store** — Keycloak stores long-lived Entra refresh tokens in its PostgreSQL database. These survive logout and can mint fresh Azure tokens indefinitely. **Decision:** Keycloak is accepted as a trusted component. Deferred to a future refinement — planned mitigation is reducing Entra refresh token lifetime to 24h via Entra Conditional Access or Token Lifetime Policy.
+
+#### Open
+
+- **N3: TLS cert validation disabled on SQL connections** — `azure_sql.py:118-119`: `TrustServerCertificate=yes` disables server cert verification. MITM on the Docker bridge can intercept OBO tokens and query results despite `Encrypt=yes`. Fix: remove `TrustServerCertificate=yes`. Requires infrastructure-level cert provisioning.
+
+#### New Findings (2026-07-15 scan)
+
+**Medium:**
+- **N-4: Entra token claims validated without signature verification** — `entra_token.py:42-107` decodes JWT payload via base64 without verifying the Entra token's signature against Microsoft's JWKS endpoint. Currently mitigated by TLS to Keycloak broker. Fix: add optional JWKS verification for defense-in-depth. Requires JWKS infrastructure.
+- **N-5: KC token held in background task closure** — `sessions.py:583-688` holds the KC bearer token in a background task closure between pre-check and resume. The pre-checked Entra token is discarded, requiring a second broker call. Fix: pass the pre-checked Entra token directly to avoid holding the KC token. Architectural change; mitigated by nulling after use.
+
+---
+
 | Item | Omschrijving | Prioriteit |
 |------|-------------|-----------|
 | KEDA queue-based scaling | KEDA ScaledObject met Prometheus trigger `druppie_pending_agent_runs` voor workload-aware backend scaling | Medium |
@@ -593,3 +646,28 @@ recorded reason until multi-node / RAM-MoE offload is available:
 OpenRouter-hosted, not cluster-downloadable (`category: api`) — testable via API
 only, if at all: MiniMax-M2.7, DeepSeek-V4-Flash, Hy3, Owl-Alpha, Nemotron-3-Super,
 Kimi-K2.6, Step-3.5-Flash.
+
+### Document Formatter (PDF Generation)
+
+**Status:** Phase 2 is live. Agents write native Typst (`.typ`) directly; the old Markdown→cmarker pipeline is gone.
+
+**Location:**
+- `druppie/services/document_formatter_service.py` — Typst CLI wrapper (`compile_typ`, `verify_typ`)
+- `druppie/services/pdf_render_service.py` — Render cache (`PdfRenderService.get_or_create_pdf()`)
+- `druppie/agents/builtin_tools.py` — `make_pdf_document`, `verify_typst` builtin tools
+- `druppie/agents/definitions/documenter.yaml` — Agent instructions for Typst authoring + PDF export
+- `druppie/templates/documents/rijnland.typ` — Corporate identity template
+- Tests: `test_document_formatter.py` (16 tests), `test_pdf_render_service.py` (4 tests), `test_builtin_tools.py` (2 tests)
+
+**Current state:**
+- Agents write native `.typ` files using the Rijnland template (`#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`).
+- `make_pdf_document` uses `PdfRenderService`, which reads source from Gitea (not local workspace), compiles via Typst, and caches renders keyed by Git blob SHA in `pdf_renders` table + `/app/workspace/uploads/pdf-cache/`.
+- Mermaid diagrams render via `@preview/mmdr:0.2.2` Typst package (no Chromium/Node.js).
+- ArchiMate diagrams export to SVG via pure-Python `svg_export.py` in `module-archimate/v1/` on `save_model`; embedded in Typst via `#image("docs/diagrams/...")`.
+- Font stack: Lato (Google Fonts, fallback) + Neusa Next Pro (brand fonts, installed in `assets/fonts/`).
+
+**Remaining work:**
+- Full document domain model (`DocumentSummary`/`DocumentDetail`) and REST endpoints (`GET /api/projects/{id}/documents`, etc.) for direct user-initiated PDF generation without an agent.
+- Frontend "Download PDF" button in chat timeline or project page.
+
+**Priority:** Medium — agent-driven PDF generation works; REST API purely adds convenience.

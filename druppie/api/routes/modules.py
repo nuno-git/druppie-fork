@@ -9,7 +9,7 @@ so apps don't need to handle the MCP Streamable HTTP protocol directly.
 Auth for /modules/{id}/call: when DRUPPIE_MODULE_API_TOKEN is set in the
 backend environment, callers must pass the matching token in the
 X-Druppie-Token header. The token is auto-injected into deployed apps
-via compose_up, so the SDK just forwards it transparently.
+via deploy, so the SDK just forwards it transparently.
 """
 
 import hmac

@@ -81,9 +81,6 @@ jobs:
           echo "Deploy tag: $DEPLOY_TAG"
 
       - name: Install Docker CLI and Buildx
-        # BuildKit is enabled (DOCKER_BUILDKIT=1) because the Dockerfiles use
-        # `RUN --mount=type=cache`, so the buildx plugin is required even though
-        # we call `docker build` (not `docker buildx build`) explicitly.
         run: |
           curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz -C /tmp
           install -m 755 /tmp/docker/docker /usr/local/bin/docker
@@ -102,9 +99,6 @@ jobs:
           yq --version
 
       - name: Configure Harbor credentials
-        # Writes DOCKER_CONFIG once; every later `docker` call reads it via the
-        # env var (no per-command --config). Registry + username come from
-        # secrets/env so they can't drift out of sync with the image paths.
         env:
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
@@ -114,21 +108,41 @@ jobs:
           printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$REGISTRY" "$AUTH" > /tmp/docker/config.json
           echo "DOCKER_CONFIG=/tmp/docker" >> $GITHUB_ENV
 
+      - name: Create BuildKit builder with registry cache
+        # docker-container driver is required for --cache-to type=registry.
+        # The buildkitd.toml marks Harbor as insecure (self-signed cert).
+        # Recreate each run so stale state never accumulates — the registry
+        # cache persists independently.
+        run: |
+          docker buildx rm ci-builder 2>/dev/null || true
+          cat > /tmp/buildkitd.toml << EOF
+          [registry."${REGISTRY}"]
+            insecure = true
+          EOF
+          docker buildx create --use --name ci-builder --driver docker-container \
+            --config /tmp/buildkitd.toml \
+            --buildkitd-flags '--allow-insecure-entitlement network.host'
+          docker buildx inspect --bootstrap
+
       - name: Build and push backend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
         run: |
-          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-backend:$TAG" .
-          docker push "$REGISTRY/druppie/druppie-backend:$TAG"
+          docker buildx build --build-arg CACHEBUST="$SHA" \
+            --cache-from "type=registry,ref=$REGISTRY/druppie/build-cache:backend" \
+            --cache-to "type=registry,ref=$REGISTRY/druppie/build-cache:backend,mode=max" \
+            -t "$REGISTRY/druppie/druppie-backend:$TAG" --push .
 
       - name: Build and push frontend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
         run: |
-          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
-          docker push "$REGISTRY/druppie/druppie-frontend:$TAG"
+          docker buildx build --build-arg CACHEBUST="$SHA" \
+            --cache-from "type=registry,ref=$REGISTRY/druppie/build-cache:frontend" \
+            --cache-to "type=registry,ref=$REGISTRY/druppie/build-cache:frontend,mode=max" \
+            -t "$REGISTRY/druppie/druppie-frontend:$TAG" --push ./frontend
 
       - name: Build and push init image
         env:
@@ -136,8 +150,10 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           if [ -f Dockerfile.init ]; then
-            docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
-            docker push "$REGISTRY/druppie/druppie-init:$TAG"
+            docker buildx build --build-arg CACHEBUST="$SHA" \
+              --cache-from "type=registry,ref=$REGISTRY/druppie/build-cache:init" \
+              --cache-to "type=registry,ref=$REGISTRY/druppie/build-cache:init,mode=max" \
+              -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init --push .
           fi
 
       - name: Build and push layout-service
@@ -145,15 +161,17 @@ jobs:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
         run: |
-          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
-          docker push "$REGISTRY/druppie/druppie-layout-service:$TAG"
+          docker buildx build --build-arg CACHEBUST="$SHA" \
+            --cache-from "type=registry,ref=$REGISTRY/druppie/build-cache:layout-service" \
+            --cache-to "type=registry,ref=$REGISTRY/druppie/build-cache:layout-service,mode=max" \
+            -t "$REGISTRY/druppie/druppie-layout-service:$TAG" --push ./druppie/mcp-servers/layout-service
 
       - name: Build and push MCP modules
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
         run: |
-          for module in module-coding module-docker module-web module-vision \
+          for module in module-coding module-deploy module-web module-vision \
                         module-archimate module-data-access module-registry \
                         module-filesearch module-kubernetes module-llm \
                         module-azuredevops module-searxng module-browser; do
@@ -165,8 +183,11 @@ jobs:
                 CONTEXT="./druppie/mcp-servers/"
               fi
               echo "Building $module (context=$CONTEXT)..."
-              docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-$module:$TAG" -f "$DF" "$CONTEXT"
-              docker push "$REGISTRY/druppie/druppie-$module:$TAG"
+              CACHE_KEY=$(echo "$module" | sed 's/^module-//')
+              docker buildx build --build-arg CACHEBUST="$SHA" \
+                --cache-from "type=registry,ref=$REGISTRY/druppie/build-cache:$CACHE_KEY" \
+                --cache-to "type=registry,ref=$REGISTRY/druppie/build-cache:$CACHE_KEY,mode=max" \
+                -t "$REGISTRY/druppie/druppie-$module:$TAG" -f "$DF" --push "$CONTEXT"
             fi
           done
 
@@ -176,9 +197,12 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
-            docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
-              -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s ./druppie/mcp-servers/module-coding
-            docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
+            docker buildx build --build-arg CACHEBUST="$SHA" \
+              --cache-from "type=registry,ref=$REGISTRY/druppie/build-cache:sandbox-k8s" \
+              --cache-to "type=registry,ref=$REGISTRY/druppie/build-cache:sandbox-k8s,mode=max" \
+              -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
+              -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s \
+              --push ./druppie/mcp-servers/module-coding
           fi
 
       - name: Check workspace changes
@@ -228,28 +252,31 @@ jobs:
             echo "Dockerfile.dev-workspace not present — skipping"
             exit 0
           fi
+          CACHE_REF="$REGISTRY/druppie/build-cache:dev-workspace"
           if [ "$CHANGED" = "true" ]; then
-            docker build --build-arg CACHEBUST="$SHA" \
+            docker buildx build --build-arg CACHEBUST="$SHA" \
+              --cache-from "type=registry,ref=$CACHE_REF" \
+              --cache-to "type=registry,ref=$CACHE_REF,mode=max" \
               -t "$REGISTRY/druppie/dev-workspace:$TAG" \
-              -f Dockerfile.dev-workspace .
+              -f Dockerfile.dev-workspace --push .
           else
-            # No workspace changes: reuse the cached :latest under the new tag so
-            # the bumped global.imageTag always resolves. Fall back to a build if
-            # :latest is missing (e.g. fresh registry).
-            if ! docker pull "$REGISTRY/druppie/dev-workspace:latest"; then
+            if ! docker buildx imagetools inspect "$REGISTRY/druppie/dev-workspace:latest" >/dev/null 2>&1; then
               echo ":latest not found — building instead"
-              docker build --build-arg CACHEBUST="$SHA" \
+              docker buildx build --build-arg CACHEBUST="$SHA" \
+                --cache-from "type=registry,ref=$CACHE_REF" \
+                --cache-to "type=registry,ref=$CACHE_REF,mode=max" \
                 -t "$REGISTRY/druppie/dev-workspace:$TAG" \
-                -f Dockerfile.dev-workspace .
+                -f Dockerfile.dev-workspace --push .
             else
-              docker tag "$REGISTRY/druppie/dev-workspace:latest" "$REGISTRY/druppie/dev-workspace:$TAG"
+              docker buildx imagetools create \
+                -t "$REGISTRY/druppie/dev-workspace:$TAG" \
+                "$REGISTRY/druppie/dev-workspace:latest"
             fi
           fi
-          docker push "$REGISTRY/druppie/dev-workspace:$TAG"
-          # Push :latest only from long-lived branches
           if [ "$BRANCH" = "colab-dev" ] || [ "$BRANCH" = "main" ]; then
-            docker tag "$REGISTRY/druppie/dev-workspace:$TAG" "$REGISTRY/druppie/dev-workspace:latest"
-            docker push "$REGISTRY/druppie/dev-workspace:latest"
+            docker buildx imagetools create \
+              -t "$REGISTRY/druppie/dev-workspace:latest" \
+              "$REGISTRY/druppie/dev-workspace:$TAG"
           fi
 
       - name: Summary

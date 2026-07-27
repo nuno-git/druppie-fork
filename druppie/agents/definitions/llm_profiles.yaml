@@ -49,6 +49,12 @@ profiles:
   # In-cluster LLMKube/vLLM via model router (OpenAI-compatible, no API key required).
   # The router auto-switches between modes: DeepSeek (TP=2) or Qwen (27B+35B).
   # DeepSeek is first (primary), Qwen 35B is fallback, Qwen 27B is last resort.
+  #
+  # DYNAMIC: entries are filtered against the models the endpoint actually
+  # serves (GET /v1/models) at resolution time; order = preference, best
+  # first. Rank new local models here as they are deployed. 'auto' is a
+  # catch-all that resolves to the first served model not claimed by an
+  # earlier entry, so a brand-new model is usable before it has been ranked.
   llmkube:
     - provider: llmkube
       model: deepseek-v4-flash
@@ -56,3 +62,5 @@ profiles:
       model: qwen3.6-35b-a3b
     - provider: llmkube
       model: qwen3.6-27b
+    - provider: llmkube
+      model: auto

@@ -1,0 +1,136 @@
+# Per-app CI/CD pipeline for a Druppie-generated application.
+#
+# This is a trimmed copy of Druppie's own .gitea/workflows/build.yaml:
+#   1. Build the app image (shared DinD runner, BuildKit)
+#   2. Push to Harbor (harbor.rijnland.dev/druppie/<repo-name>:<branch>-<ts>-<sha>)
+#   3. Bump image.tag in this app's ai/k8s HelmRelease
+#      (clusters/user-apps/<slug>/helmrelease.yaml) -> Flux rolls it out.
+#
+# Secrets (org-level on the `ai` org — see ai/k8s BOOTSTRAP.md §4):
+#   HARBOR_REGISTRY, HARBOR_USERNAME, HARBOR_PASSWORD  (Harbor robot, push+pull)
+#   CI_GIT_TOKEN  (write to ai/k8s — see §5.1-A hardening; scoped robot account,
+#                  Gitea "environment" tied to deploy branches, branch protection)
+#
+# See docs/stories/build-deploy-without-docker.md (ai/druppie) for the design.
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main, 'release/**']
+  workflow_dispatch:
+
+env:
+  REGISTRY: ${{ secrets.HARBOR_REGISTRY }}
+  HARBOR_USER: ${{ secrets.HARBOR_USERNAME }}
+  DOCKER_BUILDKIT: "1"
+
+# Serialize per-branch so two pushes don't race the ai/k8s imageTag bump.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive names + tag
+        id: names
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          # repo name -> image name + ai/k8s path slug (lowercase, [a-z0-9-] only)
+          REPO_NAME="$(basename "$REPO")"
+          IMAGE_NAME="$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')"
+          SLUG="$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9-]/-/g' -e 's/--*/-/g' -e 's/^-*//' -e 's/-*$//')"
+          BRANCH="${{ github.ref_name }}"
+          BRANCH_SLUG="$(echo "$BRANCH" | sed 's#[^A-Za-z0-9._-]#-#g')"
+          SHORT_SHA="$(echo "${{ github.sha }}" | cut -c1-8)"
+          TIMESTAMP="$(date -u +%Y%m%d%H%M%S)"
+          TAG="${BRANCH_SLUG}-${TIMESTAMP}-${SHORT_SHA}"
+          {
+            echo "image_name=$IMAGE_NAME"
+            echo "slug=$SLUG"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Image: $REGISTRY/druppie/$IMAGE_NAME:$TAG"
+          echo "ai/k8s path: clusters/user-apps/$SLUG/helmrelease.yaml"
+
+      - name: Install Docker CLI + Buildx
+        run: |
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz -C /tmp
+          install -m 755 /tmp/docker/docker /usr/local/bin/docker
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL https://github.com/docker/buildx/releases/download/v0.20.1/buildx-v0.20.1.linux-amd64 \
+            -o /usr/local/lib/docker/cli-plugins/docker-buildx
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+
+      - name: Install yq (robust HelmRelease patching)
+        run: |
+          curl -fsSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
+          chmod +x /usr/local/bin/yq
+
+      - name: Configure Harbor credentials
+        env:
+          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          USER="${HARBOR_USER:-robot\$druppie+druppie-ci}"
+          mkdir -p /tmp/docker
+          AUTH="$(printf '%s:%s' "$USER" "$HARBOR_PASS" | base64 -w0)"
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$REGISTRY" "$AUTH" > /tmp/docker/config.json
+          echo "DOCKER_CONFIG=/tmp/docker" >> "$GITHUB_ENV"
+
+      - name: Build and push image
+        env:
+          IMAGE: ${{ steps.names.outputs.image_name }}
+          TAG: ${{ steps.names.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/$IMAGE:$TAG" .
+          docker push "$REGISTRY/druppie/$IMAGE:$TAG"
+
+      - name: Bump image.tag in ai/k8s HelmRelease
+        # Option A (§5.1): this CI holds a scoped CI_GIT_TOKEN to bump the app's
+        # OWN HelmRelease only. Path convention: clusters/user-apps/<slug>/. If
+        # the app hasn't been deployed yet (no HelmRelease), there's nothing to
+        # bump — skip. Flux then rolls the new tag out within ~1m.
+        env:
+          SLUG: ${{ steps.names.outputs.slug }}
+          TAG: ${{ steps.names.outputs.tag }}
+          GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
+        run: |
+          HR_FILE="clusters/user-apps/${SLUG}/helmrelease.yaml"
+          AUTH="$(printf 'druppie-ci:%s' "$GIT_TOKEN" | base64 -w0)"
+          git config --global http.https://aigit.waterschap.org/.extraheader "AUTHORIZATION: basic $AUTH"
+          git clone https://aigit.waterschap.org/ai/k8s.git /tmp/k8s
+          cd /tmp/k8s
+
+          if [ ! -f "$HR_FILE" ]; then
+            echo "No HelmRelease at $HR_FILE (app not deployed yet) — skipping"
+            exit 0
+          fi
+
+          git config user.name "druppie-ci"
+          git config user.email "druppie-ci@users.noreply.rijnland.dev"
+          export TAG
+          yq -i '.spec.values.image.tag = strenv(TAG)' "$HR_FILE"
+
+          if git diff --quiet; then
+            echo "No changes — tag already up to date"
+          else
+            git add "$HR_FILE"
+            git commit -m "ci: auto-update $SLUG image tag to ${TAG}"
+            # Retry with rebase: another app's build may push ai/k8s concurrently.
+            for attempt in 1 2 3 4 5; do
+              if git push origin main; then
+                echo "Pushed image tag: ${TAG}"
+                exit 0
+              fi
+              echo "Push failed (attempt $attempt/5); rebasing and retrying..."
+              git pull --rebase origin main
+              sleep 5
+            done
+            echo "ERROR: could not push image tag update after 5 attempts" >&2
+            exit 1
+          fi

@@ -1,16 +1,18 @@
 {{- if .Values.agentSandbox.enabled }}
 # Pre-warmed pool of agent-coding sandboxes for instant allocation.
 # At scale (1500 users), this eliminates the ~10s cold-start per sandbox.
+# Per-instance: each Druppie instance gets its own WarmPool in its own
+# sandbox namespace (e.g. druppie-sandbox, druppie-colab-dev-sandbox).
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
 metadata:
-  name: agent-coding-warmpool
+  name: "{{ .Values.global.instance }}-warmpool"
   namespace: "{{ .Values.global.instance }}-sandbox"
 spec:
   replicas: {{ .Values.agentSandbox.warmPool.replicas | default 5 }}
   updateStrategy:
     type: Recreate
   sandboxTemplateRef:
-    name: agent-coding-template
+    name: "{{ .Values.global.instance }}-agent-coding-template"
 {{- end }}

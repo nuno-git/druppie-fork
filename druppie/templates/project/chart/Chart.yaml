@@ -1,0 +1,9 @@
+apiVersion: v2
+name: app
+description: >-
+  Starter Helm chart for a Druppie-generated application. Lives in each app's
+  own repo at `chart/`; a Flux HelmRelease in ai/k8s (clusters/user-apps/<slug>/)
+  references it. See docs/stories/build-deploy-without-docker.md (ai/druppie).
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

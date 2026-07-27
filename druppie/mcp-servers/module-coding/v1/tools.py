@@ -55,7 +55,8 @@ mcp = FastMCP(
 # CONFIGURATION
 # =============================================================================
 
-GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
+GITEA_INTERNAL_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
+GITEA_URL = os.getenv("GITEA_URL", GITEA_INTERNAL_URL)
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
@@ -361,6 +362,8 @@ async def _is_container_running(container_id: str) -> bool:
 
 async def _get_container_death_reason(container_id: str) -> str | None:
     """If a container has exited, return a human-readable reason. None if still running."""
+    if SANDBOX_MODE == "k8s":
+        return "sandbox terminated (k8s mode)"
     rc, stdout, _ = await _docker_run(
         ["docker", "inspect", "--format",
          "{{.State.Running}}|{{.State.OOMKilled}}|{{.State.ExitCode}}|{{.State.Status}}",
@@ -461,15 +464,21 @@ async def _create_sandbox_container(
         repo_owner = DRUPPIE_CORE_REPO_OWNER
         effective_gitea_url = DRUPPIE_CORE_GITEA_URL
     else:
-        effective_gitea_url = GITEA_URL
+        effective_gitea_url = GITEA_INTERNAL_URL if SANDBOX_MODE == "k8s" else GITEA_URL
 
     # ── K8s mode: use agent-sandbox SDK ──────────────────────────────────
+    # In k8s mode the host-side clone + push run from the workspace pod (or
+    # module-coding pod), which can only reach the *internal* Gitea service
+    # (ClusterIP). The external Gitea URL is unreachable from inside the cluster
+    # (blocked by NetworkPolicy / no route). Use GITEA_INTERNAL_URL for all
+    # in-cluster git operations. The external URL is only needed for the
+    # update_core scope (aigit.waterschap.org), which has its own CNP.
     if SANDBOX_MODE == "k8s":
         scope = git_scope or "current_project"
         clone_url = None
         branch = "main"
         if scope == "current_project" and repo_name:
-            clone_url = _get_gitea_clone_url(repo_name, repo_owner)
+            clone_url = _get_gitea_clone_url(repo_name, repo_owner, GITEA_INTERNAL_URL)
         elif scope == "update_core":
             clone_url = _get_gitea_clone_url(DRUPPIE_CORE_REPO_NAME, DRUPPIE_CORE_REPO_OWNER, DRUPPIE_CORE_GITEA_URL)
             branch = DRUPPIE_CORE_REPO_BRANCH
@@ -612,7 +621,7 @@ async def _create_sandbox_container(
         if rc == 0:
             await _docker_run(
                 ["git", "-C", tmp_dir, "remote", "set-url", "origin",
-                 f"http://gitea:3000/{owner}/{repo_name}.git"],
+                 f"{GITEA_URL}/{owner}/{repo_name}.git"],
                 timeout=10,
             )
 
@@ -3238,6 +3247,7 @@ async def _internal_revert_to_commit(
         # Force push via bundle mechanism (same as push_changes but force)
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+        resolved_gitea_url = entry.get("gitea_url", GITEA_URL)
 
         force_pushed = False
         if resolved_repo_name and branch != "main" and _is_gitea_configured():
@@ -3283,3 +3293,114 @@ async def _internal_revert_to_commit(
     except Exception as e:
         logger.error("revert_to_commit error: %s", e)
         return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# MCP TOOLS — SCHEDULED PR REVIEW (fixed repo allowlist, no sandbox needed)
+# =============================================================================
+# These three tools talk to the external Gitea REST API directly from this
+# module; they never touch a sandbox container. The Gitea instance, token and
+# repo allowlist are server configuration (PRREVIEW_*, defaulting to
+# EXTERNAL_GITEA_*) — never tool arguments — so an agent cannot review or
+# comment outside them. Which PRs need review is decided in code (head SHA vs
+# sticky-comment marker), and post_pr_review edits one sticky comment per PR,
+# so reviews never stack. PrReviewModule is stateless and cheap: one instance
+# per call, and a missing configuration surfaces as a per-call error instead
+# of failing the whole coding module at startup.
+
+from .pr_review import PrReviewModule  # noqa: E402
+
+
+def _pr_review_module() -> PrReviewModule | None:
+    try:
+        return PrReviewModule()
+    except ValueError as exc:
+        logger.warning("pr_review_unconfigured: %s", exc)
+        return None
+
+
+_PR_REVIEW_UNCONFIGURED = {
+    "success": False,
+    "error": (
+        "PR review is not configured on this deployment "
+        "(set PRREVIEW_REPOS and Gitea credentials)."
+    ),
+}
+
+
+@mcp.tool()
+async def list_prs_needing_review() -> dict:
+    """List open PRs that changed since their last review (deduped server-side).
+
+    A PR needs review when its head commit differs from the SHA recorded in its
+    sticky review comment. Draft PRs and unchanged PRs are skipped; the result
+    is capped per run (skipped_over_cap tells you how many wait for next run).
+
+    Returns:
+        Dict with prs (repo, number, title, author, base_branch, head_branch,
+        head_sha, previously_reviewed_sha, url), total_needing_review,
+        skipped_over_cap, skipped_unchanged and skipped_drafts counts.
+    """
+    module = _pr_review_module()
+    if module is None:
+        return dict(_PR_REVIEW_UNCONFIGURED)
+    return await module.list_prs_needing_review()
+
+
+@mcp.tool()
+async def get_pr_diff(repo: str, pr_number: int) -> dict:
+    """Fetch the unified diff of a PR (base...head), size-guarded.
+
+    Args:
+        repo: '<owner>/<repo>' — must come from list_prs_needing_review.
+        pr_number: The PR number to fetch.
+
+    Returns:
+        Dict with diff (unified diff text) and diff_lines. When the diff is
+        over the size limit, too_large is true and diff is null — post a
+        SKIPPED_TOO_LARGE review instead of reviewing.
+    """
+    module = _pr_review_module()
+    if module is None:
+        return dict(_PR_REVIEW_UNCONFIGURED)
+    return await module.get_pr_diff(repo, pr_number)
+
+
+@mcp.tool()
+async def post_pr_review(
+    repo: str,
+    pr_number: int,
+    head_sha: str,
+    verdict: str,
+    body: str,
+    comments: list[dict] | None = None,
+) -> dict:
+    """Publish the review: a sticky summary comment plus optional inline notes.
+
+    Posting also marks the PR as reviewed at head_sha, so it will not be
+    reviewed again until new commits are pushed. Summaries never stack — the
+    sticky comment is edited in place — and inline comments never stack either:
+    the bot's previous review is deleted before the new one is posted.
+
+    Args:
+        repo: '<owner>/<repo>' — must come from list_prs_needing_review.
+        pr_number: The PR number to review.
+        head_sha: The head_sha value from list_prs_needing_review (records
+            exactly which commit was reviewed).
+        verdict: One of APPROVE, REQUEST_CHANGES, COMMENT, SKIPPED_TOO_LARGE.
+        body: The review body in Markdown (one-line summary + verdict rationale).
+        comments: Optional list of line-anchored findings, each a dict with
+            keys: file (path), line (NEW-file line number in the diff),
+            severity (BLOCKER/MAJOR/MINOR/NIT), title, body (Markdown). Lines
+            that fall outside a changed hunk are folded into the summary body
+            instead of being dropped. The inline review is always posted with
+            event=COMMENT, so the bot never changes the PR's merge state.
+
+    Returns:
+        Dict with action (created/updated), comment_id, comment_url, and the
+        inline_comments_posted / inline_comments_overflow counts.
+    """
+    module = _pr_review_module()
+    if module is None:
+        return dict(_PR_REVIEW_UNCONFIGURED)
+    return await module.post_pr_review(repo, pr_number, head_sha, verdict, body, comments)

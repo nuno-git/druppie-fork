@@ -24,6 +24,9 @@ spec:
       annotations:
         reloader.stakater.com/auto: "true"
     spec:
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       serviceAccountName: {{ include "druppie.fullname" . }}-module-kubernetes
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:

@@ -1,0 +1,32 @@
+# CiliumNetworkPolicy: allow module-deploy to reach the external GitOps Gitea.
+# module-deploy commits user-app manifests to ai/k8s and dispatches
+# app CI workflows via the Gitea API on {{ .Values.gitea.external.url }}
+# ({{ .Values.gitea.external.ip }}). The app-net NetworkPolicy blocks egress to
+# 10/8, so without this exception every deploy times out. Mirrors
+# cnp-backend-gitops.yaml.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-deploy-gitops
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-deploy
+  egress:
+    - toFQDNs:
+        - matchPattern: "{{ .Values.gitea.external.url | replace "https://" "" | replace "http://" "" }}"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toCIDR:
+        - {{ .Values.gitea.external.ip }}/32
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

@@ -7,7 +7,7 @@ PORT="${3:?port required}"
 
 WORKSPACE="/workspace"
 REPO="${WORKSPACE}/druppie"
-MOD_DIR="${REPO}/mcp-servers/${DIR}"
+MOD_DIR="${REPO}/druppie/mcp-servers/${DIR}"
 VENV="${WORKSPACE}/.venvs/${KEY}"
 BAKED="/opt/venvs/${KEY}"
 DEP_DIR="${WORKSPACE}/.dep-hashes"
@@ -37,6 +37,8 @@ if [ -f "${REQ}" ]; then
     echo "[module-dev] deps unchanged — reusing venv"
   fi
 fi
+
+export PYTHONPATH="${REPO}/druppie/mcp-servers:${MOD_DIR}:${PYTHONPATH:-}"
 
 echo "[module-dev] starting ${KEY} on 0.0.0.0:${PORT} from ${DIR}"
 cd "${MOD_DIR}"

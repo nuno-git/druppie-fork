@@ -18,7 +18,12 @@ the GitOps repo (reconciled by Kustomization/branch-envs with prune):
     namespace.yaml        Namespace + owner/branch annotations (authz metadata)
     gitrepository.yaml    Flux GitRepository pinned to the branch (chart source)
     helmrelease.yaml      HelmRelease with the branch overrides + imageTag
-    externalsecrets.yaml  druppie-tls mirror + harbor-regcred (ESO)
+
+ExternalSecrets (TLS, Harbor, git token), the CA ConfigMap, and all
+static branch-env defaults (CPU, modules, storage) live in the Helm chart
+(``values-branch-env.yaml`` + chart templates), which is pulled from the
+feature branch — so each branch can edit its own environment config
+without touching ``colab-dev``.
 
 Because both the prod and colab-dev instances read/write the same git repo,
 the feature is safe to enable on multiple instances: git (compare-and-swap on
@@ -81,8 +86,6 @@ APP_BASE_BRANCH = os.getenv("BRANCH_ENV_APP_BASE_BRANCH", "colab-dev")
 
 BRANCH_ENV_REGISTRY = os.getenv("BRANCH_ENV_REGISTRY", "harbor.rijnland.dev/druppie")
 BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
-# Ephemeral StorageClass: 1 replica, strict-local, reclaimPolicy=Delete.
-BRANCH_ENV_STORAGE_CLASS = os.getenv("BRANCH_ENV_STORAGE_CLASS", "longhorn-branch-env")
 
 # Secrets source for branch envs: determines the Vault path prefix for env
 # secrets. "colab-dev" → druppie/colab-dev/*, any other value maps to
@@ -108,10 +111,6 @@ ALL_MODULES = [
     "layout_service",
     "azuredevops",
 ]
-# Dev-profile CPU requests: a whole env must fit on the shared pinned node, so
-# request little and burst up to the chart's default limits. Memory requests
-# stay at chart defaults (the node is CPU-request-bound, not memory-bound).
-_DEV_CPU = {"backend": "100m", "component": "50m", "module": "25m"}
 
 # Namespaces that must never be deployed to or torn down by this service
 # (live instances).
@@ -254,6 +253,7 @@ def build_helmrelease_yaml(
     workspace_enabled: bool = True,
     stack_mode: str = "real",
     recovery_mode: bool = False,
+    ca_chain: str | None = None,
 ) -> str:
     namespace = f"druppie-{slug}"
     annotations = {
@@ -266,6 +266,8 @@ def build_helmrelease_yaml(
         annotations["reconcile.fluxcd.io/requestedAt"] = reconcile_epoch
         annotations["reconcile.fluxcd.io/forceAt"] = reconcile_epoch
 
+    # Only truly dynamic values — everything else lives in the chart's
+    # values-branch-env.yaml (editable by the feature branch itself).
     values: dict = {
         "global": {
             "instance": namespace,
@@ -273,61 +275,21 @@ def build_helmrelease_yaml(
             "imageRegistry": BRANCH_ENV_REGISTRY,
             "imagePullSecrets": [{"name": BRANCH_ENV_PULL_SECRET}],
         },
-        # Branch envs are reached via Traefik ingress, not NodePort — ClusterIP
-        # so they don't grab cluster-global NodePorts held by the live instance.
-        "backend": {
-            "service": {"type": "ClusterIP"},
-            "resources": {"requests": {"cpu": _DEV_CPU["backend"]}},
-        },
-        "frontend": {
-            "service": {"type": "ClusterIP"},
-            "resources": {"requests": {"cpu": _DEV_CPU["component"]}},
-        },
-        "keycloak": {
-            "service": {"type": "ClusterIP"},
-            "resources": {"requests": {"cpu": _DEV_CPU["component"]}},
-        },
-        "gitea": {
-            "service": {"type": "ClusterIP"},
-            "resources": {"requests": {"cpu": _DEV_CPU["component"]}},
-        },
-        "modules": {
-            module: {
-                "resources": {"requests": {"cpu": _DEV_CPU["module"]}},
-                **({"enabled": False} if recovery_mode else {}),
-            }
-            for module in ALL_MODULES
-        },
-        # The branch namespace IS the hot-reload dev workspace: a single pod
-        # (code-server + uvicorn --reload + Vite HMR) replaces the baked
-        # backend/frontend Deployments. externalSecrets.managed=true lets ESO
-        # own <instance>-secrets; devWorkspace.secretsSource determines the
-        # Vault path prefix (druppie/colab-dev/* or druppie/developers/<name>/*).
-        "externalSecrets": {"managed": True},
-        # Ephemeral storage: 1 replica + Delete reclaim policy. Branch-env
-        # data is disposable (DBs rebuilt by the init job, repos re-cloned
-        # from git); 3 replicas would triple the cost and Retain leaves
-        # orphaned volumes that clog the Longhorn scheduler after teardown.
-        "persistence": {"storageClass": BRANCH_ENV_STORAGE_CLASS},
         "devWorkspace": {
             "enabled": workspace_enabled,
             "stackMode": "degraded" if recovery_mode else stack_mode,
             "secretsSource": secrets_source,
             "gitBranch": branch,
             "codeServer": {"devHost": _workspace_host(host)},
-            "caConfigMap": "aigit-ca",
-            # All MCP modules run inside the workspace pod under uvicorn --reload
-            # so edits in code-server hot-reload instantly (no push needed).
-            # layout_service is excluded — it's not an MCP module.
-            "embedModules": [m for m in ALL_MODULES if m != "layout_service"],
         },
-        # Agent sandbox (gVisor) — branch envs share the cluster-wide
-        # SandboxTemplate + WarmPool in sandbox-runtime; we only need the
-        # per-instance RBAC so the workspace pod can create SandboxClaims.
-        "agentSandbox": {"enabled": True},
     }
+    if ca_chain:
+        values["global"]["caChain"] = ca_chain
     if recovery_mode:
         values["recoveryMode"] = True
+        values["modules"] = {
+            module: {"enabled": False} for module in ALL_MODULES
+        }
     if image_tag is not None:
         values["global"]["imageTag"] = image_tag
 
@@ -354,84 +316,25 @@ def build_helmrelease_yaml(
                             "namespace": "flux-system",
                         },
                         "reconcileStrategy": "Revision",
-                        # Same layering as the original imperative deploy:
-                        # base values + rijnland overrides, from the BRANCH.
+                        # Layering: base → rijnland cluster → branch-env defaults.
+                        # Feature branches can edit values-branch-env.yaml to
+                        # tune their own environment (CPU, modules, storage, etc.).
                         "valuesFiles": [
                             "helm/druppie/values.yaml",
                             "helm/druppie/values-rijnland.yaml",
+                            "helm/druppie/values-branch-env.yaml",
                         ],
                     }
                 },
                 "install": {"timeout": "10m", "remediation": {"retries": 3}},
                 "upgrade": {
                     "timeout": "10m",
-                    "cleanupOnFail": True,
+                    "cleanupOnFail": False,
                     "remediation": {"retries": 3},
                 },
                 "values": values,
             },
         }
-    )
-
-
-def build_externalsecrets_yaml(slug: str) -> str:
-    namespace = f"druppie-{slug}"
-    return _dump(
-        # Wildcard TLS cert, mirrored from ns druppie (not in Vault) via the
-        # druppie-tls-mirror ClusterSecretStore (ESO kubernetes provider).
-        {
-            "apiVersion": "external-secrets.io/v1",
-            "kind": "ExternalSecret",
-            "metadata": {"name": "druppie-tls", "namespace": namespace},
-            "spec": {
-                "refreshInterval": "1h",
-                "secretStoreRef": {"name": "druppie-tls-mirror", "kind": "ClusterSecretStore"},
-                "target": {
-                    "name": "druppie-tls",
-                    "creationPolicy": "Owner",
-                    "template": {"type": "kubernetes.io/tls"},
-                },
-                "data": [
-                    {
-                        "secretKey": "tls.crt",
-                        "remoteRef": {"key": "druppie-tls", "property": "tls.crt"},
-                    },
-                    {
-                        "secretKey": "tls.key",
-                        "remoteRef": {"key": "druppie-tls", "property": "tls.key"},
-                    },
-                ],
-            },
-        },
-        # Harbor pull secret, same Vault path as the live instances.
-        {
-            "apiVersion": "external-secrets.io/v1",
-            "kind": "ExternalSecret",
-            "metadata": {"name": BRANCH_ENV_PULL_SECRET, "namespace": namespace},
-            "spec": {
-                "refreshInterval": "1h",
-                "secretStoreRef": {"name": "vault-ai-team-k8s", "kind": "ClusterSecretStore"},
-                "target": {
-                    "name": BRANCH_ENV_PULL_SECRET,
-                    "creationPolicy": "Owner",
-                    "template": {
-                        "type": "kubernetes.io/dockerconfigjson",
-                        "data": {
-                            ".dockerconfigjson": (
-                                '{"auths":{"{{ .registry }}":{"username":"{{ .username }}",'
-                                '"password":"{{ .password }}",'
-                                '"auth":"{{ printf "%s:%s" .username .password | b64enc }}"}}}'
-                            )
-                        },
-                    },
-                },
-                "data": [
-                    {"secretKey": "username", "remoteRef": {"key": "ci/harbor", "property": "username"}},
-                    {"secretKey": "password", "remoteRef": {"key": "ci/harbor", "property": "password"}},
-                    {"secretKey": "registry", "remoteRef": {"key": "ci/harbor", "property": "registry"}},
-                ],
-            },
-        },
     )
 
 
@@ -453,35 +356,10 @@ def _read_aigit_ca() -> str | None:
     return None
 
 
-def build_aigit_ca_configmap_yaml(slug: str) -> str | None:
-    """Build the aigit-ca ConfigMap YAML for a branch env namespace.
-
-    Returns None if the CA chain is not available (local dev).
-    """
-    ca_chain = _read_aigit_ca()
-    if not ca_chain:
-        return None
-    return _dump(
-        {
-            "apiVersion": "v1",
-            "kind": "ConfigMap",
-            "metadata": {
-                "name": "aigit-ca",
-                "namespace": f"druppie-{slug}",
-            },
-            "data": {
-                "chain.pem": ca_chain,
-            },
-        }
-    )
-
-
 _ENV_FILES = (
     "namespace.yaml",
     "gitrepository.yaml",
     "helmrelease.yaml",
-    "externalsecrets.yaml",
-    "configmap-aigit-ca.yaml",
 )
 
 
@@ -1078,6 +956,7 @@ class BranchEnvironmentService:
         await self.gitea.dispatch_workflow(CHART_REPO, branch)
 
         created_at = _utcnow_iso()
+        ca_chain = _read_aigit_ca()
         files = [
             {
                 "operation": "create",
@@ -1095,26 +974,12 @@ class BranchEnvironmentService:
                 "operation": "create",
                 "path": self._env_path(slug, "helmrelease.yaml"),
                 "content": build_helmrelease_yaml(
-                    slug, branch, host, image_tag, created_at, secrets_source=secrets_source, recovery_mode=recovery_mode
+                    slug, branch, host, image_tag, created_at,
+                    secrets_source=secrets_source, recovery_mode=recovery_mode,
+                    ca_chain=ca_chain,
                 ),
             },
-            {
-                "operation": "create",
-                "path": self._env_path(slug, "externalsecrets.yaml"),
-                "content": build_externalsecrets_yaml(slug),
-            },
         ]
-        # Corporate CA ConfigMap — lets curl/httpx reach aigit.waterschap.org
-        # from inside the branch env without --insecure.
-        ca_cm = build_aigit_ca_configmap_yaml(slug)
-        if ca_cm:
-            files.append(
-                {
-                    "operation": "create",
-                    "path": self._env_path(slug, "configmap-aigit-ca.yaml"),
-                    "content": ca_cm,
-                }
-            )
         await self.gitea.change_files(
             f"branch-env: deploy {namespace} (branch {branch}, by {owner_id})", files
         )
@@ -1178,6 +1043,7 @@ class BranchEnvironmentService:
             secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             workspace_enabled=env.get("workspace_enabled", True),
             stack_mode=env.get("stack_mode", "real"),
+            ca_chain=_read_aigit_ca(),
         )
         await self._change_files_with_retry(
             slug,
@@ -1303,6 +1169,7 @@ class BranchEnvironmentService:
             secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             workspace_enabled=True,
             stack_mode=env.get("stack_mode", "real"),
+            ca_chain=_read_aigit_ca(),
         )
         await self._change_files_with_retry(
             slug,
@@ -1356,6 +1223,7 @@ class BranchEnvironmentService:
             secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             workspace_enabled=False,
             stack_mode=env.get("stack_mode", "real"),
+            ca_chain=_read_aigit_ca(),
         )
         await self._change_files_with_retry(
             slug,

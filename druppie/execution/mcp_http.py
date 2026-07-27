@@ -190,7 +190,7 @@ class MCPHttp:
         server: str,
         tool: str,
         args: dict[str, Any],
-        timeout_seconds: float | None = 60.0,
+        timeout_seconds: float | None = 300.0,
         max_retries: int = 3,
         base_delay: float = 1.0,
     ) -> dict[str, Any]:

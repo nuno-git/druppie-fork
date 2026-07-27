@@ -1,7 +1,13 @@
 id: test_pipeline_job
 name: Test Pipeline
 description: A lightweight test job that verifies the cron pipeline works end-to-end.
-schedule: "0 0 31 2 *"
+# Disabled so it never auto-fires: this test job is meant to be run manually
+# via POST /api/jobs/{definition_id}/trigger (trigger_job ignores `enabled`).
+# NB: a never-run enabled job with any past occurrence fires once immediately
+# on first deploy (see JobService._should_run), so a "far future" schedule is
+# NOT enough — the job must be disabled. Schedule must still be a REAL date;
+# an impossible one like "31 2" raises CroniterBadDateError every scheduler tick.
+schedule: "0 0 29 2 *"
 agent_id: summarizer
 prompt: |
   This is an automated test of the cron job pipeline.
@@ -11,4 +17,4 @@ prompt: |
   the scheduled job pipeline is working correctly.
 approval_required: false
 required_role: null
-enabled: true
+enabled: false

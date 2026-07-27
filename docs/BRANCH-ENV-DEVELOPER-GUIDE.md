@@ -406,7 +406,7 @@ Branch environments don't auto-expire. When you're done, stop it from the Branch
 
 [Screenshot: Branch Environments page with the Stop button]
 
-**Warning:** Stopping deletes **everything** — pods, PVCs, database, all data. The `longhorn-branch-env` StorageClass has `reclaimPolicy: Delete`. Save important data first.
+**Warning:** Stopping deletes **everything** — pods, PVCs, database, all data. The `longhorn-local` StorageClass has `reclaimPolicy: Delete`. Save important data first.
 
 ---
 

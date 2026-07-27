@@ -20,6 +20,7 @@ class JobDefinitionSummary(BaseModel):
     required_role: str | None = None
     enabled: bool
     last_triggered_at: datetime | None = None
+    next_run_at: datetime | None = None
     created_at: datetime
 
 
@@ -48,9 +49,26 @@ class JobRunSummary(BaseModel):
     rejection_reason: str | None = None
 
 
+class JobRunUsage(BaseModel):
+    """Aggregated LLM usage of a job run's session, for cost transparency.
+
+    Local (llmkube) models have no per-token price, so cost is expressed in
+    what actually drives it: number of LLM calls, tokens and wall time.
+    fallback_calls > 0 means an external provider was involved after all.
+    """
+    llm_calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    duration_ms: int
+    fallback_calls: int
+    models: list[str]
+
+
 class JobRunDetail(JobRunSummary):
     """Full job run with logs. Inherits from JobRunSummary."""
     logs: str | None = None
+    usage: JobRunUsage | None = None
 
 
 class JobRunList(BaseModel):

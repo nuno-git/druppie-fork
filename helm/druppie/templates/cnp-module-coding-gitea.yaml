@@ -1,0 +1,44 @@
+{{- if and (or .Values.prReview.repos .Values.agentSandbox.enabled) .Values.modules.coding.enabled }}
+# CiliumNetworkPolicy: allow the module-coding pod to reach the external Gitea
+# ({{ .Values.gitea.external.url }}). Two code paths in this pod talk to aigit:
+#
+#   1. The scheduled PR reviewer (pr_review.py) calls aigit's REST API directly
+#      via httpx (list_prs_needing_review / get_pr_diff / post_pr_review).
+#   2. In k8s sandbox mode the host-side clone for git_scope=update_core runs
+#      from THIS pod (see tools.py: "host-side clone ... from the module-coding
+#      pod"), cloning ai/druppie from DRUPPIE_CORE_GITEA_URL (aigit).
+#
+# The app-net NetworkPolicy blocks egress to private IPs (10/8), but Gitea
+# resolves to {{ .Values.gitea.external.ip }}. Without this exception both paths
+# hang and time out (ConnectTimeout) — the PR list reads as "0 PRs" and any
+# update_core read_file/clone fails after the 60s MCP timeout. Same pattern as
+# cnp-dev-workspace-gitea.yaml and cnp-backend-gitops.yaml (Cilium unions CNP
+# and NP egress). This is the file values.yaml references as covering aigit
+# egress. Gated on either path being active (prReview.repos or agentSandbox).
+# module-coding always runs as its own pod, so component: module-coding matches.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-coding-gitea
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-coding
+  egress:
+    - toFQDNs:
+        - matchPattern: "{{ .Values.gitea.external.url | replace "https://" "" | replace "http://" "" }}"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toCIDR:
+        - {{ .Values.gitea.external.ip }}/32
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+{{- end }}

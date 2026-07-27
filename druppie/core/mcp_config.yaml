@@ -127,6 +127,18 @@ mcps:
       - name: list_project_files
         requires_approval: false
 
+      # Scheduled PR review (fixed Gitea repo allowlist via PRREVIEW_REPOS).
+      # Instance/token/allowlist are server-side config, never tool arguments.
+      # Dedup is decided in code (head SHA vs sticky-comment marker) and
+      # post_pr_review edits one sticky comment per PR, so reviews never
+      # stack. Ungated: they run from a scheduled job with no session owner.
+      - name: list_prs_needing_review
+        requires_approval: false
+      - name: get_pr_diff
+        requires_approval: false
+      - name: post_pr_review
+        requires_approval: false
+
       # Internal tools (not visible to agents, callable by backend)
       - name: validate_design
         requires_approval: false
@@ -135,39 +147,41 @@ mcps:
       - name: _internal_close_pull_request
         requires_approval: false
 
-  docker:
-    url: ${MCP_DOCKER_URL:-http://module-docker:9002}
+  deploy:
+    url: ${MCP_DEPLOY_URL:-http://module-deploy:9002}
     type: core
-    # Declarative injection rules for docker MCP
+    # Declarative injection rules for deploy MCP
     inject:
       session_id:
         from: session.id
         hidden: true
-        tools: [build, run, compose_up]  # Only these tools accept session_id
+        tools: [build, deploy]
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [build, compose_up]  # Only build needs repo info
+        tools: [build, deploy]
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [build, compose_up]
+        tools: [build, deploy]
       user_id:
         from: session.user_id
         hidden: true
-        tools: [run, compose_up]  # For ownership labels
+        tools: [deploy]
       project_id:
         from: session.project_id
         hidden: true
-        tools: [run, compose_up]  # For ownership labels
+        tools: [deploy]
     tools:
       - name: build
-        # GLOBAL: docker:build ALWAYS needs developer approval (per goal.md)
         requires_approval: true
         required_role: developer
 
-      - name: run
-        # GLOBAL: docker:run ALWAYS needs developer approval (per goal.md)
+      - name: deploy
+        requires_approval: true
+        required_role: developer
+
+      - name: teardown
         requires_approval: true
         required_role: developer
 
@@ -177,27 +191,11 @@ mcps:
       - name: logs
         requires_approval: false
 
-      - name: remove
-        requires_approval: true
-        required_role: developer
-
-      - name: list_containers
+      - name: list_apps
         requires_approval: false
 
       - name: inspect
         requires_approval: false
-
-      - name: exec_command
-        requires_approval: true
-        required_role: developer
-
-      - name: compose_up
-        requires_approval: true
-        required_role: developer
-
-      - name: compose_down
-        requires_approval: true
-        required_role: developer
 
   # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
@@ -443,6 +441,7 @@ mcps:
   dataaccess:
     url: ${MCP_DATA_ACCESS_URL:-http://module-data-access:9010}
     type: module
+    entra_scope: "https://database.windows.net/.default"
     inject:
       session_id:
         from: session.id
@@ -452,6 +451,10 @@ mcps:
         from: project.id
         hidden: true
         tools: [download_data]
+      user_token:
+        from: user.entra_token
+        hidden: true
+        tools: [test_connection, list_available_data, get_schema, read_data, execute_query, download_data, create_chart_from_source]
     tools:
       - name: list_sources
         requires_approval: false
@@ -502,6 +505,12 @@ mcps:
   azuredevops:
     url: ${MCP_AZUREDEVOPS_URL:-http://module-azuredevops:9012}
     type: module
+    entra_scope: "499b84ac-1321-427f-aa17-267ca6975798/.default"
+    inject:
+      user_token:
+        from: user.entra_token
+        hidden: true
+        tools: [list_backlog_items, get_work_item, search_work_items, get_current_sprint, get_sprint_summary, get_work_item_comments, add_work_item_comment, create_work_item, update_work_item]
     tools:
       - name: list_backlog_items
         requires_approval: false
@@ -513,6 +522,11 @@ mcps:
         requires_approval: false
       - name: get_sprint_summary
         requires_approval: false
+      - name: get_work_item_comments
+        requires_approval: false
+      - name: add_work_item_comment
+        requires_approval: true
+        required_role: session_owner
       - name: create_work_item
         requires_approval: true
         required_role: session_owner

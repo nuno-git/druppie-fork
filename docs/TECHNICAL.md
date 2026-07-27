@@ -20,7 +20,7 @@ Druppie is a full-stack platform composed of the following services:
 | MCP File Search | Python / FastMCP | 9004 | Local file search within datasets |
 | MCP Web | Python / FastMCP | 9005 | Web browsing, URL fetching, web search |
 | MCP ArchiMate | Python / FastMCP | 9006 | ArchiMate model operations (list, read, search, export) |
-| MCP Azure DevOps | Python / FastMCP | 9012 | Read-only backlog / work items for a single Azure DevOps project |
+| MCP Azure DevOps | Python / FastMCP | 9012 | Backlog / work items for a single Azure DevOps project (read + write with approval) |
 | Sandbox Control Plane | Node.js | 8787 | Sandbox session/event management, coordinates sandbox lifecycle |
 | Sandbox Manager | Node.js | 8000 | Creates/manages sandbox Docker containers, enforces resource limits |
 | Sandbox Image Builder | Docker | — | One-shot build producing `open-inspect-sandbox:latest` image |
@@ -106,6 +106,8 @@ druppie/
       mcps.py            # MCP server status
       mcp_bridge.py      # Direct MCP tool invocation
       sandbox.py         # Sandbox session registration, events proxy, completion webhook
+      datasources.py     # Connected services (data sources, DevOps, Entra status)
+      users.py           # User profile (avatar endpoint)
   services/
     session_service.py
     approval_service.py
@@ -114,6 +116,8 @@ druppie/
     workflow_service.py
     deployment_service.py
     revert_service.py
+    avatar_service.py    # Entra ID profile photo fetch + disk cache
+    document_formatter_service.py
   repositories/
     session_repository.py
     approval_repository.py
@@ -157,7 +161,8 @@ druppie/
     tool_executor.py     # Routes tool calls to MCP or builtins
     mcp_http.py          # HTTP client for MCP servers
   agents/
-    runtime.py           # Agent facade (public API)
+    runtime.py           # Legacy agent facade (public API)
+    runtime_v2.py        # Current agent facade using agent_runtime library
     loop.py              # Core LLM ↔ tool-calling loop
     definition_loader.py # Loads YAML definitions, resolves placeholders
     message_history.py   # Reconstructs agent state from DB for resume
@@ -177,8 +182,9 @@ druppie/
   core/
     config.py            # Settings from env vars
     auth.py              # Keycloak JWT validation
+    entra_token.py       # Entra ID token exchange, claim validation, email allowlist
     gitea.py             # Gitea API client
-    mcp_config.yaml      # MCP server URLs, approval rules, injection — NOT tool schemas
+    mcp_config.yaml      # MCP server URLs, approval rules, injection, entra_scope
     mcp_config.py        # Loader for mcp_config.yaml
     tool_registry.py     # Discovers tools via tools/list at startup; MCPHttp consolidated here
   mcp-servers/
@@ -187,7 +193,7 @@ druppie/
       server.py
       v1/tools.py        # @mcp.tool() definitions (single source of truth for schemas)
       v1/module.py
-    module-docker/       # Port 9002 — container lifecycle
+    module-deploy/       # Port 9002 — container lifecycle
     module-filesearch/   # Port 9004 — local file search
     module-web/          # Port 9005 — web browsing/search
     module-archimate/    # Port 9006 — ArchiMate model ops
@@ -207,26 +213,64 @@ druppie/
 
 ### Azure DevOps backlog MCP (single-project isolation)
 
-`module-azuredevops` (port 9012) gives agents **read-only** access to the backlog /
-work items of **exactly one** Azure DevOps project. It authenticates to Azure DevOps
-with an **Entra ID service principal** (`ClientSecretCredential`, resource scope
-`{scope_id}/.default`); tokens are fetched on demand and
-never written to disk. Configuration is via env vars: `AZURE_DEVOPS_ORG_URL`,
-`AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_TENANT_ID`, `AZURE_DEVOPS_CLIENT_ID`,
-`AZURE_DEVOPS_CLIENT_SECRET` (the server fails fast at startup if any are missing).
+`module-azuredevops` (port 9012) gives agents access to the backlog / work items of
+**exactly one** Azure DevOps project. It supports two authentication modes:
+
+1. **User-scoped OBO tokens (preferred):** When the logged-in user has a linked Entra
+   identity, the backend exchanges the Keycloak broker refresh token for an Azure
+   DevOps-scoped access token (`499b84ac-1321-427f-aa17-267ca6975798/.default`). This
+   token is injected as a hidden `user_token` parameter via `mcp_config.yaml` rules.
+   Operations are performed as the actual user.
+2. **Service principal fallback:** For non-Entra users, authentication falls back to
+   `ClientSecretCredential` (resource scope `{scope_id}/.default`). Tokens are fetched
+   on demand and never written to disk.
+
+Configuration is via env vars: `AZURE_DEVOPS_ORG_URL`, `AZURE_DEVOPS_PROJECT`,
+`AZURE_DEVOPS_TENANT_ID`, `AZURE_DEVOPS_CLIENT_ID`, `AZURE_DEVOPS_CLIENT_SECRET`
+(the server fails fast at startup if any are missing).
 
 Project isolation is enforced in two independent layers:
 
-1. **Azure-side (the real boundary):** grant the service principal read-only access to
-   only the one project. Any other project returns 403 from Azure itself.
+1. **Azure-side (the real boundary):** grant the service principal access to only the
+   one project. Any other project returns 403 from Azure itself.
 2. **Server-side allowlist:** every tool is hard-scoped to `AZURE_DEVOPS_PROJECT` — the
    project is put in the REST path and the WIQL `[System.TeamProject]` clause, is never a
    tool argument, and there is no `list_projects` tool. So the server cannot be steered
    at another project even if the credential were over-scoped.
 
-Tools: `list_backlog_items`, `get_work_item`, `search_work_items` (all
-`requires_approval: false`). Consumed by the **Product Owner** agent. Isolation is pinned
-by `druppie/tests/test_azuredevops_isolation.py`.
+Read tools: `list_backlog_items`, `get_work_item`, `search_work_items`,
+`get_current_sprint`, `get_sprint_summary`, `get_work_item_comments` (all
+`requires_approval: false`). Write tools: `create_work_item`, `update_work_item`,
+`add_work_item_comment` (`requires_approval: true`, `required_role: session_owner`).
+Consumed by the **Product Owner** agent. Isolation is pinned by
+`druppie/tests/test_azuredevops_isolation.py`.
+
+### 2.6 Document Formatter Service
+
+PDF compilation from native **Typst** source files authored by agents. The Documenter agent writes `.typ` files using the Rijnland corporate identity template, pushes them to Gitea, and calls `builtin:make_pdf_document` to generate PDFs.
+
+**Flow:** Agent writes `.typ` file → pushes to Gitea → calls `builtin:make_pdf_document` → `PdfRenderService.get_or_create_pdf()` fetches source from Gitea → checks render cache (`pdf_renders` table keyed by Git blob SHA) → cache hit returns instantly; cache miss compiles via `DocumentFormatterService.compile_typ()` → stores PDF → creates `MessageAttachment` record → user downloads via `/api/attachments/{id}`.
+
+**Template library:** `druppie/templates/documents/rijnland.typ` — exposes a `rijnland_doc(body, ...)` function with parameters for document type (FO, TO, technical_research, core_documentation), title, status, TOC, watermark, section breaks, and author. Agents import it with `#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`. `base.typ` remains as a backward-compat alias but the Markdown conversion pipeline is gone.
+
+**Rijnland corporate identity applied by the template:**
+
+- Primary color `#0065BD` (PMS 300)
+- Secondary palette: sand/zand, dark-blue, mint, brick
+- Typography: Neusa Next Pro (brand headings) with Lato as fallback. Body uses `weight: "light"`; headings use `weight: "bold"`.
+- Logo: `Logo-hoogheemraadschap-rijnland.png` centered on title page at 12cm wide; not shown on content pages
+- Pay-off: "droge voeten, schoon water" on title page
+- Grid-based margins: 25mm sides, 32mm bottom
+- Draft watermark: semi-transparent rotated text in **foreground** layer (`transparentize(50%)`) when `include_watermark == true && status != "FINAL"` — visible above all content including title page
+- Table of contents: optional via `include_toc`
+- Tables: Rijnland blue header row, striped rows, rounded corners
+- Code blocks: light blue background (`#E9EFFA`), rounded corners
+- Footer: Full-bleed dijk-en-sloot shape (`dijkEnSloot.png`) above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page / total". Excluded from title page.
+- Diagram rendering: Mermaid diagrams are rendered inline by the `@preview/mmdr:0.2.2` Typst package (pure Typst, no Chromium/Node.js). ArchiMate diagrams export to SVG via the `archimate:save_model` MCP tool (`module-archimate/v1/svg_export.py`, pure Python) and are embedded via `#image()` in the Typst source.
+
+**Font path resolution:** The Dockerfile installs Typst CLI and sets `TYPST_FONT_PATHS` to `/app/druppie/templates/documents/assets/fonts`. Custom TTF/OTF files are referenced by their internal family name (verify with `typst fonts --font-path <dir>`). The Google Fonts Lato files register as family **"Lato"** — weight is controlled via Typst's `weight` parameter. Neusa Next Pro files register as family **"Neusa Next Pro"**.
+
+**Test fixtures:** `druppie/templates/documents/test-inputs/` contains FO and TO `.typ` source files for pytest.
 
 ---
 
@@ -642,7 +686,7 @@ gitea               Gitea 1.21        :3100   Git hosting
 druppie-backend     FastAPI           :8100   Backend API
 druppie-frontend    Vite/React        :5273   Frontend
 module-coding       FastMCP           :9001   File/git operations
-module-docker       FastMCP           :9002   Docker operations
+module-deploy       FastMCP           :9002   Docker operations
 module-filesearch   FastMCP           :9004   File search
 module-web          FastMCP           :9005   Web browsing
 module-archimate    FastMCP           :9006   ArchiMate models
@@ -839,10 +883,11 @@ The agent runtime is split into focused modules:
 
 | Module | Class | Purpose |
 |--------|-------|---------|
-| `runtime.py` | `Agent` | Public facade — coordinates loader, prompt builder, and loop |
+| `runtime.py` | `Agent` | Legacy facade — coordinates loader, prompt builder, and loop |
+| `runtime_v2.py` | `AgentV2` | Current runtime facade — integrates with the `agent_runtime` library; maps pause reasons (including Entra auth) via `_infer_pause_reason()` |
 | `loop.py` | `AgentLoop` | Core LLM ↔ tool-calling loop, skill tool enrichment |
 | `definition_loader.py` | `AgentDefinitionLoader` | Loads YAML definitions and system prompts |
-| `message_history.py` | `reconstruct_from_db()` | Rebuilds agent message history from DB for resume |
+| `message_history.py` | `reconstruct_from_db()` | Rebuilds agent message history from DB for resume; handles orphaned `tool_use` blocks during Entra auth resume |
 | `prompt_builder.py` | `PromptBuilder` | Builds system/user prompts with context injection |
 
 The core loop (`AgentLoop.run()`):
@@ -959,6 +1004,8 @@ The `ToolCall` database record is the source of truth. `Question` and `Approval`
 
 **Skill-based access control:** When a tool call comes from an agent with active skills, the executor also checks whether the tool is allowed by any of the agent's skills (via `_is_tool_allowed_via_skill()`). This extends the agent's tool access beyond its static YAML `mcps` configuration.
 
+**ContextVar DB sessions:** The tool executor uses a ContextVar-based DB session pattern (`self._active_db`) for database access during tool execution. Entra token retrieval and injection follow this pattern to ensure correct session scoping in async contexts.
+
 ### 8.7 Skills System
 
 Skills are reusable prompt/instruction packages stored as Markdown files in `druppie/skills/<skill-name>/SKILL.md`. Each skill has YAML frontmatter (`name`, `description`, `allowed-tools`) and a Markdown body with instructions.
@@ -1006,8 +1053,9 @@ Key resume methods:
 
 - `resume_after_approval()`: Executes the approved tool, then continues the paused agent.
 - `resume_after_answer()`: Saves the answer to the tool call result, then continues the paused agent.
+- `resume_after_entra_auth()`: Resumes an agent paused for Entra ID authorization. Uses `AgentV2` to continue the run after the frontend auto-submits the broker token exchange.
 
-Both methods reconstruct agent state from the database (LLM call history, tool call results) so the agent can continue where it left off.
+All methods reconstruct agent state from the database (LLM call history, tool call results) so the agent can continue where it left off.
 
 **Cooperative pause/cancellation:** The orchestrator checks the session status (via DB poll) before each agent run and after each agent completes. If the status is `paused` or `cancelled`, it stops executing further runs. The agent loop also checks the session status between LLM iterations. This means stopping is cooperative -- it happens at the next check point, not mid-LLM-call. See section 8.9 for the full stop and resume architecture.
 
@@ -1141,7 +1189,7 @@ Five policies control traffic:
 - `sandbox-net`: sandbox pods accept ingress only from backend and module-coding
 - `sandbox-inet`: sandbox pods can reach the internet but not private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
 - `sandbox-modules`: module-coding accepts ingress only from backend
-- `sandbox-modules-docker`: module-docker accepts ingress only from backend
+- `sandbox-modules-docker`: module-deploy accepts ingress only from backend
 
 ### 9.5 Init System
 
@@ -1413,7 +1461,7 @@ Key responsibilities:
 
 #### Layer 9: `compat.py` — Backend Compatibility Bridge
 
-Bridges the storage-agnostic runtime to the existing Druppie backend without modifying either. Provides `adapt_llm()` (wraps the old `BaseLLM` as the runtime's async LLM callable), `DruppieToolProvider` (implements the `ToolProvider` protocol over the old `ToolExecutor`/builtin tools, persisting every call to the DB via short-lived sessions), `create_event_persister()` (an event callback that maps runtime `AgentEvent`s to DB writes for runs, LLM calls, tool calls, and compaction events), `SubagentsMCPConnection` (in-process MCP wrapper around `SubagentsMCP`), and `old_definition_to_new()` (converts the old Pydantic `AgentDefinition` to the new dataclass).
+Bridges the storage-agnostic runtime to the existing Druppie backend without modifying either. Provides `adapt_llm()` (wraps the old `BaseLLM` as the runtime's async LLM callable), `DruppieToolProvider` (implements the `ToolProvider` protocol over the old `ToolExecutor`/builtin tools, persisting every call to the DB via short-lived sessions), `create_event_persister()` (an event callback that maps runtime `AgentEvent`s to DB writes for runs, LLM calls, tool calls, and compaction events), `SubagentsMCPConnection` (in-process MCP wrapper around `SubagentsMCP`), and `old_definition_to_new()` (converts the old Pydantic `AgentDefinition` to the new dataclass). Also bridges the `waiting_entra_auth` pause status from the `ToolExecutor` to the new runtime's pause/resume mechanism.
 
 ### 11.4 Data Flow
 

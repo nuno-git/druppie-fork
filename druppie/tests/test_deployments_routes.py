@@ -136,7 +136,7 @@ def test_logs_missing_owner_label_denied(client, mcp, as_other):
 # =============================================================================
 
 
-def _list_containers(containers: list[dict]):
+def _list_apps(containers: list[dict]):
     return {"success": True, "containers": containers}
 
 
@@ -147,8 +147,8 @@ def test_wipe_admin_removes_all(client, mcp, as_admin):
                     "druppie.compose_project": "app"}},
     ]
     mcp.call.side_effect = [
-        _list_containers(containers),          # list_containers
-        {"success": True},                     # compose_down
+        _list_apps(containers),          # list_apps
+        {"success": True},                     # teardown
     ]
     r = client.post(f"/api/deployments/project/{PROJECT_ID}/wipe")
     assert r.status_code == 200
@@ -164,7 +164,7 @@ def test_wipe_owner_allowed(client, mcp, as_owner):
          "labels": {"druppie.project_id": PROJECT_ID, "druppie.user_id": OWNER_SUB}},
     ]
     mcp.call.side_effect = [
-        _list_containers(containers),          # list_containers
+        _list_apps(containers),          # list_apps
         {"success": True},                     # remove (standalone)
     ]
     r = client.post(f"/api/deployments/project/{PROJECT_ID}/wipe")
@@ -176,7 +176,7 @@ def test_wipe_non_owner_403(client, mcp, as_other):
         {"name": "app-1",
          "labels": {"druppie.project_id": PROJECT_ID, "druppie.user_id": OWNER_SUB}},
     ]
-    mcp.call.side_effect = [_list_containers(containers)]
+    mcp.call.side_effect = [_list_apps(containers)]
     r = client.post(f"/api/deployments/project/{PROJECT_ID}/wipe")
     assert r.status_code == 403
 
@@ -184,13 +184,13 @@ def test_wipe_non_owner_403(client, mcp, as_other):
 def test_wipe_missing_label_is_foreign(client, mcp, as_other):
     # A container without druppie.user_id must NOT be wipeable by a non-admin.
     containers = [{"name": "x", "labels": {"druppie.project_id": PROJECT_ID}}]
-    mcp.call.side_effect = [_list_containers(containers)]
+    mcp.call.side_effect = [_list_apps(containers)]
     r = client.post(f"/api/deployments/project/{PROJECT_ID}/wipe")
     assert r.status_code == 403
 
 
 def test_wipe_empty_project_404_for_non_admin(client, mcp, as_other):
-    mcp.call.side_effect = [_list_containers([])]
+    mcp.call.side_effect = [_list_apps([])]
     r = client.post(f"/api/deployments/project/{PROJECT_ID}/wipe")
     assert r.status_code == 404
 

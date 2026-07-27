@@ -85,7 +85,7 @@ EMBED_MODULES="${EMBED_MODULES:-}"
 # start_mcp_module fall back to a runtime venv build, or skip with a warning.
 declare -A MCP_MODULES=(
     [coding]="module-coding 9001"
-    [docker]="module-docker 9002"
+    [docker]="module-deploy 9002"
     [filesearch]="module-filesearch 9004"
     [web]="module-web 9005"
     [archimate]="module-archimate 9006"
@@ -624,13 +624,14 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
           "tool_call": true,
           "limit": { "context": 262144, "output": 32768 },
           "options": {
-            "temperature": 0.1,
+            "temperature": 0.6,
             "top_p": 0.95,
             "extraBody": {
               "top_k": 20,
+              "min_p": 0.0,
               "presence_penalty": 0.0,
               "repetition_penalty": 1.0,
-              "chat_template_kwargs": { "enable_thinking": true }
+              "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }
             }
           }
         },
@@ -641,12 +642,41 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
           "tool_call": true,
           "limit": { "context": 262144, "output": 32768 },
           "options": {
-            "temperature": 0.1,
+            "temperature": 0.6,
             "top_p": 0.95,
             "extraBody": {
               "top_k": 20,
+              "min_p": 0.0,
               "presence_penalty": 0.0,
               "repetition_penalty": 1.0,
+              "chat_template_kwargs": { "enable_thinking": true, "preserve_thinking": true }
+            }
+          }
+        },
+        "deepseek-v4-flash": {
+          "name": "DeepSeek V4 Flash (284B MoE, B12X)",
+          "id": "deepseek-v4-flash",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": { "context": 262144, "output": 32768 },
+          "options": {
+            "temperature": 0.1,
+            "top_p": 0.95,
+            "extraBody": {
+              "chat_template_kwargs": { "thinking": true, "reasoning_effort": "high" }
+            }
+          }
+        },
+        "laguna-s-2.1": {
+          "name": "Laguna S 2.1 (118B MoE, NVFP4)",
+          "id": "laguna-s-2.1",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": { "context": 262144, "output": 32768 },
+          "options": {
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "extraBody": {
               "chat_template_kwargs": { "enable_thinking": true }
             }
           }
@@ -656,7 +686,7 @@ cat > "${HOME}/.config/opencode/opencode.jsonc" << 'OPENCODE_CFG'
   }
 }
 OPENCODE_CFG
-log "opencode: Waterschap LLM provider configured (qwen3.6-27b, qwen3.6-35b-a3b)"
+log "opencode: Waterschap LLM provider configured (qwen3.6-27b, qwen3.6-35b-a3b, deepseek-v4-flash, laguna-s-2.1)"
 
 # ---------------------------------------------------------------------------
 # 2d. Patch kubeconfig to use internal API server endpoint.
