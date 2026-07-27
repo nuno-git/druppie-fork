@@ -98,7 +98,7 @@ class BoundedOrchestrator:
                         self._cancel_remaining_runs(session_id, execution_repo, session_repo)
                         return
 
-                context = orchestrator.build_project_context(session_id)
+                context = await orchestrator.build_project_context(session_id)
                 execution_repo.update_status(next_run.id, AgentRunStatus.RUNNING)
                 execution_repo.commit()
 
@@ -154,7 +154,7 @@ class BoundedOrchestrator:
             self._db.flush()
 
             # Build context from the session's project
-            context = orchestrator.build_project_context(session_id)
+            context = await orchestrator.build_project_context(session_id)
 
             # Get the accumulated summary from the LAST completed run.
             # Each run's done() already accumulates all prior summaries,

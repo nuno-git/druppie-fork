@@ -1001,7 +1001,7 @@ class Orchestrator:
         self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
         self.execution_repo.commit()
 
-        context = self.build_project_context(session_id)
+        context = await self.build_project_context(session_id)
         db = self.execution_repo.db
         agent = Agent(agent_id, db=db, session_id=str(session_id))
 
