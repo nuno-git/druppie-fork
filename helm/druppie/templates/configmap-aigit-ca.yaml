@@ -1,0 +1,14 @@
+{{- if .Values.global.caChain }}
+# Corporate CA chain for aigit.waterschap.org (private CA).
+# Mounted by pods that need TLS verification when reaching Gitea/Harbor.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aigit-ca
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+data:
+  chain.pem: |
+{{ .Values.global.caChain | indent 4 }}
+{{- end }}

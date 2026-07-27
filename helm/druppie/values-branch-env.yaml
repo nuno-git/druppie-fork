@@ -1,0 +1,133 @@
+# =============================================================================
+# Branch Environment Defaults
+# =============================================================================
+#
+# Layers on top of values.yaml + values-rijnland.yaml for branch preview
+# environments (feature/* branches deployed via the Druppie UI).
+#
+# Feature branches CAN edit this file to tune their own environment:
+#   - CPU/memory requests
+#   - Enable/disable modules
+#   - Storage class
+#   - Sandbox warm pool size
+#   - Service types
+#
+# The backend (branch_environment_service.py) adds this file to the HelmRelease
+# valuesFiles list automatically when creating a branch env.
+#
+# Only truly dynamic values (instance name, domain, imageTag, secretsSource,
+# gitBranch) are passed as inline HelmRelease values by the backend.
+
+# Branch envs are reached via Traefik ingress, not NodePort — ClusterIP
+# so they don't grab cluster-global NodePorts held by the live instance.
+backend:
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 100m
+
+frontend:
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 50m
+
+keycloak:
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 50m
+
+gitea:
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 50m
+
+# Dev-profile CPU requests: a whole env must fit on the shared node, so
+# request little and burst up to the chart's default limits.
+modules:
+  coding:
+    resources:
+      requests:
+        cpu: 25m
+  docker:
+    resources:
+      requests:
+        cpu: 25m
+  filesearch:
+    resources:
+      requests:
+        cpu: 25m
+  web:
+    resources:
+      requests:
+        cpu: 25m
+  archimate:
+    resources:
+      requests:
+        cpu: 25m
+  registry:
+    resources:
+      requests:
+        cpu: 25m
+  llm:
+    resources:
+      requests:
+        cpu: 25m
+  vision:
+    resources:
+      requests:
+        cpu: 25m
+  data_access:
+    resources:
+      requests:
+        cpu: 25m
+  layout_service:
+    resources:
+      requests:
+        cpu: 25m
+  azuredevops:
+    resources:
+      requests:
+        cpu: 25m
+
+# ESO owns the namespace's Secrets (Vault-backed). The chart templates
+# (externalsecret-tls, externalsecret-harbor-regcred, externalsecret-git-token,
+# dev-workspace-secrets) are rendered instead of the Helm-managed secrets.yaml.
+externalSecrets:
+  managed: true
+
+# Ephemeral storage: 1 replica + Delete reclaim policy. Branch-env data is
+# disposable (DBs rebuilt by the init job, repos re-cloned from git).
+persistence:
+  storageClass: longhorn-local
+
+# Dev workspace defaults. The branch namespace IS the hot-reload dev workspace.
+# embedModules and caConfigMap are static; dynamic values (enabled, secretsSource,
+# gitBranch, codeServer.devHost, stackMode) are injected inline by the backend.
+devWorkspace:
+  caConfigMap: aigit-ca
+  embedModules:
+    - coding
+    - docker
+    - filesearch
+    - web
+    - archimate
+    - registry
+    - llm
+    - vision
+    - data_access
+    - azuredevops
+
+# Per-instance sandbox: each branch env gets its own sandbox namespace,
+# SandboxTemplate, WarmPool, and RBAC. 2 warm replicas instead of the
+# chart-default 5 (branch envs are single-developer).
+agentSandbox:
+  enabled: true
+  warmPool:
+    replicas: 2
