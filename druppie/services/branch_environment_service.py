@@ -437,6 +437,24 @@ def build_externalsecrets_yaml(slug: str) -> str:
                 ],
             },
         },
+        # Gitea token for module-deploy's user-app GitOps deployer.
+        # Same Vault path as the prod/colab-dev instances (ci/gitea).
+        {
+            "apiVersion": "external-secrets.io/v1",
+            "kind": "ExternalSecret",
+            "metadata": {"name": "druppie-branch-env-git", "namespace": namespace},
+            "spec": {
+                "refreshInterval": "1h",
+                "secretStoreRef": {"name": "vault-ai-team-k8s", "kind": "ClusterSecretStore"},
+                "target": {
+                    "name": "druppie-branch-env-git",
+                    "creationPolicy": "Owner",
+                },
+                "data": [
+                    {"secretKey": "token", "remoteRef": {"key": "ci/gitea", "property": "token"}},
+                ],
+            },
+        },
     )
 
 
