@@ -484,6 +484,82 @@ def create_keycloak_users_in_gitea():
     print(f"  [DONE] {created} new Gitea users created")
 
 
+def create_druppie_apps_org():
+    """Create the druppie-apps organization for user app repos."""
+    print("\n[STEP 4b] Creating druppie-apps organization...")
+
+    session = requests.Session()
+    session.auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD)
+    session.headers.update({"Content-Type": "application/json"})
+
+    org_url = f"{GITEA_URL}/api/v1/orgs"
+
+    try:
+        response = session.get(f"{org_url}/druppie-apps", timeout=10)
+        if response.status_code == 200:
+            print("  [OK] Organization 'druppie-apps' already exists")
+            return True
+    except Exception as e:
+        print(f"  [DEBUG] Check failed: {e}")
+
+    org_data = {
+        "username": "druppie-apps",
+        "full_name": "Druppie User Applications",
+        "description": "User application repositories with CI/CD support",
+        "visibility": "public",
+    }
+
+    try:
+        response = session.post(org_url, json=org_data, timeout=10)
+        if response.status_code == 201:
+            print("  [OK] Created organization 'druppie-apps'")
+            return True
+        elif response.status_code in [409, 422]:
+            print("  [OK] Organization 'druppie-apps' already exists")
+            return True
+        else:
+            print(f"  [WARN] Could not create organization: {response.status_code} - {response.text[:100]}")
+            return False
+    except Exception as e:
+        print(f"  [WARN] Could not create organization: {e}")
+        return False
+
+
+def set_org_actions_secrets():
+    """Set Actions secrets on the druppie-apps org for CI/CD workflows."""
+    print("\n[STEP 4c] Setting Actions secrets on druppie-apps org...")
+
+    session = requests.Session()
+    session.auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD)
+    session.headers.update({"Content-Type": "application/json"})
+
+    secrets_url = f"{GITEA_URL}/api/v1/orgs/druppie-apps/actions/secrets"
+
+    secrets = {
+        "HARBOR_REGISTRY": os.getenv("HARBOR_REGISTRY", "harbor.rijnland.dev"),
+        "HARBOR_USERNAME": os.getenv("HARBOR_USERNAME", ""),
+        "HARBOR_PASSWORD": os.getenv("HARBOR_PASSWORD", ""),
+        "CI_GIT_TOKEN": os.getenv("CI_GIT_TOKEN", ""),
+    }
+
+    for name, value in secrets.items():
+        if not value:
+            print(f"  [SKIP] {name}: no value available")
+            continue
+        try:
+            response = session.put(
+                f"{secrets_url}/{name}",
+                json={"data": value},
+                timeout=10,
+            )
+            if response.status_code in (200, 201, 204):
+                print(f"  [OK] Set secret '{name}'")
+            else:
+                print(f"  [WARN] Could not set secret '{name}': {response.status_code} - {response.text[:100]}")
+        except Exception as e:
+            print(f"  [WARN] Could not set secret '{name}': {e}")
+
+
 def create_sample_repo():
     """Create sample repository."""
     print("\n[STEP 7] Creating sample repository...")
@@ -544,6 +620,8 @@ def main():
     client_secret = get_keycloak_client_secret()
     configure_oauth2(client_secret)
     create_organization()
+    create_druppie_apps_org()
+    set_org_actions_secrets()
     token = create_access_token()
     create_keycloak_users_in_gitea()
     create_sample_repo()

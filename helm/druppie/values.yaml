@@ -107,6 +107,21 @@ gitea:
     limits:
       memory: 1Gi
       cpu: 1000m
+internalRunner:
+  enabled: false
+  image: gitea/act_runner:latest
+  replicas: 2
+  capacity: 1
+  org: druppie-apps
+  runnerDataStorage: 1Gi
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 1000m
+
 backend:
   image:
     repository: druppie-backend
@@ -338,10 +353,14 @@ modules:
     userApps:
       gitops:
         url: https://aigit.waterschap.org
+        # URL of the Gitea instance where user app repos live (internal Gitea).
+        # Used by module-deploy to dispatch CI workflows. Defaults to the
+        # in-cluster Gitea service.
+        appRepoUrl: http://druppie-gitea:3000
         repo: ai/k8s
         branch: main
         path: clusters/user-apps
-        appRepoOrg: ai
+        appRepoOrg: druppie-apps
         # Secret holding a Gitea token (key below) with push to the GitOps repo.
         # Reuses the ci/gitea token (same as the branch-env deployer).
         tokenSecret:

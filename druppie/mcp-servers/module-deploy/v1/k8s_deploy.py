@@ -58,7 +58,10 @@ HARBOR_PROJECT = os.getenv("HARBOR_PROJECT", "druppie")
 # *.<domain> wildcard cert (secret druppie-tls) — no separate cert needed.
 APPS_DOMAIN = os.getenv("USERAPPS_DOMAIN", "rijnland.dev")
 CHART_PATH = os.getenv("USERAPPS_CHART_PATH", "chart")
-APP_REPO_ORG = os.getenv("USERAPPS_APP_REPO_ORG", "ai")
+APP_REPO_ORG = os.getenv("USERAPPS_APP_REPO_ORG", "druppie-apps")
+# Separate URL for the Gitea instance hosting user app repos (internal Gitea).
+# Used for workflow dispatch and run polling. Defaults to the in-cluster Gitea.
+APP_REPO_URL = os.getenv("USERAPPS_APP_REPO_URL", "http://druppie-gitea:3000")
 
 BUILD_POLL_TIMEOUT = int(os.getenv("USERAPPS_BUILD_TIMEOUT", "1200"))   # 20m
 ROLLOUT_TIMEOUT = int(os.getenv("USERAPPS_ROLLOUT_TIMEOUT", "600"))     # 10m
@@ -87,7 +90,11 @@ class GitopsClient:
     def __init__(self) -> None:
         base = GITOPS_URL.rstrip("/")
         self._api = f"{base}/api/v1/repos/{GITOPS_REPO}"
-        self._runs_api = f"{base}/api/v1/repos/{APP_REPO_ORG}"  # /<repo>/actions...
+        # User-app repos live on the internal Gitea (APP_REPO_URL). The runs API
+        # base is constructed without a hardcoded org — dispatch_workflow and
+        # latest_run accept repo_owner to build the full URL dynamically.
+        app_base = APP_REPO_URL.rstrip("/")
+        self._runs_api_base = f"{app_base}/api/v1/repos"
         self._branch = GITOPS_BRANCH
         self._headers = {"Authorization": f"token {GITOPS_TOKEN}"} if GITOPS_TOKEN else {}
         self._verify: Any = GITOPS_CA if GITOPS_CA else True
@@ -139,21 +146,25 @@ class GitopsClient:
         self._raise_for(resp, f"committing '{message}'")
 
     # -- Gitea Actions ------------------------------------------------------
-    async def dispatch_workflow(self, repo: str, workflow: str, ref: str) -> None:
+    async def dispatch_workflow(
+        self, repo: str, workflow: str, ref: str, repo_owner: str | None = None
+    ) -> None:
+        owner = repo_owner or APP_REPO_ORG
         async with self._client() as c:
             resp = await c.post(
-                f"{self._runs_api}/{repo}/actions/workflows/{workflow}/dispatches",
+                f"{self._runs_api_base}/{owner}/{repo}/actions/workflows/{workflow}/dispatches",
                 json={"ref": ref},
             )
-        self._raise_for(resp, f"dispatching workflow {workflow} on {APP_REPO_ORG}/{repo}@{ref}")
+        self._raise_for(resp, f"dispatching workflow {workflow} on {owner}/{repo}@{ref}")
 
-    async def latest_run(self, repo: str, branch: str) -> dict | None:
+    async def latest_run(self, repo: str, branch: str, repo_owner: str | None = None) -> dict | None:
+        owner = repo_owner or APP_REPO_ORG
         async with self._client() as c:
             resp = await c.get(
-                f"{self._runs_api}/{repo}/actions/runs",
+                f"{self._runs_api_base}/{owner}/{repo}/actions/runs",
                 params={"branch": branch, "per_page": 1, "sort": "updated", "state": ""},
             )
-        self._raise_for(resp, f"listing runs for {APP_REPO_ORG}/{repo}")
+        self._raise_for(resp, f"listing runs for {owner}/{repo}")
         runs = resp.json().get("runs") or []
         return runs[0] if runs else None
 
@@ -366,13 +377,15 @@ def build_helmrelease_yaml(
 # ---------------------------------------------------------------------------
 # Polling helpers
 # ---------------------------------------------------------------------------
-async def _poll_build(client: GitopsClient, repo: str, branch: str) -> dict:
+async def _poll_build(
+    client: GitopsClient, repo: str, branch: str, repo_owner: str | None = None
+) -> dict:
     """Wait for the latest workflow run on `branch` to complete. Returns the run."""
     deadline = asyncio.get_event_loop().time() + BUILD_POLL_TIMEOUT
     # The run registers a moment after dispatch; wait for it to appear.
     run: dict | None = None
     while asyncio.get_event_loop().time() < deadline:
-        run = await client.latest_run(repo, branch)
+        run = await client.latest_run(repo, branch, repo_owner=repo_owner)
         if run and run.get("status") == "completed":
             return run
         await asyncio.sleep(5)
@@ -435,11 +448,11 @@ async def k8s_build(
     repo = repo_name
     g = _gitops_client()
     try:
-        await g.dispatch_workflow(repo, "build.yaml", branch)
+        await g.dispatch_workflow(repo, "build.yaml", branch, repo_owner=org)
     except RuntimeError as e:
         return {"success": False, "error": f"workflow dispatch failed: {e}"}
 
-    run = await _poll_build(g, repo, branch)
+    run = await _poll_build(g, repo, branch, repo_owner=org)
     status, conclusion = run.get("status"), run.get("conclusion")
     image_repo = f"{HARBOR_REGISTRY}/{HARBOR_PROJECT}/{repo.lower()}"
     if status == "completed" and conclusion == "success":
@@ -472,7 +485,7 @@ async def k8s_deploy(
     org = repo_owner or APP_REPO_ORG
     slug = _slugify(compose_project_name or repo_name)
     repo = repo_name
-    app_repo = f"{GITOPS_URL.rstrip('/')}/{org}/{repo}.git"
+    app_repo = f"{APP_REPO_URL.rstrip('/')}/{org}/{repo}.git"
     host = f"{slug}-apps.{APPS_DOMAIN}"
     image_repo = f"{HARBOR_REGISTRY}/{HARBOR_PROJECT}/{repo.lower()}"
     vault_path = f"apps/{slug}/db"

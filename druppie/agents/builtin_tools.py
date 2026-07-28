@@ -578,12 +578,12 @@ async def set_intent(
                     # Use actual Gitea username (may differ if original was reserved)
                     gitea_username = user_result.get("username", gitea_username)
 
-                    # Create repo under user's account
+                    # Create repo under the druppie-apps org (org-level secrets)
                     repo_result = await gitea.create_repo(
                         name=repo_name,
                         description=f"Project: {project_name}",
                         auto_init=True,
-                        owner=gitea_username,
+                        # owner=None → creates under org (GITEA_ORG = "druppie-apps")
                     )
 
                     if repo_result.get("success"):

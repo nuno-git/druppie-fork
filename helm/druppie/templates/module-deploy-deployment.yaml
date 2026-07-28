@@ -60,6 +60,8 @@ spec:
             # Reads live status read-only (module-deploy-rbac.yaml).
             - name: USERAPPS_GITOPS_URL
               value: {{ .gitops.url | quote }}
+            - name: USERAPPS_APP_REPO_URL
+              value: {{ .gitops.appRepoUrl | quote }}
             - name: USERAPPS_GITOPS_REPO
               value: {{ .gitops.repo | quote }}
             - name: USERAPPS_GITOPS_BRANCH

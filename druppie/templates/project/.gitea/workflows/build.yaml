@@ -1,17 +1,11 @@
 # Per-app CI/CD pipeline for a Druppie-generated application.
 #
-# This is a trimmed copy of Druppie's own .gitea/workflows/build.yaml:
-#   1. Build the app image (shared DinD runner, BuildKit)
-#   2. Push to Harbor (harbor.rijnland.dev/druppie/<repo-name>:<branch>-<ts>-<sha>)
-#   3. Bump image.tag in this app's ai/k8s HelmRelease
-#      (clusters/user-apps/<slug>/helmrelease.yaml) -> Flux rolls it out.
+# Uses kaniko (daemonless, non-privileged) to build and push images.
+# No Docker daemon or privileged sidecar needed.
 #
-# Secrets (org-level on the `ai` org — see ai/k8s BOOTSTRAP.md §4):
+# Secrets (org-level on the `druppie-apps` org):
 #   HARBOR_REGISTRY, HARBOR_USERNAME, HARBOR_PASSWORD  (Harbor robot, push+pull)
-#   CI_GIT_TOKEN  (write to ai/k8s — see §5.1-A hardening; scoped robot account,
-#                  Gitea "environment" tied to deploy branches, branch protection)
-#
-# See docs/stories/build-deploy-without-docker.md (ai/druppie) for the design.
+#   CI_GIT_TOKEN  (write to ai/k8s — scoped to clusters/user-apps/<slug>/)
 name: Build and Deploy
 
 on:
@@ -22,7 +16,6 @@ on:
 env:
   REGISTRY: ${{ secrets.HARBOR_REGISTRY }}
   HARBOR_USER: ${{ secrets.HARBOR_USERNAME }}
-  DOCKER_BUILDKIT: "1"
 
 # Serialize per-branch so two pushes don't race the ai/k8s imageTag bump.
 concurrency:
@@ -40,7 +33,6 @@ jobs:
         env:
           REPO: ${{ github.repository }}
         run: |
-          # repo name -> image name + ai/k8s path slug (lowercase, [a-z0-9-] only)
           REPO_NAME="$(basename "$REPO")"
           IMAGE_NAME="$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')"
           SLUG="$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9-]/-/g' -e 's/--*/-/g' -e 's/^-*//' -e 's/-*$//')"
@@ -57,44 +49,41 @@ jobs:
           echo "Image: $REGISTRY/druppie/$IMAGE_NAME:$TAG"
           echo "ai/k8s path: clusters/user-apps/$SLUG/helmrelease.yaml"
 
-      - name: Install Docker CLI + Buildx
+      - name: Install kaniko
         run: |
-          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz -C /tmp
-          install -m 755 /tmp/docker/docker /usr/local/bin/docker
-          mkdir -p /usr/local/lib/docker/cli-plugins
-          curl -fsSL https://github.com/docker/buildx/releases/download/v0.20.1/buildx-v0.20.1.linux-amd64 \
-            -o /usr/local/lib/docker/cli-plugins/docker-buildx
-          chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          curl -fsSL -o /usr/local/bin/kaniko \
+            https://github.com/GoogleContainerTools/kaniko/releases/download/v1.23.2/kaniko-linux-amd64
+          chmod +x /usr/local/bin/kaniko
 
       - name: Install yq (robust HelmRelease patching)
         run: |
           curl -fsSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
           chmod +x /usr/local/bin/yq
 
-      - name: Configure Harbor credentials
-        env:
-          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
-        run: |
-          USER="${HARBOR_USER:-robot\$druppie+druppie-ci}"
-          mkdir -p /tmp/docker
-          AUTH="$(printf '%s:%s' "$USER" "$HARBOR_PASS" | base64 -w0)"
-          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$REGISTRY" "$AUTH" > /tmp/docker/config.json
-          echo "DOCKER_CONFIG=/tmp/docker" >> "$GITHUB_ENV"
-
-      - name: Build and push image
+      - name: Build and push image (kaniko)
         env:
           IMAGE: ${{ steps.names.outputs.image_name }}
           TAG: ${{ steps.names.outputs.tag }}
           SHA: ${{ github.sha }}
+          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/$IMAGE:$TAG" .
-          docker push "$REGISTRY/druppie/$IMAGE:$TAG"
+          USER="${HARBOR_USER:-robot\$druppie+druppie-ci}"
+          AUTH="$(printf '%s:%s' "$USER" "$HARBOR_PASS" | base64 -w0)"
+          mkdir -p /kaniko/.docker
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$REGISTRY" "$AUTH" \
+            > /kaniko/.docker/config.json
+
+          /usr/local/bin/kaniko \
+            --context "$(pwd)" \
+            --dockerfile Dockerfile \
+            --destination "$REGISTRY/druppie/$IMAGE:$TAG" \
+            --cache=true \
+            --cache-repo "$REGISTRY/druppie/$IMAGE/cache" \
+            --build-arg CACHEBUST="$SHA" \
+            --skip-tls-verify-pull \
+            --skip-tls-verify-push
 
       - name: Bump image.tag in ai/k8s HelmRelease
-        # Option A (§5.1): this CI holds a scoped CI_GIT_TOKEN to bump the app's
-        # OWN HelmRelease only. Path convention: clusters/user-apps/<slug>/. If
-        # the app hasn't been deployed yet (no HelmRelease), there's nothing to
-        # bump — skip. Flux then rolls the new tag out within ~1m.
         env:
           SLUG: ${{ steps.names.outputs.slug }}
           TAG: ${{ steps.names.outputs.tag }}
@@ -111,6 +100,17 @@ jobs:
             exit 0
           fi
 
+          # Validate that only the app's own path is being modified
+          git diff --cached --name-only 2>/dev/null || true
+          case "$HR_FILE" in
+            clusters/user-apps/${SLUG}/*) ;;
+            *)
+              echo "ERROR: Attempting to modify '$HR_FILE' which is outside"
+              echo "       clusters/user-apps/${SLUG}/ — rejected."
+              exit 1
+              ;;
+          esac
+
           git config user.name "druppie-ci"
           git config user.email "druppie-ci@users.noreply.rijnland.dev"
           export TAG
@@ -121,7 +121,6 @@ jobs:
           else
             git add "$HR_FILE"
             git commit -m "ci: auto-update $SLUG image tag to ${TAG}"
-            # Retry with rebase: another app's build may push ai/k8s concurrently.
             for attempt in 1 2 3 4 5; do
               if git push origin main; then
                 echo "Pushed image tag: ${TAG}"

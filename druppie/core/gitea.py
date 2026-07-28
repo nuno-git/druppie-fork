@@ -18,7 +18,7 @@ GITEA_URL = os.getenv("GITEA_URL", "http://gitea:3000")
 GITEA_INTERNAL_URL = os.getenv("GITEA_INTERNAL_URL", GITEA_URL)
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
 GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
-GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
+GITEA_ORG = os.getenv("GITEA_ORG", "druppie-apps")
 
 # Security warning for missing credentials
 if not GITEA_ADMIN_PASSWORD:

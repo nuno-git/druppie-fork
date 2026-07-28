@@ -1,0 +1,24 @@
+{{- if .Values.internalRunner.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "druppie.fullname" . }}-internal-runner-config
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: internal-runner
+data:
+  config.yaml: |
+    log:
+      level: info
+    runner:
+      capacity: {{ .Values.internalRunner.capacity }}
+      timeout: 1h
+      fetch_timeout: 10s
+      labels:
+        ubuntu-latest: "docker://node:20-bookworm"
+    container:
+      network: host
+      options: "-e GIT_SSL_NO_VERIFY=1"
+      valid_volumes:
+        - '*'
+{{- end }}

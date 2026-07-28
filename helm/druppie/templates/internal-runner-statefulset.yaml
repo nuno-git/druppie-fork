@@ -1,0 +1,120 @@
+{{- if .Values.internalRunner.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "druppie.fullname" . }}-internal-runner
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: internal-runner
+spec:
+  serviceName: {{ include "druppie.fullname" . }}-internal-runner
+  replicas: {{ .Values.internalRunner.replicas }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: internal-runner
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: internal-runner
+    spec:
+      serviceAccountName: {{ include "druppie.fullname" . }}-internal-runner
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: ca-setup
+          image: {{ .Values.internalRunner.image }}
+          command:
+            - sh
+            - -c
+            - |
+              cat /etc/ssl/certs/ca-certificates.crt /etc/aigit-ca/chain.pem \
+                > /castore/ca-bundle.pem && echo "CA bundle built"
+          volumeMounts:
+            - name: aigit-ca
+              mountPath: /etc/aigit-ca
+            - name: castore
+              mountPath: /castore
+        - name: register-runner
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              TOKEN=$(curl -sf -X POST \
+                -H "Authorization: token $(cat /etc/gitea-admin/token)" \
+                http://{{ include "druppie.fullname" . }}-gitea:{{ .Values.gitea.httpPort }}/api/v1/orgs/{{ .Values.internalRunner.org }}/actions/runners/registration-token \
+                | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+              if [ -n "$TOKEN" ]; then
+                mkdir -p /etc/runner-token
+                echo -n "$TOKEN" > /etc/runner-token/token
+              else
+                echo "Failed to fetch registration token"
+                exit 1
+              fi
+          volumeMounts:
+            - name: runner-token-dir
+              mountPath: /etc/runner-token
+            - name: gitea-admin-token
+              mountPath: /etc/gitea-admin
+      containers:
+        - name: runner
+          image: {{ .Values.internalRunner.image }}
+          env:
+            - name: GITEA_INSTANCE_URL
+              value: "http://{{ include "druppie.fullname" . }}-gitea:{{ .Values.gitea.httpPort }}"
+            - name: GITEA_RUNNER_REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-internal-runner-token
+                  key: token
+            - name: GITEA_RUNNER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: GITEA_RUNNER_LABELS
+              value: "ubuntu-latest:docker://node:20-bookworm"
+            - name: SSL_CERT_FILE
+              value: "/castore/ca-bundle.pem"
+            - name: CONFIG_FILE
+              value: "/etc/act_runner/config.yaml"
+          volumeMounts:
+            - name: runner-data
+              mountPath: /data
+            - name: castore
+              mountPath: /castore
+            - name: act-runner-config
+              mountPath: /etc/act_runner
+          resources:
+            {{- toYaml .Values.internalRunner.resources | nindent 12 }}
+      volumes:
+        - name: castore
+          emptyDir: {}
+        - name: runner-token-dir
+          emptyDir: {}
+        - name: aigit-ca
+          configMap:
+            name: {{ include "druppie.fullname" . }}-aigit-ca
+        - name: act-runner-config
+          configMap:
+            name: {{ include "druppie.fullname" . }}-internal-runner-config
+        - name: gitea-admin-token
+          secret:
+            secretName: {{ include "druppie.fullname" . }}-gitea-admin-token
+            items:
+              - key: token
+                path: token
+  volumeClaimTemplates:
+    - metadata:
+        name: runner-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ include "druppie.persistence.storageClass" . | default "longhorn-distributed" }}
+        resources:
+          requests:
+            storage: {{ .Values.internalRunner.runnerDataStorage }}
+{{- end }}

@@ -1,0 +1,38 @@
+{{- if .Values.internalRunner.enabled }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-internal-runner-egress
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: internal-runner
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: internal-runner
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchPattern: "{{ .Values.gitea.external.url | replace "https://" "" | replace "http://" "" }}"
+        - matchPattern: "{{ .Values.modules.docker.userApps.harbor.registry }}"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toCIDR:
+        - {{ .Values.gitea.external.ip }}/32
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+{{- end }}
