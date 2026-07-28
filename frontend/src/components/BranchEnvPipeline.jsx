@@ -2,10 +2,12 @@
  * BranchEnvPipeline — pipe-and-node visual of one environment's deploy chain.
  *
  * Stages come from GET /api/branch-environments/{id}/pipeline:
- *   commit (aigit) → flux → (source | secrets) → helm → workloads → live
- * (or commit-removed → pruning for a teardown). Each node is colored by its
- * status; the first failed stage shows its error message below the row, so
- * you can see exactly where a deploy is busy and where it went wrong.
+ *   commit → ci-build → flux → (source | secrets) → helm → workloads → live
+ * (or commit-removed → pruning for a teardown). When CI is still building
+ * images the cluster-derived stages are hidden (they would show transient
+ * Helm errors). Each node is colored by its status; the first failed stage
+ * shows its error message below the row, so you can see exactly where a
+ * deploy is busy and where it went wrong.
  */
 
 import {
@@ -20,10 +22,12 @@ import {
   Circle,
   Loader2,
   AlertCircle,
+  Zap,
 } from 'lucide-react'
 
 const STAGE_ICONS = {
   commit: GitCommit,
+  'ci-build': Zap,
   flux: RefreshCw,
   source: GitBranch,
   secrets: KeyRound,

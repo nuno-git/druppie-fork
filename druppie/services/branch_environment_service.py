@@ -478,6 +478,17 @@ class GiteaGitopsClient:
             workflow=workflow,
         )
 
+    async def latest_run(self, repo: str, branch: str) -> dict | None:
+        """Return the latest workflow run for ``branch`` in ``repo``, or None."""
+        async with self._client() as client:
+            resp = await client.get(
+                f"{self._base}/api/v1/repos/{repo}/actions/runs",
+                params={"branch": branch, "per_page": 1},
+            )
+        self._raise_for(resp, f"listing runs for {repo}")
+        runs = resp.json().get("runs") or []
+        return runs[0] if runs else None
+
     async def change_files(self, message: str, files: list[dict]) -> None:
         """Single-commit batch create/update/delete via POST /contents.
 
@@ -818,6 +829,47 @@ def _derive_workloads_stage(deployments: list[dict], pods: list[dict]) -> Pipeli
     if ready >= total:
         return PipelineStage(id="workloads", name=name, status=_STAGE_DONE, detail=detail)
     return PipelineStage(id="workloads", name=name, status=_STAGE_BUSY, detail=detail)
+
+
+def _derive_ci_stage(run: dict | None) -> PipelineStage | None:
+    """Derive a CI build stage from the latest Gitea Actions workflow run.
+
+    Returns None when there is no run at all (env was never built by CI, or
+    the branch is too old).  When a run exists its status maps to:
+      completed + success → DONE
+      completed + failure → FAILED
+      running / waiting   → BUSY
+    """
+    if run is None:
+        return None
+    status = run.get("status")
+    conclusion = run.get("conclusion")
+    html_url = run.get("html_url")
+
+    if status == "completed":
+        if conclusion == "success":
+            return PipelineStage(
+                id="ci-build",
+                name="CI build",
+                status=_STAGE_DONE,
+                detail="images built and pushed",
+            )
+        return PipelineStage(
+            id="ci-build",
+            name="CI build",
+            status=_STAGE_FAILED,
+            message=f"CI {conclusion} — {html_url}" if html_url else f"CI {conclusion}",
+            detail=html_url,
+        )
+    if status in ("running", "waiting"):
+        return PipelineStage(
+            id="ci-build",
+            name="CI build",
+            status=_STAGE_BUSY,
+            message="building Docker images…",
+            detail=html_url,
+        )
+    return None
 
 
 # -----------------------------------------------------------------------------
@@ -1420,9 +1472,10 @@ class BranchEnvironmentService:
     async def pipeline(self, env_id: str) -> BranchEnvironmentPipeline:
         """Live deploy pipeline for an env — one stage per hop in the chain.
 
-        commit → flux → (source | secrets) → helm → workloads → live, each
-        derived read-only from git + the cluster. Envs deleted from git but
-        still terminating report a short teardown pipeline instead.
+        commit → ci-build → flux → (source | secrets) → helm → workloads → live,
+        each derived read-only from git + the cluster. When CI is still building
+        images the cluster-derived stages are skipped (they would show transient
+        Helm errors because the image tag doesn't exist yet).
         """
         slug = _validate_slug(env_id)
         env = await self._read_env(slug)
@@ -1456,11 +1509,45 @@ class BranchEnvironmentService:
 
         commit = PipelineStage(id="commit", name="Commit (aigit)", status=_STAGE_DONE)
 
+        # Check CI build status — if CI is still running we skip the cluster-
+        # derived stages because the HelmRelease image tag hasn't been updated
+        # yet and would show transient errors.
+        ci_run = await self.gitea.latest_run(CHART_REPO, env["branch"])
+        ci_stage = _derive_ci_stage(ci_run)
+
+        if ci_stage and ci_stage.status in (_STAGE_BUSY, _STAGE_FAILED):
+            # CI is still building or has failed — no point querying the cluster.
+            stages = [commit, ci_stage] + [
+                PipelineStage(
+                    id=sid,
+                    name=sname,
+                    status=_STAGE_PENDING,
+                    message="waiting for CI build to finish" if ci_stage.status == _STAGE_BUSY else None,
+                )
+                for sid, sname in (
+                    ("flux", "Flux sync"),
+                    ("source", "Chart source"),
+                    ("secrets", "Secrets (Vault)"),
+                    ("helm", "Helm install"),
+                    ("workloads", "Pods & images"),
+                    ("live", "Live"),
+                )
+            ]
+            overall = (
+                BranchEnvironmentStatus.FAILED
+                if ci_stage.status == _STAGE_FAILED
+                else BranchEnvironmentStatus.DEPLOYING
+            )
+            return BranchEnvironmentPipeline(env_id=slug, status=overall, stages=stages)
+
         if not self.cluster.available:
             # Local dev / tests: git says the env exists, but the deploy chain
             # is not observable from here.
             unavailable = "live status unavailable from here"
-            stages = [commit] + [
+            stages = [commit]
+            if ci_stage:
+                stages.append(ci_stage)
+            stages += [
                 PipelineStage(id=sid, name=sname, status=_STAGE_PENDING, message=unavailable)
                 for sid, sname in (
                     ("flux", "Flux sync"),
@@ -1487,8 +1574,10 @@ class BranchEnvironmentService:
             )
         )
 
-        stages = [
-            commit,
+        stages = [commit]
+        if ci_stage:
+            stages.append(ci_stage)
+        stages += [
             _derive_flux_stage(ns, kustomization),
             _derive_source_stage(gitrepo, env["branch"]),
             _derive_secrets_stage(ns, externalsecrets),
