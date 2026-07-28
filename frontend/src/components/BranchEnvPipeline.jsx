@@ -22,6 +22,7 @@ import {
   Circle,
   Loader2,
   AlertCircle,
+  ExternalLink,
   Zap,
 } from 'lucide-react'
 
@@ -78,6 +79,8 @@ const columnStatus = (column) => {
   return 'pending'
 }
 
+const isUrl = (s) => typeof s === 'string' && s.startsWith('http')
+
 const StageNode = ({ stage }) => {
   const Icon = STAGE_ICONS[stage.id] || Circle
   const style = NODE_STYLE[stage.status] || NODE_STYLE.pending
@@ -100,9 +103,22 @@ const StageNode = ({ stage }) => {
         {stage.name}
       </span>
       {stage.detail && (
-        <span className="text-[10px] leading-tight text-center text-gray-400 font-mono">
-          {stage.detail}
-        </span>
+        isUrl(stage.detail) ? (
+          <a
+            href={stage.detail}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-0.5 text-[10px] leading-tight text-center text-blue-500 hover:text-blue-700 underline font-mono"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ExternalLink className="w-2.5 h-2.5" />
+            View in Gitea
+          </a>
+        ) : (
+          <span className="text-[10px] leading-tight text-center text-gray-400 font-mono">
+            {stage.detail}
+          </span>
+        )
       )}
     </div>
   )
