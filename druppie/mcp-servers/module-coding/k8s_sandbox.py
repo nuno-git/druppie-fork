@@ -81,22 +81,53 @@ class K8sSandboxManager:
         self.client = AsyncSandboxClient(connection_config=config)
         self._sandboxes: dict[str, object] = {}
 
-        # Patch SDK: the sandbox operator deletes Sandbox resources before the
-        # SDK can watch them (warm pool adoption race). The claim status already
-        # has podIPs, so skip the broken wait_for_sandbox_ready.
-        _orig_wait = self.client.k8s_helper.wait_for_sandbox_ready
-        async def _patched_wait(sandbox_id, namespace, timeout):
-            # Get pod IP from the SandboxClaim status instead of watching Sandbox
-            claim_name = None
-            # The SDK sets claim_name on the sandbox object, but we don't have it here.
-            # Instead, just return None — the SDK will resolve the pod IP from
-            # the Sandbox resource, which is already available in the claim status.
-            # The connector uses the sandbox_id (pod name) to connect via port-forward.
-            return None
-        self.client.k8s_helper.wait_for_sandbox_ready = _patched_wait
-
         logger.info("K8sSandboxManager initialized (namespace=%s, warmpool=%s)",
                      SANDBOX_NAMESPACE, SANDBOX_WARMPOOL)
+
+    async def _wait_for_sandbox_ready(self, sandbox_id: str, timeout: int = 30) -> None:
+        """Wait for the Sandbox CR to have podIPs populated in its status.
+
+        The SDK's AsyncSandboxConnector resolves the pod IP by querying the
+        Sandbox resource status. If podIPs is empty it falls back to Service
+        DNS (which doesn't exist for agent-sandbox pods) and the connection
+        fails with "Name or service not known". This explicit wait ensures
+        the pod IP is available before the first tool call.
+        """
+        from kubernetes import client as k8s_client
+        from kubernetes.config import load_incluster_config
+        from kubernetes.client.rest import ApiException
+
+        try:
+            load_incluster_config()
+        except Exception as e:
+            logger.warning("_wait_for_sandbox_ready: no in-cluster config: %s", e)
+            return
+
+        api = k8s_client.CustomObjectsApi()
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            try:
+                sb = api.get_namespaced_custom_object(
+                    group="agents.x-k8s.io",
+                    version="v1beta1",
+                    namespace=SANDBOX_NAMESPACE,
+                    plural="sandboxes",
+                    name=sandbox_id,
+                )
+                pod_ips = sb.get("status", {}).get("podIPs", [])
+                if pod_ips:
+                    logger.debug("Sandbox %s pod IP ready: %s (%.1fs)",
+                                 sandbox_id, pod_ips[0], time.monotonic() - start)
+                    return
+            except ApiException as e:
+                # Sandbox resource not yet created by the operator — keep waiting
+                if e.status != 404:
+                    logger.warning("Sandbox %s status check error: %s", sandbox_id, e)
+                    return
+            await asyncio.sleep(1)
+
+        logger.error("Sandbox %s: pod IP not available after %ds — connections will likely fail",
+                      sandbox_id, timeout)
 
     async def create(
         self,
@@ -122,6 +153,12 @@ class K8sSandboxManager:
         sandbox_id = sandbox.sandbox_id
         logger.info("Sandbox claimed: %s (session=%s, scope=%s)",
                      sandbox_id, session_id, git_scope)
+
+        # Wait for the sandbox pod IP to be available before connecting.
+        # The SDK resolves pod IP from the Sandbox CR status; if it's not
+        # populated yet the connector falls back to Service DNS (which doesn't
+        # exist for agent-sandbox pods) and fails with "Name or service not known".
+        await self._wait_for_sandbox_ready(sandbox_id, timeout=30)
 
         if repo_clone_url:
             await self._host_side_clone(
