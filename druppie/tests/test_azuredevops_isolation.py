@@ -66,6 +66,7 @@ def test_tools_expose_exactly_the_expected_tools():
         "update_work_item",
         "get_work_item_comments",
         "add_work_item_comment",
+        "resolve_user",
     }
 
 
@@ -176,11 +177,11 @@ class _RecordingClient:
     def org_url(self):
         return self._real.org_url
 
-    async def query_wiql(self, wiql, top):
+    async def query_wiql(self, wiql, top, user_token=None):
         self.posts.append((f"{self._real.project}/_apis/wit/wiql", {"query": wiql}))
         return [1, 2]
 
-    async def get_work_items(self, ids, fields=None):
+    async def get_work_items(self, ids, fields=None, user_token=None):
         self.posts.append(
             (f"{self._real.project}/_apis/wit/workitemsbatch", {"ids": ids})
         )
@@ -189,14 +190,14 @@ class _RecordingClient:
             for i in ids
         ]
 
-    async def get_work_item(self, item_id):
+    async def get_work_item(self, item_id, user_token=None):
         self.gets.append((f"{self._real.project}/_apis/wit/workitems/{item_id}", None))
         return {"id": item_id, "fields": {
             "System.Title": "WI",
             "WEF_ABC123_Kanban.Column": "New",
         }}
 
-    async def create_work_item(self, work_item_type, operations):
+    async def create_work_item(self, work_item_type, operations, user_token=None):
         path = f"{self._real.project}/_apis/wit/workitems/${work_item_type}"
         self.posts.append((path, {"operations": operations}))
         return {
@@ -208,7 +209,7 @@ class _RecordingClient:
             },
         }
 
-    async def update_work_item(self, item_id, operations):
+    async def update_work_item(self, item_id, operations, user_token=None):
         path = f"{self._real.project}/_apis/wit/workitems/{item_id}"
         self.patches.append((path, operations))
         return {
@@ -220,7 +221,7 @@ class _RecordingClient:
             },
         }
 
-    async def get_work_item_comments(self, item_id, top=None, order="desc"):
+    async def get_work_item_comments(self, item_id, top=None, order="desc", user_token=None):
         path = f"{self._real.project}/_apis/wit/workItems/{item_id}/comments"
         self.gets.append((path, {"top": top, "order": order}))
         return {
@@ -238,7 +239,7 @@ class _RecordingClient:
             ],
         }
 
-    async def add_work_item_comment(self, item_id, text):
+    async def add_work_item_comment(self, item_id, text, user_token=None):
         path = f"{self._real.project}/_apis/wit/workItems/{item_id}/comments"
         self.posts.append((path, {"text": text}))
         return {
@@ -248,6 +249,15 @@ class _RecordingClient:
             "createdBy": {"displayName": "Test User"},
             "createdDate": "2026-01-01T00:00:00Z",
         }
+
+    async def search_identity(self, display_name, user_token=None):
+        self.posts.append(("_apis/identitypicker/identities", {"query": display_name}))
+        if "test" in display_name.lower():
+            return [{"displayName": display_name, "localId": "e4f7b3db-7db6-6f4a-a83b-512cb72080c8", "mail": "test@example.com"}]
+        return []
+
+    async def get_team_iterations(self, user_token=None):
+        return []
 
 
 @pytest.mark.asyncio
@@ -404,3 +414,67 @@ async def test_update_rejects_state_and_board_column_together(monkeypatch):
     )
     assert result["success"] is False
     assert "Cannot set both" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_add_comment_resolves_mentions(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.add_work_item_comment(100, "@Test User please review")
+    assert result["success"] is True
+
+    # The comment text posted to the API should contain the mention HTML
+    comment_posts = [
+        body for path, body in rec.posts
+        if path.endswith("/comments")
+    ]
+    assert comment_posts, "expected a comment POST"
+    posted_text = comment_posts[0]["text"]
+    assert "data-vss-mention" in posted_text
+    assert "e4f7b3db-7db6-6f4a-a83b-512cb72080c8" in posted_text
+
+
+@pytest.mark.asyncio
+async def test_add_comment_preserves_unresolved_mentions(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.add_work_item_comment(100, "@Nobody Known")
+    assert result["success"] is True
+
+    comment_posts = [
+        body for path, body in rec.posts
+        if path.endswith("/comments")
+    ]
+    assert comment_posts
+    posted_text = comment_posts[0]["text"]
+    # Unresolved mention should stay as plain text (no HTML wrapping)
+    assert "data-vss-mention" not in posted_text
+    assert "@Nobody Known" in posted_text
+
+
+@pytest.mark.asyncio
+async def test_create_work_item_resolves_mentions_in_description(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.create_work_item("Task", "test", description="cc @Test User")
+    assert result["success"] is True
+
+    # Find the create POST and check the description operation
+    create_posts = [
+        body for path, body in rec.posts
+        if "workitems/$" in path
+    ]
+    assert create_posts
+    operations = create_posts[0]["operations"]
+    desc_ops = [op for op in operations if op.get("path") == "/fields/System.Description"]
+    assert desc_ops, "expected a description operation"
+    assert "data-vss-mention" in desc_ops[0]["value"]
