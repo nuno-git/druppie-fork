@@ -1466,15 +1466,14 @@ tool-test:
     # Deployer (REAL — actually deploys the app)
     # =========================================================================
     - agent: deployer
-      tool: docker:list_apps
+      tool: deploy:list_apps
 
     - agent: deployer
-      tool: docker:deploy
+      tool: deploy:deploy
       approval:
         status: approved
         by: developer
       arguments:
-        compose_project_name: vergunningzoeker
         branch: main
       assert:
         result:

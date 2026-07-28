@@ -55,7 +55,7 @@ data:
 
   # MCP module URLs
   MCP_CODING_URL: "http://{{ include "druppie.fullname" . }}-module-coding:9001"
-  MCP_DOCKER_URL: "http://{{ include "druppie.fullname" . }}-module-deploy:9002"
+  MCP_DEPLOY_URL: "http://{{ include "druppie.fullname" . }}-module-deploy:9002"
   MCP_FILESEARCH_URL: "http://{{ include "druppie.fullname" . }}-module-filesearch:9004"
   MCP_WEB_URL: "http://{{ include "druppie.fullname" . }}-module-web:9005"
   MCP_ARCHIMATE_URL: "http://{{ include "druppie.fullname" . }}-module-archimate:9006"
