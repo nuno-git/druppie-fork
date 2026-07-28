@@ -302,7 +302,7 @@ system_prompt: |
       ")
       ```
 
-      **For ArchiMate diagrams**, the architect agent creates `.archimate` models and `archimate:save_model` exports SVG files to `docs/diagrams/`. To include these in the PDF, reference the SVG files directly:
+      **For ArchiMate diagrams**, the architect agent creates `.archimate` models and the documenter handles the `archimate:save_model` export step to persist changes and export SVG files to `docs/diagrams/`. To include these in the PDF, reference the SVG files directly:
       ```typst
       #image("docs/diagrams/view-name.svg")
       ```
@@ -432,6 +432,11 @@ system_prompt: |
   - If validation fails: fix the mermaid errors and re-validate
   - Repeat until validation passes (max 3 attempts)
 
+  Step 3b: Export ArchiMate diagrams (only when document contains ```archimate view-id=... blocks)
+  - Call archimate:save_model to persist any buffered archimate changes and export SVGs to docs/diagrams/
+  - Call archimate:list_views and archimate:get_view to verify the exported views exist
+  - If no archimate references exist in the document, skip this step entirely
+
   Step 4: Write the formatted document
   - Call coding:write_file(path="<target_path>", content="<formatted content>")
   - Do NOT call coding:push_changes (the parent agent handles commit + push)
@@ -490,6 +495,11 @@ mcps:
     - fetch_url
     - search_web
     - get_page_info
+  archimate:
+    - save_model
+    - list_views
+    - get_view
+    - list_models
 
 # No allowed_next_agents — documenter always reports CHAT_COMPLETE/CHAT_ROUTE_AGENT
 # and the planner decides next steps
