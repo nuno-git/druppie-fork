@@ -1390,8 +1390,18 @@ class BranchEnvironmentService:
                 f"secrets_source is already '{secrets_source}' for '{slug}'"
             )
 
-        # Update namespace annotation
-        ns_content, ns_sha = await self._read_namespace_file(slug)
+        # Read fresh SHAs for both files right before the commit, so we don't
+        # race with CI (which patches the HelmRelease imageTag on push). Using
+        # stale SHAs from _read_env would cause a 409 conflict.
+        ns_file, hr_file = await asyncio.gather(
+            self.gitea.get_file(self._env_path(slug, "namespace.yaml")),
+            self.gitea.get_file(self._env_path(slug, "helmrelease.yaml")),
+        )
+        if ns_file is None or hr_file is None:
+            raise NotFoundError("branch_environment", slug)
+        ns_content, ns_sha = ns_file
+        hr_content, hr_sha = hr_file
+
         new_ns = build_namespace_yaml(
             slug,
             env["branch"],
@@ -1431,7 +1441,7 @@ class BranchEnvironmentService:
                     "operation": "update",
                     "path": self._env_path(slug, "helmrelease.yaml"),
                     "content": new_hr,
-                    "sha": env["helmrelease_sha"],
+                    "sha": hr_sha,
                 },
             ],
         )
