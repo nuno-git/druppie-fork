@@ -51,7 +51,7 @@ is enabled:
 | **Internet HTTP** (`:80`) | ⛔ | ⛔ (by design) | ⛔ (by design) | Only `:443` is allowed out (plus Harbor namespace `:80` for image pulls). |
 | **Cluster DNS** (`*.svc.cluster.local`, short names) | ⛔ no-resolve | ⛔ no-resolve | ⛔ no-resolve | Sandbox pods use the node resolver, not CoreDNS. In-cluster names resolve **only** inside the gateway (which is `hostNetwork` + `ClusterFirstWithHostNet`). |
 | **Gitea** (`aigit.waterschap.org` / `10.23.0.101:443`) | ⛔ (default-deny) | ✅ network path | ✅ network path (direct, in `NO_PROXY`) | External for real instances. `hostAliases` map the name → `10.23.0.101`; egress to `:443` is allowed. Git still runs **host-side via bundles** — the sandbox holds NO credentials; this is a network path only. |
-| **LLM** | ⛔ | ⚠️ **uncertain** | ⚠️ **uncertain** | Model server is a ClusterIP in the `llm` namespace. Reachable from a tier only if its hostname is in the gateway `ALLOW_HOSTS` **and** the tier routes it via the proxy (`modules`). Otherwise ClusterIP+DNS block it. **Must be confirmed by the probe.** |
+| **LLM** | ⛔ | ⛔ | ⛔ (by design) | **Intentionally unreachable.** The agent loop (LLM calls) runs pod-side in module-coding; the sandbox runtime is exec/file primitives only, so in-sandbox code has no need to call the LLM. Two paths are deliberately closed: (1) the Druppie backend (`:8000`) has **no egress rule**; (2) the model server (ClusterIP in the `llm` namespace) is excluded by prod `ALLOW_HOSTS=.druppie.svc.cluster.local` and by `ALLOW_PORTS` (which omits `:8000`). The probe should **confirm it stays blocked** (negative test). |
 | **Other modules** (`module-filesearch`, `module-registry`) | ⛔ | ⛔ | ✅ via gateway (if in `ALLOW_HOSTS`) | In-cluster ClusterIPs. Only the `modules` tier routes in-cluster hostnames through the `:3128` gateway proxy; reachability requires the host to be in `.Values.agentSandbox.gateway.allowHosts`. |
 
 ### Bottom line (expected)
@@ -60,8 +60,10 @@ is enabled:
   **network path** to `10.23.0.101:443` exists on `internet`/`modules` tiers.
 - **Internet:** **yes** over HTTPS on `internet`/`modules` (direct on `modules`
   via `NO_PROXY`); **no** on `airgapped`.
-- **LLM:** **open** — reachable only if routed via the gateway with the hostname
-  allowlisted; needs the probe to confirm.
+- **LLM:** **intentionally unreachable on every tier** — by design, not a gap.
+  The agent loop runs pod-side; the sandbox needs no LLM path. Backend `:8000`
+  has no egress rule, and the model server (`llm` namespace) is excluded by prod
+  `ALLOW_HOSTS`/`ALLOW_PORTS`. The probe confirms the block (negative test).
 - **Modules:** now **wired on the `modules` tier** via the gateway proxy (when
   the flag is on and the host is in `ALLOW_HOSTS`); **no** path on the other
   tiers.
@@ -94,8 +96,8 @@ modules tier — <paste scripts/sandbox_network_probe.sh output here>
 ### Conclusion
 
 > _Fill in once observed:_ Does each tier's observed behaviour match "Expected"?
-> Any surprises (e.g. LLM reachable/unreachable, internet blocked on a tier that
-> should allow it, a module host missing from `ALLOW_HOSTS`)? If LLM is
-> unreachable and agents need it from the sandbox, that becomes a follow-up
-> (add its host to the gateway allowlist, or mirror the host-side pattern).
+> Any surprises (e.g. internet blocked on a tier that should allow it, a module
+> host missing from `ALLOW_HOSTS`)? The **LLM must stay unreachable on every
+> tier** — that is the designed posture (see the LLM row). If the probe finds it
+> *reachable*, that is a regression to fix, not a feature.
 </content>

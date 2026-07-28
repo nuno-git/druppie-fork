@@ -267,16 +267,10 @@ spec:
       ports:
       - protocol: TCP
         port: 80
-    # LLM endpoint — restrict to backend pods only (not all port 8000 in namespace)
-    - to:
-      - namespaceSelector:
-          matchLabels:
-            kubernetes.io/metadata.name: {{ .Release.Namespace }}
-        podSelector:
-          matchLabels:
-            app.kubernetes.io/component: backend
-      ports:
-      - protocol: TCP
-        port: 8000
+    # NOTE: no backend/LLM egress. The sandbox runtime is exec/file primitives
+    # only; the agent loop (LLM calls) runs pod-side in module-coding. Untrusted
+    # in-sandbox code must NOT reach the in-cluster backend/LLM (:8000) directly.
+    # Legitimate in-cluster access (module MCP services) is granted only in the
+    # gateway-enabled tiers, via the proxy port allowlist (which excludes 8000).
 {{- end }}
 {{- end }}
