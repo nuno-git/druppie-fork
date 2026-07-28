@@ -1015,11 +1015,13 @@ class BranchEnvironmentService:
         user_roles: list[str],
         image_tag: str | None = None,
     ) -> BranchEnvironmentDetail:
-        """Commit a new image tag and/or a forced-reconcile annotation bump.
+        """Trigger a full rebuild + redeploy of the branch environment.
 
-        Owner or admin only. The committed ``reconcile.fluxcd.io`` annotations
-        make helm-controller reconcile (and retry a failed release) as soon as
-        Flux applies the change — no kube write needed from the backend.
+        Dispatches a Gitea Actions CI build for the branch (builds fresh
+        Docker images) and bumps the Flux reconcile annotation so the new
+        image tag is picked up as soon as CI patches the HelmRelease.
+
+        Owner or admin only.
         """
         slug = _validate_slug(env_id)
         env = await self._read_env(slug)
@@ -1034,6 +1036,16 @@ class BranchEnvironmentService:
         else:
             image_tag = env["image_tag"]
 
+        # Dispatch CI to build fresh images for this branch. The CI pipeline
+        # will push images to Harbor and then patch the HelmRelease imageTag
+        # in the GitOps repo (same as on push). This is the main difference
+        # from a plain reconcile — without this, redeploy would just re-apply
+        # the current chart without building anything new.
+        await self.gitea.dispatch_workflow(CHART_REPO, env["branch"])
+
+        # Also bump reconcile annotations so Flux picks up the new tag faster
+        # once CI patches it. The committed reconcile.fluxcd.io annotations
+        # make helm-controller reconcile as soon as Flux applies the change.
         updated_at = _utcnow_iso()
         content = build_helmrelease_yaml(
             slug,
@@ -1066,7 +1078,7 @@ class BranchEnvironmentService:
         return detail.model_copy(
             update={
                 "status": BranchEnvironmentStatus.DEPLOYING,
-                "status_message": "redeploy committed; waiting for Flux",
+                "status_message": "CI build dispatched; redeploy committed; waiting for Flux",
                 "image_tag": image_tag,
             }
         )
@@ -1344,6 +1356,94 @@ class BranchEnvironmentService:
         logger.info("branch_env_auto_deploy_disabled", slug=slug, namespace=env["namespace"])
 
         env["auto_deploy_enabled"] = False
+        status, message = await self._live_status(env["namespace"])
+        return self._detail_from_env(env, status=status, message=message)
+
+    async def change_secrets_source(
+        self,
+        env_id: str,
+        user_id: UUID,
+        user_roles: list[str],
+        secrets_source: str,
+    ) -> BranchEnvironmentDetail:
+        """Change the Vault secrets source for a branch environment.
+
+        Updates both the namespace annotation and the HelmRelease
+        ``devWorkspace.secretsSource`` value. Owner or admin only.
+        """
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
+        if env is None:
+            raise NotFoundError("branch_environment", slug)
+
+        _require_owner_or_admin(env["owner_id"], user_id, user_roles, "change secrets for")
+        _assert_safe_namespace(env["namespace"], slug)
+
+        secrets_source = (secrets_source or SECRETS_SOURCE_COLAB_DEV).strip().lower()
+        if not secrets_source or not _SECRETS_SOURCE_RE.match(secrets_source):
+            raise ValidationError(
+                f"invalid secrets_source: {secrets_source!r}", field="secrets_source"
+            )
+
+        if secrets_source == env.get("secrets_source"):
+            raise ConflictError(
+                f"secrets_source is already '{secrets_source}' for '{slug}'"
+            )
+
+        # Update namespace annotation
+        ns_content, ns_sha = await self._read_namespace_file(slug)
+        new_ns = build_namespace_yaml(
+            slug,
+            env["branch"],
+            env["owner_id"] or UUID(int=0),
+            env["created_at"] or _utcnow_iso(),
+            secrets_source=secrets_source,
+            auto_deploy_enabled=env.get("auto_deploy_enabled", True),
+        )
+
+        # Update HelmRelease devWorkspace.secretsSource
+        updated_at = _utcnow_iso()
+        new_hr = build_helmrelease_yaml(
+            slug,
+            env["branch"],
+            env["host"],
+            env["image_tag"],
+            updated_at,
+            reconcile_epoch=str(int(time.time())),
+            secrets_source=secrets_source,
+            workspace_enabled=env.get("workspace_enabled", True),
+            stack_mode=env.get("stack_mode", "real"),
+            ca_chain=_read_aigit_ca(),
+        )
+
+        await self._change_files_with_retry(
+            slug,
+            f"branch-env: change secrets source to {secrets_source} "
+            f"for {env['namespace']} (by {user_id})",
+            [
+                {
+                    "operation": "update",
+                    "path": self._env_path(slug, "namespace.yaml"),
+                    "content": new_ns,
+                    "sha": ns_sha,
+                },
+                {
+                    "operation": "update",
+                    "path": self._env_path(slug, "helmrelease.yaml"),
+                    "content": new_hr,
+                    "sha": env["helmrelease_sha"],
+                },
+            ],
+        )
+        logger.info(
+            "branch_env_secrets_source_changed",
+            slug=slug,
+            namespace=env["namespace"],
+            secrets_source=secrets_source,
+        )
+        await self.cluster.force_reconcile_flux()
+
+        env["secrets_source"] = secrets_source
         status, message = await self._live_status(env["namespace"])
         return self._detail_from_env(env, status=status, message=message)
 
