@@ -236,7 +236,7 @@ const BranchEnvCard = ({
   onDisableWorkspace,
   onEnableAutoDeploy,
   onDisableAutoDeploy,
-  onChangeSecretsSource,
+  onOpenSecretsDialog,
   isRedeploying,
   isDeleting,
   isEnablingWorkspace,
@@ -318,17 +318,7 @@ const BranchEnvCard = ({
           <span className="text-gray-400">secrets</span>{' '}
           <span className="font-mono text-xs">{env.secrets_source || 'colab-dev'}</span>
           <button
-            onClick={() => {
-              const newSource = window.prompt(
-                `Change secrets source for "${env.branch}"?\n\n` +
-                'Enter a Vault path name (e.g. "colab-dev", "robbe", "nuno", or a custom name).\n' +
-                'Maps to druppie/<name>/* or druppie/developers/<name>/*.',
-                env.secrets_source || 'colab-dev'
-              )
-              if (newSource && newSource.trim() && newSource.trim() !== (env.secrets_source || 'colab-dev')) {
-                onChangeSecretsSource(env.id, newSource.trim())
-              }
-            }}
+            onClick={() => onOpenSecretsDialog(env)}
             disabled={isChangingSecretsSource}
             className="text-[10px] px-1.5 py-0.5 rounded text-gray-500 bg-gray-50 hover:bg-gray-100 hover:text-gray-700 transition-colors disabled:opacity-50"
             title="Change secrets source"
@@ -833,9 +823,146 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
   )
 }
 
+const ChangeSecretsSourceDialog = ({ env, onClose, onChange, isChanging }) => {
+  const [secretsSource, setSecretsSource] = useState(env?.secrets_source || 'colab-dev')
+  const [customSecretsSource, setCustomSecretsSource] = useState('')
+
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const submit = (e) => {
+    e.preventDefault()
+    const src = secretsSource === 'custom' ? customSecretsSource.trim() : secretsSource
+    if (!src) return
+    if (src === (env?.secrets_source || 'colab-dev')) {
+      onClose()
+      return
+    }
+    onChange(env.id, src)
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/30 z-30" onClick={onClose} />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border border-gray-200 p-5 w-[30rem] max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Code2 className="w-5 h-5 text-blue-600" />
+            <h3 className="text-sm font-semibold text-gray-900">
+              Change secrets source: <span className="font-mono text-blue-700">{env?.branch}</span>
+            </h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Secrets source</label>
+            <div className="space-y-1.5">
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="radio"
+                  name="secrets-source"
+                  value="colab-dev"
+                  checked={secretsSource === 'colab-dev'}
+                  onChange={() => setSecretsSource('colab-dev')}
+                  className="mt-0.5"
+                />
+                <span>
+                  colab-dev defaults
+                  <span className="block text-xs text-gray-400">
+                    Borrow the LLM API keys from colab-dev — works out of the box.
+                  </span>
+                </span>
+              </label>
+              {['robbe', 'nuno'].map((name) => (
+                <label key={name} className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="secrets-source"
+                    value={name}
+                    checked={secretsSource === name}
+                    onChange={() => setSecretsSource(name)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    {name}
+                    <span className="block text-xs text-gray-400 font-mono">
+                      druppie/developers/{name}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="radio"
+                  name="secrets-source"
+                  value="custom"
+                  checked={secretsSource === 'custom'}
+                  onChange={() => setSecretsSource('custom')}
+                  className="mt-0.5"
+                />
+                <span>
+                  Custom
+                  <span className="block text-xs text-gray-400">
+                    Type a custom Vault path name (e.g. a new developer).
+                  </span>
+                </span>
+              </label>
+              {secretsSource === 'custom' && (
+                <div className="ml-6">
+                  <input
+                    type="text"
+                    value={customSecretsSource}
+                    onChange={(e) => setCustomSecretsSource(e.target.value)}
+                    placeholder="e.g. jeroen"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Maps to druppie/developers/{customSecretsSource || 'your-name'} in Vault.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isChanging}
+              className="px-3 py-1.5 text-sm text-gray-600 rounded-md hover:bg-gray-100 transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isChanging}
+              className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+            >
+              {isChanging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              {isChanging ? 'Changing…' : 'Change'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </>
+  )
+}
+
 const BranchEnvironments = () => {
   const [showDeploy, setShowDeploy] = useState(false)
   const [deployError, setDeployError] = useState(null)
+  const [secretsDialogEnv, setSecretsDialogEnv] = useState(null)
   const { user } = useAuth() || {}
   const toast = useToast()
   const qc = useQueryClient()
@@ -1029,7 +1156,7 @@ const BranchEnvironments = () => {
               onDisableWorkspace={(id) => disableWorkspaceMut.mutate(id)}
               onEnableAutoDeploy={(id) => enableAutoDeployMut.mutate(id)}
               onDisableAutoDeploy={(id) => disableAutoDeployMut.mutate(id)}
-              onChangeSecretsSource={(id, src) => changeSecretsSourceMut.mutate({ id, secretsSource: src })}
+              onOpenSecretsDialog={(e) => setSecretsDialogEnv(e)}
               isRedeploying={redeployMut.isPending && redeployMut.variables === env.id}
               isDeleting={deleteMut.isPending && deleteMut.variables === env.id}
               isEnablingWorkspace={enableWorkspaceMut.isPending && enableWorkspaceMut.variables === env.id}
@@ -1050,6 +1177,19 @@ const BranchEnvironments = () => {
           isDeploying={deployMut.isPending}
           deployError={deployError}
           username={user?.username}
+        />
+      )}
+
+      {/* Secrets source dialog */}
+      {secretsDialogEnv && (
+        <ChangeSecretsSourceDialog
+          env={secretsDialogEnv}
+          onClose={() => setSecretsDialogEnv(null)}
+          onChange={(id, src) => {
+            changeSecretsSourceMut.mutate({ id, secretsSource: src })
+            setSecretsDialogEnv(null)
+          }}
+          isChanging={changeSecretsSourceMut.isPending}
         />
       )}
     </div>
