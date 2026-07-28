@@ -158,6 +158,13 @@ spec:
               value: {{ .domainSuffix | quote }}
             {{- end }}
             {{- end }}
+            # Entra ID allowed-emails allowlist (from Vault via ExternalSecret)
+            - name: ENTRA_ALLOWED_EMAILS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-entra-id
+                  key: allowed-emails
+                  optional: true
           ports:
             - name: http
               containerPort: {{ .Values.backend.port }}

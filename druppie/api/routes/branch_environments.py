@@ -32,6 +32,7 @@ from druppie.domain import (
     BranchEnvironmentDetail,
     BranchEnvironmentListResponse,
     BranchEnvironmentPipeline,
+    BranchEnvironmentUpdateSecretsSource,
 )
 from druppie.services import BranchEnvironmentService
 
@@ -178,6 +179,79 @@ async def disable_branch_environment_workspace(
         env_id=env_id,
         user_id=UUID(user["sub"]),
         user_roles=get_user_roles(user),
+    )
+
+
+@router.post(
+    "/branch-environments/{env_id}/auto-deploy",
+    response_model=BranchEnvironmentDetail,
+    status_code=202,
+)
+async def enable_branch_environment_auto_deploy(
+    env_id: str,
+    service: BranchEnvironmentService = Depends(get_branch_environment_service),
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
+) -> BranchEnvironmentDetail:
+    """Enable CI/CD auto-deploy for a branch environment. Owner or admin only.
+
+    Commits ``druppie.io/auto-deploy: "true"`` to the namespace annotations;
+    future CI runs will patch the HelmRelease image tag on push.
+    """
+    return await service.enable_auto_deploy(
+        env_id=env_id,
+        user_id=UUID(user["sub"]),
+        user_roles=get_user_roles(user),
+    )
+
+
+@router.delete(
+    "/branch-environments/{env_id}/auto-deploy",
+    response_model=BranchEnvironmentDetail,
+    status_code=202,
+)
+async def disable_branch_environment_auto_deploy(
+    env_id: str,
+    service: BranchEnvironmentService = Depends(get_branch_environment_service),
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
+) -> BranchEnvironmentDetail:
+    """Disable CI/CD auto-deploy for a branch environment. Owner or admin only.
+
+    Commits ``druppie.io/auto-deploy: "false"`` to the namespace annotations;
+    future CI runs will skip the HelmRelease image tag patch, so the
+    environment stays on its current image until manually redeployed.
+    """
+    return await service.disable_auto_deploy(
+        env_id=env_id,
+        user_id=UUID(user["sub"]),
+        user_roles=get_user_roles(user),
+    )
+
+
+@router.post(
+    "/branch-environments/{env_id}/secrets-source",
+    response_model=BranchEnvironmentDetail,
+    status_code=202,
+)
+async def change_branch_environment_secrets_source(
+    env_id: str,
+    body: BranchEnvironmentUpdateSecretsSource,
+    service: BranchEnvironmentService = Depends(get_branch_environment_service),
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
+) -> BranchEnvironmentDetail:
+    """Change the Vault secrets source for a branch environment. Owner or admin only.
+
+    Updates the namespace annotation and HelmRelease to point to a different
+    Vault path for app secrets (e.g. switch from colab-dev defaults to a
+    per-developer secrets map).
+    """
+    return await service.change_secrets_source(
+        env_id=env_id,
+        user_id=UUID(user["sub"]),
+        user_roles=get_user_roles(user),
+        secrets_source=body.secrets_source,
     )
 
 

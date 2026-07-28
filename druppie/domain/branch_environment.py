@@ -87,6 +87,9 @@ class BranchEnvironmentSummary(BaseModel):
     workspace_status: str | None = None
     # Recovery mode: workspace + Keycloak only, no gitea/druppie-db/modules.
     recovery_mode: bool = False
+    # When False, CI/CD will skip updating the image tag on push — the
+    # environment stays on its current image until manually redeployed.
+    auto_deploy_enabled: bool = True
 
 
 class BranchEnvironmentDetail(BranchEnvironmentSummary):
@@ -108,6 +111,14 @@ class BranchEnvironmentCreate(BaseModel):
     secrets_source: str = "colab-dev"
     # Recovery mode: workspace + Keycloak only, no gitea/druppie-db/modules.
     recovery_mode: bool = False
+    # When False, CI/CD skips the auto-upgrade on push.
+    auto_deploy_enabled: bool = True
+
+
+class BranchEnvironmentUpdateSecretsSource(BaseModel):
+    """Request body for changing the secrets source of a branch environment."""
+
+    secrets_source: str = "colab-dev"
 
 
 class BranchEnvironmentListResponse(BaseModel):

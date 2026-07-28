@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 """
-Keycloak Setup Script for Druppie Governance Platform
+[DEPRECATED — K8s only] Keycloak Setup Script for Druppie Governance Platform
+
+⚠️  THIS SCRIPT IS NOT USED IN THE KUBERNETES DEPLOYMENT.
+    The Helm chart imports the realm directly from helm/druppie/files/realm-export.json
+    via Keycloak's --import-realm flag. See that file for the source of truth.
 
 This script:
 1. Creates the 'druppie' realm
@@ -8,6 +12,8 @@ This script:
 3. Creates users with appropriate roles
 4. Configures OAuth2 clients
 5. Configures Entra ID identity provider (when ENTRA_CLIENT_ID is set)
+
+Kept for reference / local Docker-based development only.
 """
 
 import os

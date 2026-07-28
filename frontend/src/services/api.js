@@ -397,6 +397,15 @@ export const branchEnvironmentsApi = {
     request(`/api/branch-environments/${encodeURIComponent(id)}/workspace`, { method: 'POST' }),
   disableWorkspace: (id) =>
     request(`/api/branch-environments/${encodeURIComponent(id)}/workspace`, { method: 'DELETE' }),
+  enableAutoDeploy: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/auto-deploy`, { method: 'POST' }),
+  disableAutoDeploy: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/auto-deploy`, { method: 'DELETE' }),
+  changeSecretsSource: (id, secretsSource) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/secrets-source`, {
+      method: 'POST',
+      body: JSON.stringify({ secrets_source: secretsSource }),
+    }),
 }
 
 // ============ Agents (Transparency) ============
