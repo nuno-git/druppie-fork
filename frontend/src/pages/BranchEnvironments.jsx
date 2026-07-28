@@ -26,6 +26,8 @@ import {
   Ban,
   Plus,
   Search,
+  ToggleLeft,
+  ToggleRight,
 } from 'lucide-react'
 
 import { branchEnvironmentsApi } from '../services/api'
@@ -232,10 +234,14 @@ const BranchEnvCard = ({
   onDelete,
   onEnableWorkspace,
   onDisableWorkspace,
+  onEnableAutoDeploy,
+  onDisableAutoDeploy,
   isRedeploying,
   isDeleting,
   isEnablingWorkspace,
   isDisablingWorkspace,
+  isEnablingAutoDeploy,
+  isDisablingAutoDeploy,
 }) => {
   const isTransitional = TRANSITIONAL.has(env.status)
   const canOpen = env.status === 'running' && env.url
@@ -413,6 +419,58 @@ const BranchEnvCard = ({
               Loading pipeline…
             </div>
           ) : null)}
+      </div>
+
+      {/* Auto-deploy toggle */}
+      <div className="mt-3 pt-3 border-t border-gray-100">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {env.auto_deploy_enabled ? (
+              <ToggleRight className="w-4 h-4 text-green-500" />
+            ) : (
+              <ToggleLeft className="w-4 h-4 text-gray-400" />
+            )}
+            <span className="text-xs text-gray-600">Auto-deploy</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+              env.auto_deploy_enabled
+                ? 'bg-green-100 text-green-700'
+                : 'bg-gray-100 text-gray-500'
+            }`}>
+              {env.auto_deploy_enabled ? 'on' : 'off'}
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              if (env.auto_deploy_enabled) {
+                if (window.confirm(
+                  `Turn off auto-deploy for "${env.branch}"?\n\n` +
+                  'Pushing to this branch will no longer rebuild and redeploy the environment. ' +
+                  'You can manually redeploy from this page.'
+                )) {
+                  onDisableAutoDeploy(env.id)
+                }
+              } else {
+                onEnableAutoDeploy(env.id)
+              }
+            }}
+            disabled={
+              (isEnablingAutoDeploy && !env.auto_deploy_enabled) ||
+              (isDisablingAutoDeploy && env.auto_deploy_enabled)
+            }
+            className={`text-xs px-2.5 py-1 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 ${
+              env.auto_deploy_enabled
+                ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 focus:ring-amber-400'
+                : 'text-green-700 bg-green-50 hover:bg-green-100 focus:ring-green-400'
+            }`}
+          >
+            {env.auto_deploy_enabled ? 'Turn off' : 'Turn on'}
+          </button>
+        </div>
+        <p className="mt-1 text-[10px] text-gray-400">
+          {env.auto_deploy_enabled
+            ? 'CI/CD updates the image on every push.'
+            : 'Push events will not rebuild this environment.'}
+        </p>
       </div>
 
       {/* Workspace */}
@@ -835,6 +893,24 @@ const BranchEnvironments = () => {
     onError: (err) => toast.error('Could not turn off workspace', err.message),
   })
 
+  const enableAutoDeployMut = useMutation({
+    mutationFn: (id) => branchEnvironmentsApi.enableAutoDeploy(id),
+    onSuccess: () => {
+      toast.success('Auto-deploy enabled', 'Future pushes will rebuild this environment.')
+      invalidate()
+    },
+    onError: (err) => toast.error('Could not enable auto-deploy', err.message),
+  })
+
+  const disableAutoDeployMut = useMutation({
+    mutationFn: (id) => branchEnvironmentsApi.disableAutoDeploy(id),
+    onSuccess: () => {
+      toast.success('Auto-deploy disabled', 'Pushes will no longer rebuild this environment.')
+      invalidate()
+    },
+    onError: (err) => toast.error('Could not disable auto-deploy', err.message),
+  })
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -914,10 +990,14 @@ const BranchEnvironments = () => {
               onDelete={(id) => deleteMut.mutate(id)}
               onEnableWorkspace={(id) => enableWorkspaceMut.mutate(id)}
               onDisableWorkspace={(id) => disableWorkspaceMut.mutate(id)}
+              onEnableAutoDeploy={(id) => enableAutoDeployMut.mutate(id)}
+              onDisableAutoDeploy={(id) => disableAutoDeployMut.mutate(id)}
               isRedeploying={redeployMut.isPending && redeployMut.variables === env.id}
               isDeleting={deleteMut.isPending && deleteMut.variables === env.id}
               isEnablingWorkspace={enableWorkspaceMut.isPending && enableWorkspaceMut.variables === env.id}
               isDisablingWorkspace={disableWorkspaceMut.isPending && disableWorkspaceMut.variables === env.id}
+              isEnablingAutoDeploy={enableAutoDeployMut.isPending && enableAutoDeployMut.variables === env.id}
+              isDisablingAutoDeploy={disableAutoDeployMut.isPending && disableAutoDeployMut.variables === env.id}
             />
           ))}
         </div>
