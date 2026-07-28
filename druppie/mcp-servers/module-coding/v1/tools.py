@@ -529,6 +529,14 @@ async def _create_sandbox_container(
         cmd = [
             "docker", "run", "-d",
             "--name", container_name,
+            # Hardening — safe under sysbox-runc, which remaps capabilities into
+            # the container's user namespace, so nested dockerd still works with
+            # all host caps dropped (proven by test_sandbox_integration). Re-add
+            # only NET_RAW (ICMP/health checks) and block privilege escalation.
+            # Documented in docs/TECHNICAL.md + KUBERNETES-STRATEGY.md.
+            "--security-opt", "no-new-privileges",
+            "--cap-drop", "ALL",
+            "--cap-add", "NET_RAW",
             "--network", SANDBOX_NETWORK,
             "--memory", SANDBOX_MEMORY,
             "--pids-limit", str(SANDBOX_PIDS_LIMIT),

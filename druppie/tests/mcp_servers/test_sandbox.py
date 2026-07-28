@@ -100,7 +100,9 @@ class TestCommandConstruction:
         assert "--pids-limit" in cmd
         assert "--cpus" in cmd
         idx = cmd.index("--tmpfs")
-        assert cmd[idx + 1] == "/tmp:size=512m"
+        # Size is an operational tuning value (currently 4g for real agent
+        # workloads), not a security property — assert a /tmp tmpfs exists.
+        assert cmd[idx + 1].startswith("/tmp:size=")
 
     @pytest.mark.asyncio
     async def test_runtime_flag_default(self):
