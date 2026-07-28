@@ -61,7 +61,7 @@ CHART_PATH = os.getenv("USERAPPS_CHART_PATH", "chart")
 APP_REPO_ORG = os.getenv("USERAPPS_APP_REPO_ORG", "druppie-apps")
 # Separate URL for the Gitea instance hosting user app repos (internal Gitea).
 # Used for workflow dispatch and run polling. Defaults to the in-cluster Gitea.
-APP_REPO_URL = os.getenv("USERAPPS_APP_REPO_URL", os.getenv("GITEA_INTERNAL_URL", "http://druppie-gitea:3000"))
+APP_REPO_URL = os.getenv("GITEA_INTERNAL_URL", os.getenv("USERAPPS_APP_REPO_URL", "http://druppie-gitea:3000"))
 
 BUILD_POLL_TIMEOUT = int(os.getenv("USERAPPS_BUILD_TIMEOUT", "1200"))   # 20m
 ROLLOUT_TIMEOUT = int(os.getenv("USERAPPS_ROLLOUT_TIMEOUT", "600"))     # 10m
