@@ -153,6 +153,23 @@ system_prompt: |
 
   IMPORTANT: These are regular MCP tool calls, NOT sandbox tasks.
 
+  ### Level 4b: SharePoint documents — sharepoint tools
+  Call these tools to browse SharePoint sites and read documents:
+  - sharepoint_list_sites(query) — discover SharePoint sites the user can access
+  - sharepoint_resolve_site_url(url) — resolve a SharePoint URL to a site ID (use when you have a URL, or when list_sites returns a permission error)
+  - sharepoint_list_all_files(site_id) — folder-level summary: every folder with file count, total size, and file type breakdown. Use this first to orient, then drill into folders with list_files.
+  - sharepoint_list_files(site_id, folder_path) — list individual files/folders in a specific folder (use after orienting with list_all_files)
+  - sharepoint_search_files(site_id, query) — search by name or content within a site
+  - sharepoint_read_file(site_id, file_id) — read file content (text files) or get web_url (binary/Office)
+  - sharepoint_get_file_metadata(site_id, file_id) — metadata without download
+
+  **Tool selection** (orient → target → read):
+  1. Orient: list_all_files → folder map with counts and sizes (lightweight, one call)
+  2. Target: list_files(folder_path) → individual files, OR search_files(query) → find by keyword
+  3. Read: read_file(file_id) → get content
+
+  **Usage pattern**: First try list_sites to discover sites. If it fails with a permission error, ask the user for their SharePoint URL and use resolve_site_url instead. Then call list_all_files to get the folder structure, pick the relevant folder(s), and use list_files or search_files to find specific files. Use read_file for content.
+
   ### Level 5: External data — web tools
   Call these tools to find external data sources:
   - web_fetch_url(url) — fetch data from an external URL
@@ -628,6 +645,14 @@ mcps:
     - execute_query
     - create_chart
     - create_chart_from_source
+  sharepoint:
+    - list_sites
+    - resolve_site_url
+    - list_all_files
+    - list_files
+    - read_file
+    - get_file_metadata
+    - search_files
 
 approval_overrides: {}
 

@@ -529,6 +529,26 @@ services:
       retries: 5
       start_period: 10s
 
+  module-sharepoint:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-sharepoint/Dockerfile
+    container_name: druppie-module-sharepoint
+    profiles: [sharepoint]
+    environment:
+      MCP_PORT: "9014"
+      SHAREPOINT_ALLOWED_SITES: "${SHAREPOINT_ALLOWED_SITES-}"
+    ports:
+      - "${MCP_SHAREPOINT_PORT:-9014}:9014"
+    networks:
+      - app-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9014/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   module-kubernetes:
     build:
       context: ./druppie/mcp-servers

@@ -496,3 +496,28 @@ mcps:
       - name: update_work_item
         requires_approval: true
         required_role: session_owner
+
+  sharepoint:
+    url: ${MCP_SHAREPOINT_URL:-http://module-sharepoint:9014}
+    type: module
+    entra_scope: "https://graph.microsoft.com/.default"
+    inject:
+      user_token:
+        from: user.entra_token
+        hidden: true
+        tools: [list_sites, resolve_site_url, list_files, read_file, get_file_metadata, search_files, list_all_files]
+    tools:
+      - name: list_sites
+        requires_approval: false
+      - name: resolve_site_url
+        requires_approval: false
+      - name: list_files
+        requires_approval: false
+      - name: read_file
+        requires_approval: false
+      - name: get_file_metadata
+        requires_approval: false
+      - name: search_files
+        requires_approval: false
+      - name: list_all_files
+        requires_approval: false

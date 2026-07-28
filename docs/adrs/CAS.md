@@ -33,3 +33,4 @@ Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`
 | [029](029-ask-first-fallback-pattern.md) | Ask-first fallback pattern for runtime model management |
 | [030](030-sticky-fallback.md) | Sticky LLM fallback per session |
 | [031](031-hybrid-diagramming-strategy.md) | Hybrid ArchiMate + Mermaid diagramming strategy |
+| [035](035-sharepoint-mcp-architecture.md) | Use OBO auth, URL allowlist, and folder summaries for SharePoint MCP |

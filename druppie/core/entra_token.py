@@ -26,11 +26,13 @@ ENTRA_CLIENT_SECRET = os.getenv("ENTRA_CLIENT_SECRET", "")
 
 IDP_ALIAS = "entra-id"
 
-def _load_allowed_emails() -> set[str]:
-    raw = os.getenv("ENTRA_ALLOWED_EMAILS", "")
-    if not raw.strip():
+def _load_allowed_emails() -> set[str] | None:
+    raw = os.getenv("ENTRA_ALLOWED_EMAILS", "").strip()
+    if not raw:
         return set()
-    return {e.strip().lower() for e in raw.split(",") if e.strip()}
+    if raw.lower() == "all":
+        return None
+    return {e.strip().lower() for e in raw.split(";") if e.strip()}
 
 ALLOWED_ENTRA_EMAILS = _load_allowed_emails()
 
@@ -85,7 +87,7 @@ def _validate_entra_token_claims(access_token: str) -> str | None:
         logger.warning("entra_email_check_failed", reason="no email claim in token")
         return "Entra ID token does not contain an email claim."
 
-    if ALLOWED_ENTRA_EMAILS and email not in ALLOWED_ENTRA_EMAILS:
+    if ALLOWED_ENTRA_EMAILS is not None and email not in ALLOWED_ENTRA_EMAILS:
         logger.warning("entra_email_blocked", email=email)
         return f"Entra ID account '{email}' is not authorized. Contact your administrator."
 

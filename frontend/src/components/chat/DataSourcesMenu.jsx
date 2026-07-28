@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Database, ChevronDown, Check, X, Link2, Loader2, GitBranch, Plug } from 'lucide-react'
+import { Database, ChevronDown, Check, X, Link2, Loader2, GitBranch, Plug, FileText } from 'lucide-react'
 import { getDataSources } from '../../services/api'
 
 const AUTH_LABELS = {
@@ -42,6 +42,7 @@ const DataSourcesMenu = () => {
   const entraLinked = data?.entra_linked
   const entraConfigured = data?.entra_configured
   const devops = data?.services?.devops
+  const sharepoint = data?.services?.sharepoint
 
   return (
     <div className="relative inline-block" ref={ref}>
@@ -56,7 +57,7 @@ const DataSourcesMenu = () => {
       </button>
 
       {open && (
-        <div className="absolute top-full mt-1 right-0 w-72 rounded-lg shadow-lg z-50 bg-white border border-gray-200">
+        <div className="absolute top-full mt-1 right-0 w-80 rounded-lg shadow-lg z-50 bg-white border border-gray-200">
           <div className="px-3 py-2 border-b border-gray-100">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Connected Services</span>
@@ -91,6 +92,27 @@ const DataSourcesMenu = () => {
             </>
           )}
 
+          {/* SharePoint */}
+          {sharepoint?.configured && (
+            <>
+              <div className="px-3 pt-2 pb-1 border-t border-gray-100">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                  <FileText className="w-3 h-3" />
+                  SharePoint
+                </div>
+              </div>
+              <div className="px-3 py-2 flex items-start gap-2.5 hover:bg-gray-50">
+                <StatusDot accessible={sharepoint.accessible} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-gray-800">Documents & Files</div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {AUTH_LABELS[sharepoint.auth_type] || sharepoint.auth_type}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
           {/* Data Sources */}
           {(sources.length > 0 || (!isLoading && !devops?.configured)) && (
             <div className="px-3 pt-2 pb-1 border-t border-gray-100">
@@ -114,9 +136,9 @@ const DataSourcesMenu = () => {
                 <div key={src.source_id} className="px-3 py-2 flex items-start gap-2.5 hover:bg-gray-50">
                   <StatusDot accessible={accessible} />
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-gray-800 truncate">{src.name}</div>
+                    <div className="text-sm font-medium text-gray-800">{src.name}</div>
                     {src.detail && (
-                      <div className="text-xs text-gray-500 font-mono truncate">{src.detail}</div>
+                      <div className="text-xs text-gray-500 font-mono break-all">{src.detail}</div>
                     )}
                     <div className="text-xs text-gray-400 mt-0.5">
                       {AUTH_LABELS[src.auth_type] || src.auth_type}
