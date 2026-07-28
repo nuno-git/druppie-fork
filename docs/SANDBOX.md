@@ -90,9 +90,11 @@ exercises end to end.
      remains in `/workspace/.git/config`.
 
 2. **Edit** — the agent uses `read_file` / `write_file` / `edit_file` / `bash`.
-   In k8s mode file writes go through a base64 pipe in the shell (the SDK upload
-   endpoint is unreliable for absolute paths); binary reads round-trip via
-   base64 too.
+   In k8s mode file writes stage the content via the SDK upload endpoint under a
+   relative temp name and `mv` it into place (absolute paths 500 on that
+   endpoint; the older base64-through-`bash -c` approach silently truncated
+   files larger than ~96 KB). Binary reads (e.g. git bundles) still round-trip
+   via `base64` in the shell.
 
 3. **`push_changes`** (`tools.py`)
    - Auto-commits any uncommitted changes **inside** the sandbox.
@@ -159,7 +161,7 @@ candidate for hardening.
 | # | Item | Where | Risk |
 |---|------|-------|------|
 | 1 | **SDK monkeypatch** — `wait_for_sandbox_ready` is replaced with a no-op to dodge a warm-pool adoption race in the agent-sandbox SDK. | `k8s_sandbox.py` `__init__` | Breaks on an SDK upgrade; must be re-verified when bumping `k8s-agent-sandbox`. |
-| 2 | **base64 shell pipes for file I/O** — the SDK's `files.write` 500s on absolute paths, so writes/binary reads go through `base64` in the shell. | `k8s_sandbox.write_file` / `read_file_bytes` | Slower and larger for big files; an upstream SDK fix should replace it. |
+| 2 | **base64 shell pipe for binary reads** — the SDK's `files.write` 500s on absolute paths, so `read_file_bytes` (git bundles) reads via `base64` in the shell. `write_file` no longer uses base64: it stages via the SDK upload endpoint under a relative temp name + `mv`, which also fixed a silent ~96 KB `MAX_ARG_STRLEN` truncation. | `k8s_sandbox.read_file_bytes` | Slower/larger than a native binary download; an upstream SDK fix should replace it. |
 | 3 | **Namespace / warmpool fallbacks** — code defaults (`sandbox-runtime` / `agent-coding-warmpool`) match no chart resource; the Helm ConfigMap injects the real per-instance values. `__init__` now warns loudly if the fallback is ever used. | `k8s_sandbox.py` top + `__init__` | Only bites if run in k8s mode without the ConfigMap; then create/reap target a non-existent namespace. |
 | 4 | **`/management/sandbox/warmup` is a noop** — warming is declarative via the `SandboxWarmPool` CRD, so there is nothing imperative to trigger. Endpoint kept for API compatibility. | `server.py` `warmup_pool` | None functionally; was previously mislabelled "not implemented". |
 | 5 | **No module-tier egress** — the sandbox cannot reach in-cluster module services; the per-tier gateway was reverted. | Helm agent-sandbox templates | Agents that need real module APIs from inside the sandbox cannot; see the gateway proposal. |

@@ -178,24 +178,27 @@ class K8sSandboxManager:
                 sandbox.commands.run("bash -c " + shlex.quote("git config --global --add safe.directory /workspace")),
                 timeout=15,
             )
-        except asyncio.TimeoutError:
-            logger.warning("Sandbox %s: git config safe.directory timed out", sandbox_id)
+        except Exception as e:
+            # Best-effort git config: a failure here must not abort create() and
+            # leak the already-claimed sandbox, which is not tracked in
+            # self._sandboxes until below (so destroy() could not reach it).
+            logger.warning("Sandbox %s: git config safe.directory failed: %s", sandbox_id, e)
 
         try:
             await asyncio.wait_for(
                 sandbox.commands.run("bash -c " + shlex.quote("git -C /workspace config user.email 'agent@druppie.local'")),
                 timeout=15,
             )
-        except asyncio.TimeoutError:
-            logger.warning("Sandbox %s: git config user.email timed out", sandbox_id)
+        except Exception as e:
+            logger.warning("Sandbox %s: git config user.email failed: %s", sandbox_id, e)
 
         try:
             await asyncio.wait_for(
                 sandbox.commands.run("bash -c " + shlex.quote("git -C /workspace config user.name 'Druppie Agent'")),
                 timeout=15,
             )
-        except asyncio.TimeoutError:
-            logger.warning("Sandbox %s: git config user.name timed out", sandbox_id)
+        except Exception as e:
+            logger.warning("Sandbox %s: git config user.name failed: %s", sandbox_id, e)
 
         self._sandboxes[f"{session_id}::{git_scope}"] = sandbox
         return SandboxHandle(
@@ -401,6 +404,12 @@ class K8sSandboxManager:
         content. We base64-encode inside the sandbox and decode here so the bytes
         round-trip exactly. ``base64.b64decode`` discards the newlines that the
         shell ``base64`` wrapper emits.
+
+        KNOWN DEBT (see docs/SANDBOX.md "Known limitations"): this base64 shell
+        hop is a workaround for the SDK lacking a reliable binary-download path;
+        it is slower/larger than a native download and should be replaced when
+        the SDK gains one. (``write_file`` no longer uses base64 — it stages via
+        the SDK upload endpoint + ``mv``.)
         """
         rc, out, err = await self.exec(handle, "base64 " + shlex.quote(path))
         if rc != 0:

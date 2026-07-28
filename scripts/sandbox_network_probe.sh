@@ -54,15 +54,6 @@ http() { # url
   curl -sS -k -o /dev/null -m "$TIMEOUT" -w '%{http_code}' "$1" 2>/dev/null || echo "000"
 }
 
-# --- TCP reachability (host port) ------------------------------------------
-tcp() { # host port
-  if timeout "$TIMEOUT" bash -c ">/dev/tcp/$1/$2" 2>/dev/null; then
-    echo "open"
-  else
-    echo "closed"
-  fi
-}
-
 echo "# Sandbox network probe  (timeout=${TIMEOUT}s)"
 echo
 
