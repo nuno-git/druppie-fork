@@ -352,6 +352,7 @@ def build_helmrelease_secrets_yaml(
     host: str,
     updated_at: str,
     secrets_source: str = SECRETS_SOURCE_COLAB_DEV,
+    workspace_enabled: bool = True,
 ) -> str:
     """Build a HelmRelease for the druppie-secrets chart (ExternalSecrets only).
 
@@ -369,6 +370,7 @@ def build_helmrelease_secrets_yaml(
             "instance": namespace,
         },
         "devWorkspace": {
+            "enabled": workspace_enabled,
             "secretsSource": secrets_source,
         },
     }
@@ -1111,6 +1113,7 @@ class BranchEnvironmentService:
                 "content": build_helmrelease_secrets_yaml(
                     slug, branch, host, created_at,
                     secrets_source=secrets_source,
+                    workspace_enabled=True,
                 ),
             },
         ]
