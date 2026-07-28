@@ -3,6 +3,9 @@ recoveryMode: false
 
 global:
   instance: druppie
+  # Vault path segment for this environment (e.g. "colab-dev", "main").
+  # Falls back to .instance if empty.
+  vaultEnv: ''
   imagePullPolicy: IfNotPresent
   imageRegistry: ''
   imageTag: ''
