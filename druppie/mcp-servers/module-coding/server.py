@@ -54,7 +54,18 @@ async def sandbox_status(request):
 
 
 async def warmup_pool(request):
-    return JSONResponse({"status": "noop", "message": "Warm pool not implemented"})
+    # Warming is declarative, not imperative: the SandboxWarmPool CRD
+    # (helm/druppie/templates/agent-sandbox/warmpool.yaml, replicas=N) keeps a
+    # pool of gVisor sandboxes pre-warmed so claims are instant. There is no
+    # imperative warmup to trigger from here, so this endpoint is intentionally
+    # a noop — kept for API compatibility. See docs/SANDBOX.md.
+    return JSONResponse({
+        "status": "noop",
+        "message": (
+            "Warm pool is managed declaratively by the SandboxWarmPool CRD; "
+            "no imperative warmup needed"
+        ),
+    })
 
 
 _management_routes = [

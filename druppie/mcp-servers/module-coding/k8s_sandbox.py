@@ -24,20 +24,33 @@ import base64
 import io
 import logging
 import os
+import posixpath
 import shlex
 import shutil
 import tarfile
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
+# In k8s mode SANDBOX_NAMESPACE / SANDBOX_WARMPOOL MUST come from the
+# environment. The Helm chart's ConfigMap injects the real, per-instance values
+# (SANDBOX_NAMESPACE="{instance}-sandbox", SANDBOX_WARMPOOL="{instance}-warmpool"
+# — see helm/druppie/templates/configmap.yaml). The fallbacks below match no
+# chart-created resource; they exist only so the module imports outside the
+# cluster. If k8s mode ever runs with these fallbacks, create_sandbox and the
+# orphan reaper would target a namespace that does not exist, so __init__ warns
+# loudly rather than fail silently. See docs/SANDBOX.md "Known limitations".
+_NAMESPACE_FALLBACK = "sandbox-runtime"
+_WARMPOOL_FALLBACK = "agent-coding-warmpool"
+
 SANDBOX_MODE = os.getenv("DRUPPIE_SANDBOX_MODE", "docker")  # "k8s" or "docker"
-SANDBOX_NAMESPACE = os.getenv("SANDBOX_NAMESPACE", "sandbox-runtime")
-SANDBOX_WARMPOOL = os.getenv("SANDBOX_WARMPOOL", "agent-coding-warmpool")
+SANDBOX_NAMESPACE = os.getenv("SANDBOX_NAMESPACE", _NAMESPACE_FALLBACK)
+SANDBOX_WARMPOOL = os.getenv("SANDBOX_WARMPOOL", _WARMPOOL_FALLBACK)
 
 
 def _strip_credentials(url: str) -> str:
@@ -81,9 +94,11 @@ class K8sSandboxManager:
         self.client = AsyncSandboxClient(connection_config=config)
         self._sandboxes: dict[str, object] = {}
 
-        # Patch SDK: the sandbox operator deletes Sandbox resources before the
-        # SDK can watch them (warm pool adoption race). The claim status already
-        # has podIPs, so skip the broken wait_for_sandbox_ready.
+        # KNOWN DEBT (see docs/SANDBOX.md "Known limitations"): patch the SDK —
+        # the sandbox operator deletes Sandbox resources before the SDK can watch
+        # them (warm pool adoption race). The claim status already has podIPs, so
+        # skip the broken wait_for_sandbox_ready. This monkeypatch is fragile: it
+        # can break on a k8s-agent-sandbox upgrade and must be re-verified then.
         _orig_wait = self.client.k8s_helper.wait_for_sandbox_ready
         async def _patched_wait(sandbox_id, namespace, timeout):
             # Get pod IP from the SandboxClaim status instead of watching Sandbox
@@ -97,6 +112,21 @@ class K8sSandboxManager:
 
         logger.info("K8sSandboxManager initialized (namespace=%s, warmpool=%s)",
                      SANDBOX_NAMESPACE, SANDBOX_WARMPOOL)
+
+        # Guard against the misleading import-time fallbacks (see module top).
+        # In-cluster these are always provided by the Helm ConfigMap; if we see
+        # the fallback here, sandbox creation and orphan cleanup will silently
+        # target a non-existent namespace, so make the misconfiguration visible.
+        if SANDBOX_NAMESPACE == _NAMESPACE_FALLBACK or SANDBOX_WARMPOOL == _WARMPOOL_FALLBACK:
+            logger.warning(
+                "K8sSandboxManager: SANDBOX_NAMESPACE/SANDBOX_WARMPOOL are using "
+                "non-chart fallback values (%s / %s). In-cluster these MUST come "
+                "from the Helm ConfigMap ('{instance}-sandbox' / "
+                "'{instance}-warmpool'); with the fallback, create_sandbox and the "
+                "orphan reaper target a namespace that does not exist. "
+                "Set both env vars.",
+                SANDBOX_NAMESPACE, SANDBOX_WARMPOOL,
+            )
 
     async def create(
         self,
@@ -124,9 +154,24 @@ class K8sSandboxManager:
                      sandbox_id, session_id, git_scope)
 
         if repo_clone_url:
-            await self._host_side_clone(
-                sandbox, sandbox_id, repo_clone_url, branch
-            )
+            try:
+                await self._host_side_clone(
+                    sandbox, sandbox_id, repo_clone_url, branch
+                )
+            except Exception:
+                # Clone failed — do NOT hand back a sandbox over an empty
+                # workspace. The agent would otherwise operate on nothing and
+                # only discover it at push time. Release the claim so it does
+                # not leak, then propagate: _resolve_container retries once and
+                # ultimately surfaces a clear error to the agent.
+                try:
+                    await asyncio.wait_for(sandbox.terminate(), timeout=30)
+                except Exception:
+                    logger.warning(
+                        "Failed to terminate sandbox %s after clone failure",
+                        sandbox_id,
+                    )
+                raise
 
         try:
             await asyncio.wait_for(
@@ -178,6 +223,11 @@ class K8sSandboxManager:
         origin URL is then rewritten to a credential-stripped form so no token
         is left in ``/workspace/.git/config``; push/fetch still work because the
         host side (``push_changes``) exchanges git bundles with credentials.
+
+        Raises RuntimeError on any fatal failure (clone, upload, extract or
+        verify) so the caller discards the claim instead of returning a handle
+        over an empty workspace. Origin rewrite and sslVerify config are
+        best-effort (the repo is already present) and only warn on timeout.
         """
         tmpdir = await asyncio.to_thread(tempfile.mkdtemp, prefix="sandbox-clone-")
         try:
@@ -198,19 +248,14 @@ class K8sSandboxManager:
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
-                logger.warning(
-                    "Host-side git clone timed out (120s) for sandbox %s",
-                    sandbox_id,
-                )
-                return
+                raise RuntimeError("host-side git clone timed out (120s)")
 
             if proc.returncode != 0:
                 detail = (stderr_b or stdout_b).decode(errors="replace")[:200]
-                logger.warning(
-                    "Host-side git clone failed (rc=%s) for sandbox %s: %s",
-                    proc.returncode, sandbox_id, detail,
+                raise RuntimeError(
+                    "host-side git clone failed (rc=%s): %s"
+                    % (proc.returncode, detail)
                 )
-                return
 
             # Build an in-memory tar of the cloned tree (incl. .git) and upload.
             buf = io.BytesIO()
@@ -227,25 +272,24 @@ class K8sSandboxManager:
                     timeout=30,
                 )
             except asyncio.TimeoutError:
-                logger.warning(
-                    "Host-side clone: files.write timed out for sandbox %s",
-                    sandbox_id,
-                )
-                return
+                raise RuntimeError("host-side clone: repo.tar upload timed out")
             # /workspace is a PVC mount; a recycled warm-pool sandbox may still
             # hold the previous session's files, so wipe it before extracting.
-            extract = "find /workspace -mindepth 1 -delete 2>/dev/null; tar -xf /app/repo.tar -C /workspace && rm -f /app/repo.tar"
+            # Use '&&' (not ';') between wipe and extract so a failed wipe does
+            # not silently overlay the new repo on a prior session's leftovers.
+            extract = "find /workspace -mindepth 1 -delete && tar -xf /app/repo.tar -C /workspace && rm -f /app/repo.tar"
             try:
-                await asyncio.wait_for(
+                eres = await asyncio.wait_for(
                     sandbox.commands.run("bash -c " + shlex.quote(extract)),
                     timeout=60,
                 )
             except asyncio.TimeoutError:
-                logger.warning(
-                    "Host-side clone: extract timed out for sandbox %s",
-                    sandbox_id,
+                raise RuntimeError("host-side clone: tar extract timed out")
+            if eres.exit_code != 0:
+                raise RuntimeError(
+                    "host-side clone: wipe/extract failed: %s"
+                    % (eres.stderr or eres.stdout)[:200]
                 )
-                return
 
             # Verify the repo landed so clone success/failure is observable.
             verify = "git -C /workspace rev-parse --is-inside-work-tree"
@@ -255,18 +299,13 @@ class K8sSandboxManager:
                     timeout=15,
                 )
             except asyncio.TimeoutError:
-                logger.error(
-                    "Sandbox %s: git verify timed out after host-side clone",
-                    sandbox_id,
-                )
-                return
+                raise RuntimeError("host-side clone: git verify timed out")
             if vres.exit_code != 0:
-                logger.error(
-                    "Sandbox %s: /workspace is not a git repo after host-side "
-                    "clone (extract may have failed): %s",
-                    sandbox_id, (vres.stderr or vres.stdout)[:200],
+                raise RuntimeError(
+                    "/workspace is not a git repo after host-side clone "
+                    "(extract may have failed): %s"
+                    % (vres.stderr or vres.stdout)[:200]
                 )
-                return
 
             # Rewrite origin to the credential-stripped URL (set-url if the
             # clone created one, else add) so no token persists in .git/config.
@@ -306,9 +345,10 @@ class K8sSandboxManager:
                 "Host-side clone OK for sandbox %s (branch=%s)", sandbox_id, branch
             )
         except Exception as e:
-            logger.warning(
+            logger.error(
                 "Host-side clone failed for sandbox %s: %s", sandbox_id, e
             )
+            raise
         finally:
             await asyncio.to_thread(shutil.rmtree, tmpdir, ignore_errors=True)
 
@@ -373,16 +413,34 @@ class K8sSandboxManager:
                          content: str | bytes) -> None:
         """Write a file into the sandbox (text or binary).
 
-        The SDK's files.write upload endpoint is unreliable for absolute paths
-        (500s), so we pipe base64-decoded content through the shell. This
-        handles arbitrary bytes without quoting/escaping issues.
+        Content is staged via the SDK's files.write upload endpoint under a
+        RELATIVE temp name (absolute paths 500 on that endpoint; a relative
+        name lands at ``/app/<name>``) and then moved into place. The previous
+        approach piped base64 through ``bash -c``, but that passes the whole
+        payload as a single argv entry and silently fails for content larger
+        than ~96 KB (Linux ``MAX_ARG_STRLEN`` caps one argument at 128 KB, and
+        base64 adds ~33%). The upload endpoint has no such limit — it is the
+        same path used to ship the repo tar in — so large files and binary
+        bundles (git_fetch/git_pull) now round-trip correctly.
         """
         if isinstance(content, str):
             content = content.encode("utf-8")
-        b64 = base64.b64encode(content).decode("ascii")
-        cmd = "printf %s " + shlex.quote(b64) + " | base64 -d > " + shlex.quote(path)
-        rc, _, err = await self.exec(handle, cmd)
+        sandbox = handle._backend
+        tmp_name = ".druppie-write-%s.tmp" % uuid.uuid4().hex
+        tmp_abs = "/app/" + tmp_name
+        try:
+            await asyncio.wait_for(sandbox.files.write(tmp_name, content), timeout=60)
+        except asyncio.TimeoutError:
+            raise RuntimeError("write_file to %s failed: upload timed out" % path)
+        parent = posixpath.dirname(path) or "/"
+        mv_cmd = (
+            "mkdir -p " + shlex.quote(parent)
+            + " && mv -f " + shlex.quote(tmp_abs) + " " + shlex.quote(path)
+        )
+        rc, _, err = await self.exec(handle, mv_cmd)
         if rc != 0:
+            # Best-effort cleanup so a failed move doesn't leave staged temps.
+            await self.exec(handle, "rm -f " + shlex.quote(tmp_abs))
             raise RuntimeError("write_file to %s failed: %s" % (path, err.strip()))
 
     async def file_exists(self, handle: SandboxHandle, path: str) -> bool:
