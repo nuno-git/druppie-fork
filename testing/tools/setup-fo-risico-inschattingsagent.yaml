@@ -1,0 +1,505 @@
+## Seeded session: full create_project conversation for the "Risico-inschattingsagent"
+## FO, paused on the session-owner approval gate for docs/functional-design.md.
+##
+## Reproduces the whole BA run as a real session would have it — context gathering,
+## the full HITL elicitation with the user's answers, the mermaid skill, then
+## coding:make_design on the PENDING gate. Every pre-gate step is mock: true, so
+## seeding is 100% deterministic (no LLM). Only the post-gate resume is live:
+##   - approve  -> BA does push_changes + done() -> trailing planner -> architect
+##   - reject   -> the SAME BA run revises the FO per the feedback
+## No re-elicitation either way, because the whole conversation is reconstructable
+## from the seeded LlmCall history (see testing/tools/FO-SEED-TEMPLATE.md §1).
+##
+## To test:
+##   1. Run this test from the evaluations page -> green.
+##   2. Log in as the session owner (admin by default).
+##   3. /tasks -> pending approval for docs/functional-design.md on a session
+##      named "risico-inschattingsagent". Click "View file" to read the full FO.
+##   4. Approve, or reject with page feedback, then resume the session.
+##
+## Chain: router -> planner -> BA (context + elicitation + mermaid + make_design PENDING).
+
+tool-test:
+  name: setup-fo-risico-inschattingsagent
+  description: "Volledig geseed create_project-gesprek voor het Risico-inschattingsagent FO -- context + elicitatie + make_design, gepauzeerd op de session-owner approval gate, klaar voor approve/feedback"
+  tags: [seed, paused, business_analyst, approval-gate, fd, elicitation, full-conversation, risico-inschattingsagent]
+  session_status: paused_approval
+
+  chain:
+    # ====================== ROUTER ======================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: risico-inschattingsagent
+        description: "Een conversationele risico-inschattingsagent voor een waterschap: medewerkers voeren via een chat-gesprek risico-inschattingen uit over vijf domeinen, met methodiekselectie, toetsing aan wet- en regelgeving, risk appetite, mitigerende maatregelen, PDF-rapportage, een organisatiebreed dashboard en volledig audit trail"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for risico-inschattingsagent"
+      assert:
+        completed: true
+
+    # ====================== PLANNER -> BA ======================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: |
+              Een medewerker van een waterschap wil een "Risico-inschattingsagent".
+              Medewerkers moeten via een conversationeel chat-gesprek laagdrempelig
+              risico-inschattingen kunnen uitvoeren over meerdere domeinen, waarbij de
+              agent gerichte vragen stelt, risico's over domeingrenzen heen identificeert,
+              toetst aan wet- en regelgeving en risk appetite, mitigerende maatregelen
+              voorstelt, een PDF-rapport oplevert en de uitkomst aan een organisatiebreed
+              dashboard doorgeeft. Haal de requirements op door de gebruiker uit te vragen
+              en schrijf het functioneel ontwerp naar docs/functional-design.md.
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create the functional design"
+
+    # ====================== BA: CONTEXT GATHERING (mocked) ======================
+    - agent: business_analyst
+      tool: registry:list_modules
+      mock: true
+      mock_result: |
+        {"success": true, "count": 9, "modules": [{"id": "archimate", "type": "core"}, {"id": "coding", "type": "core"}, {"id": "dataaccess", "type": "module"}, {"id": "docker", "type": "core"}, {"id": "filesearch", "type": "core"}, {"id": "llm", "type": "both"}, {"id": "registry", "type": "core"}, {"id": "vision", "type": "module"}, {"id": "web", "type": "both"}]}
+
+    - agent: business_analyst
+      tool: registry:search_modules
+      arguments:
+        query: "risico risicomanagement risk appetite compliance audit trail dashboard"
+      mock: true
+      mock_result: |
+        {"success": true, "query": "risico risicomanagement risk appetite compliance audit trail dashboard", "count": 0, "results": []}
+
+    - agent: business_analyst
+      tool: registry:list_components
+      mock: true
+      mock_result: |
+        {"success": true, "categories": {"agents": {"count": 15}, "skills": {"count": 13}, "builtin_tools": {"count": 9}}, "total": 37}
+
+    - agent: business_analyst
+      tool: coding:list_projects
+      mock: true
+      mock_result: |
+        {"success": true, "count": 1, "projects": [{"name": "sample-project", "description": "Voorbeeldproject"}]}
+
+    - agent: business_analyst
+      tool: coding:read_file
+      arguments:
+        path: docs/platform-functional-standards.md
+      mock: true
+      mock_result: |
+        {"success": true, "path": "docs/platform-functional-standards.md", "content": "# Platform Functionele Standaarden (rev 2026-04-20)\n\nPlatformdefaults voor authenticatie (Keycloak), autorisatie, logging, dataretentie en privacy gelden automatisch. Schrijf alleen FR/NFR voor projectspecifieke afwijkingen (sectie 14)."}
+
+    - agent: business_analyst
+      tool: dataaccess:list_sources
+      mock: true
+      mock_result: |
+        {"success": true, "sources": [], "count": 0}
+
+    # ====================== BA: ELICITATION (mocked hitl Q&A) ======================
+    # Full requirements interview. Each answer is consistent with the FO body below.
+
+    # Q1 - current situation
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: "Platformdefaults (authenticatie, autorisatie, logging, dataretentie, privacy) gelden automatisch -- zie docs/platform-functional-standards.md. Kun je me eerst meer vertellen over hoe risicomanagement vandaag binnen het waterschap gaat en waar het misgaat?"
+        context: "Intake: huidige situatie en pijnpunt scherp krijgen."
+      mock: true
+      mock_result: |
+        Risicomanagement wordt bij ons niet structureel toegepast. Er is geen vaste
+        methodiek en geen vastgestelde risk appetite. Medewerkers -- projectleiders,
+        adviseurs, beleidsmakers en beheerders -- zijn zich vaak niet bewust van risico's
+        buiten hun eigen domein en handelen onbewust overmoedig of juist risicomijdend.
+        Informatie is versnipperd, er is geen centraal overzicht en wet- en regelgeving
+        wordt niet systematisch meegenomen.
+
+    # Q2 - which domains
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Over welke risicodomeinen moet de agent kunnen adviseren, en moet hij ook domeinen aandragen die de gebruiker zelf niet noemt?"
+        choices:
+          - "Vijf domeinen -- informatieveiligheid, financieel, waterveiligheid, fysieke veiligheid en imago -- en de agent draagt proactief relevante domeinen aan die de gebruiker niet noemde"
+          - "Alleen het domein dat de gebruiker zelf aangeeft"
+          - "Alleen informatieveiligheid en financieel"
+        context: "Scope van risicodomeinen en domeinoverstijgende signalering bepalen."
+      mock: true
+      mock_result: "Vijf domeinen -- informatieveiligheid, financieel, waterveiligheid, fysieke veiligheid en imago -- en de agent draagt proactief relevante domeinen aan die de gebruiker niet noemde"
+
+    # Q3 - methodiek + risk appetite
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Hoe moet de agent de risicomethodiek bepalen en hoe weegt hij de ernst van risico's?"
+        choices:
+          - "De agent kiest een methodiek uit een goedgekeurde, configureerbare set op basis van het type vraag, weegt risico's ten opzichte van elkaar en toetst aan de vastgestelde risk appetite per domein"
+          - "Er is één vaste methodiek voor alle vragen"
+          - "De gebruiker kiest zelf handmatig een methodiek"
+        context: "Methodiekselectie en risk appetite-toetsing bepalen."
+      mock: true
+      mock_result: "De agent kiest een methodiek uit een goedgekeurde, configureerbare set op basis van het type vraag, weegt risico's ten opzichte van elkaar en toetst aan de vastgestelde risk appetite per domein"
+
+    # Q4 - wet- en regelgeving / compliance
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Moet de agent toetsen aan wet- en regelgeving, en wat moet er gebeuren bij (mogelijke) non-compliance?"
+        choices:
+          - "Ja, de agent toetst automatisch aan vigerende wet- en regelgeving, signaleert (potentiele) non-compliance en vermeldt daarbij altijd de bron"
+          - "Nee, wetgeving is de verantwoordelijkheid van de gebruiker"
+          - "Alleen op expliciet verzoek van de gebruiker"
+        context: "Compliance-toetsing en bronvermelding bepalen."
+      mock: true
+      mock_result: "Ja, de agent toetst automatisch aan vigerende wet- en regelgeving, signaleert (potentiele) non-compliance en vermeldt daarbij altijd de bron"
+
+    # Q5 - mitigatie, expert & goedkeuring
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Hoe moet de agent omgaan met mitigerende maatregelen, hoge risico's en de beslissingsbevoegdheid van de gebruiker?"
+        choices:
+          - "De agent stelt mitigerende maatregelen voor met consequenties; komt een risico boven de risk appetite dan wordt een domeinexpert gesignaleerd om de maatregelen te beoordelen; de gekozen actie volgt een goedkeuringsstroom op basis van het mandaat van de gebruiker"
+          - "De agent voert de gekozen maatregel direct uit zonder tussenkomst"
+          - "Alle maatregelen gaan altijd langs een leidinggevende"
+        context: "Mitigatie, expert-signalering en mandaat-gebaseerde goedkeuringsstroom bepalen."
+      mock: true
+      mock_result: "De agent stelt mitigerende maatregelen voor met consequenties; komt een risico boven de risk appetite dan wordt een domeinexpert gesignaleerd om de maatregelen te beoordelen; de gekozen actie volgt een goedkeuringsstroom op basis van het mandaat van de gebruiker"
+
+    # Q6 - reporting, dashboard & trends
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Welke uitvoer verwacht je per analyse en op organisatieniveau?"
+        choices:
+          - "Per analyse een eenduidig PDF-rapport (inclusief welke domeinen wel/niet zijn meegenomen), en een apart dashboard met organisatiebreed overzicht en trends over tijd"
+          - "Alleen een PDF-rapport per analyse"
+          - "Alleen een dashboard, geen rapporten"
+        context: "Rapportage- en dashboardbehoeften bepalen."
+      mock: true
+      mock_result: "Per analyse een eenduidig PDF-rapport (inclusief welke domeinen wel/niet zijn meegenomen), en een apart dashboard met organisatiebreed overzicht en trends over tijd"
+
+    # Q7 - access control & reuse
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Wie mag welke analyses zien, en mogen medewerkers voortbouwen op elkaars werk?"
+        choices:
+          - "Toegang volgens het principle of least privilege: standaard alleen eigen analyses; de eigenaar kan expliciet toegang verlenen; medewerkers kunnen op basis van toegangsrechten voortbouwen op bestaande analyses"
+          - "Iedereen binnen het waterschap ziet alle analyses"
+          - "Analyses zijn strikt prive en niet deelbaar"
+        context: "Toegangsbeheer en hergebruik van analyses bepalen."
+      mock: true
+      mock_result: "Toegang volgens het principle of least privilege: standaard alleen eigen analyses; de eigenaar kan expliciet toegang verlenen; medewerkers kunnen op basis van toegangsrechten voortbouwen op bestaande analyses"
+
+    # Q8 - audit trail, retention & personal/confidential data
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: "Welke eisen gelden er voor het vastleggen (audit trail) en bewaren van gegevens, en gaat het om persoonsgegevens of vertrouwelijke data?"
+        context: "Audit trail, retentie en gegevensgevoeligheid bepalen."
+      mock: true
+      mock_result: |
+        Er moet een volledig, onwijzigbaar audit trail zijn: wie wat wanneer heeft
+        ingevoerd, gewijzigd of goedgekeurd, los van het dashboard. Audit trail-gegevens
+        worden vernietigd volgens de selectielijst van de waterschappen (bij gebrek aan
+        vaststelling een bewaartermijn van 7 jaar). Analyses kunnen persoonsgegevens
+        bevatten (bijv. namen van betrokkenen) en financiele inschattingen zijn
+        vertrouwelijk; toegang daarop is beperkt volgens least privilege.
+
+    # Q9 - performance, scope & success
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: "Welke prestatie-eisen zijn belangrijk, wat valt buiten scope, en wanneer is dit voor jou geslaagd?"
+        context: "Niet-functionele eisen, scope-afbakening en succescriterium."
+      mock: true
+      mock_result: |
+        Prestatie: de agent geeft binnen 5 seconden een inhoudelijk antwoord of een
+        tussentijdse statusindicatie, ondersteunt minstens 25 gelijktijdige gebruikers,
+        het dashboard laadt binnen 5 seconden en een PDF is binnen 10 seconden klaar.
+        Buiten scope: vervanging van menselijke experts, migratie van bestaande
+        risicotools, realtime koppeling met wetgevingsdatabases, beheer van de
+        methodiekenset, een trainingsmodule, koppeling met zaaksystemen/DMS, en
+        gebruikers-/mandaatbeheer (loopt via Keycloak). Geslaagd is het als medewerkers
+        laagdrempelig en systematisch risico-inschattingen uitvoeren en er
+        organisatiebreed inzicht in risico's en trends ontstaat.
+
+    # ====================== BA: USER VALIDATION (summary) ======================
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: |
+          **Probleemsamenvatting**
+          Risicomanagement wordt niet structureel toegepast. Medewerkers missen inzicht in
+          risico's buiten hun eigen domein, er is geen centraal overzicht en geen
+          systematische toetsing aan wet- en regelgeving. Dit leidt tot onnodige risico's
+          op informatieveiligheid, financien, waterveiligheid, fysieke veiligheid en imago.
+
+          **Kernpunten Functionele Eisen**
+          1. Conversationele chat-interface voor risico-inschatting met gerichte vragen
+          2. Identificatie over vijf domeinen, ook domeinen die de gebruiker niet noemt
+          3. Methodiekselectie uit goedgekeurde set + eenduidig rapportageformaat
+          4. Risico's wegen t.o.v. elkaar inclusief risk appetite
+          5. Toetsing aan wet- en regelgeving met signalering van non-compliance + bron
+          6. Mitigerende maatregelen met consequenties
+          7. PDF-rapport inclusief wel/niet meegenomen domeinen
+          8. Doorgeven van gekozen actie aan een apart dashboard
+          9. Dashboard toont trends over tijd
+          10. Volledig audit trail (wie/wat/wanneer), los van het dashboard
+          11. Vernietiging audit trail volgens selectielijst waterschappen
+          12. Toegang volgens least privilege; eigenaar verleent expliciet toegang
+          13. Inzien en voortbouwen op eerdere analyses op basis van toegangsrechten
+          14. Domeinexpert-signalering bij risico boven risk appetite
+          15. Mandaat-gebaseerde goedkeuringsstroom
+          16. Bronvermelding bij algemene kennis (wetgeving, best practices)
+          17. Expliciet benoemen welke onderdelen niet relevant zijn en waarom
+
+          **Buiten Scope**
+          Vervanging van experts, migratie van bestaande tools, realtime wetgevings-
+          koppeling, beheer van de methodiekenset, trainingsmodule, zaaksysteem-/DMS-
+          integratie, en gebruikers-/mandaatbeheer (via Keycloak).
+        choices:
+          - "Ja, dit beschrijft precies wat we nodig hebben"
+          - "Gedeeltelijk, er missen nog een paar dingen"
+          - "Nee, er zijn belangrijke punten die niet kloppen"
+        context: "Validatie van de opgehaalde requirements voordat het FO wordt geschreven."
+      mock: true
+      mock_result: "Ja, dit beschrijft precies wat we nodig hebben"
+
+    # ====================== BA: MERMAID SKILL (mocked, mandatory) ======================
+    - agent: business_analyst
+      tool: builtin:invoke_skill
+      arguments:
+        skill_name: making-mermaid-diagrams
+      mock: true
+      mock_result: |
+        {"success": true, "skill_name": "making-mermaid-diagrams", "instructions": "Mermaid syntax rules loaded. Use flowchart TD; quote ALL labels with plain double quotes; never use the word 'end' as a node id; node-ids are alphanumeric only; verify every node before rendering. This is the full instruction -- no further skill call is needed before coding_make_design."}
+
+    # ====================== BA: WRITE FO -- approval gate PENDING ======================
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: pending
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp — Risico-inschattingsagent
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+          ## 1. Huidige vs. Gewenste Situatie
+
+          | Aspect | Huidige Situatie | Gewenste Situatie |
+          |--------|------------------|-------------------|
+          | Risicomanagement | Wordt niet structureel toegepast binnen het waterschap | Medewerkers voeren systematisch risico-inschattingen uit bij projecten en beslissingen |
+          | Risicobewustzijn | Medewerkers zijn onbewust overmoedig of risicomijdend; geen overzicht buiten eigen domein | Medewerkers krijgen proactief inzicht in risico's over alle domeinen heen |
+          | Methodiek | Geen vaste risicomethodiek; geen risk appetite vastgesteld | Agent kiest uit een goedgekeurde set methodieken die past bij het type vraag; risk appetite wordt meegenomen |
+          | Wet- en regelgeving | Wordt niet systematisch meegenomen in risicoafwegingen | Agent toetst automatisch aan vigerende wet- en regelgeving en signaleert non-compliance |
+          | Registratie | Geen centraal systeem; informatie is versnipperd en onvolledig | Alle analyses worden centraal opgeslagen met volledig audit trail |
+          | Rapportage | Geen gestructureerde rapportage over risico's | Eenduidige PDF-rapportage per analyse plus digitaal dashboard met organisatiebreed overzicht en trends |
+          | Samenwerking | Geen inzicht in elkaars risico-inschattingen | Medewerkers kunnen voortbouwen op bestaande analyses (op basis van toegangsrechten) |
+
+          ## 2. Probleemsamenvatting
+
+          - **Wie is betrokkene:** Medewerkers van het waterschap — projectleiders, adviseurs, beleidsmakers en beheerders.
+          - **Welk probleem ervaren zij:** Risicomanagement wordt niet structureel toegepast. Medewerkers zijn zich niet bewust van risico's buiten hun eigen domein en kunnen onbewust overmoedig of risicomijdend handelen. Er is geen centraal overzicht van risico's en geen systematische toetsing aan wet- en regelgeving.
+          - **Waarom dit belangrijk is (bedrijfsimpact):** Zonder gestructureerd risicomanagement neemt het waterschap onnodige risico's op het gebied van informatieveiligheid, financiën, waterveiligheid, fysieke veiligheid en imago. Dit kan leiden tot schade, non-compliance met wetgeving, en verlies van maatschappelijk vertrouwen.
+          - **Hoe succes eruitziet:** Medewerkers voeren laagdrempelig risico-inschattingen uit via een conversationele agent. De agent stelt gerichte vragen, identificeert risico's over domeingrenzen heen, toetst aan wetgeving, en levert een eenduidig rapport op. Het dashboard geeft organisatiebreed inzicht in risico's en trends.
+
+          ## 3. Functionele Eisen
+
+          | ID | Bron | Eis | Verificatiemethode |
+          |----|------|-----|--------------------|
+          | FR-01 | BA | Het systeem moet een conversationele interface bieden waarmee een medewerker via een chat-gesprek een risico-inschatting kan uitvoeren, waarbij de agent gerichte vragen stelt over het project of de situatie. | Demonstratie van een volledige chat-sessie leidend tot een risico-inschatting. |
+          | FR-02 | BA | Het systeem moet risico's identificeren over alle vijf domeinen: informatieveiligheid, financieel, waterveiligheid, fysieke veiligheid en imago — ook domeinen die de gebruiker niet zelf noemt. | Test met een scenario waarbij de gebruiker slechts één domein noemt; verificatie dat de agent andere relevante domeinen proactief aandraagt. |
+          | FR-03 | BA | Het systeem moet een methodiek kiezen uit een goedgekeurde set methodieken, gebaseerd op het type vraag en situatie, en altijd een eenduidig rapportageformaat opleveren. | Verificatie dat bij verschillende vraagtypen de juiste methodiek wordt gekozen en dat uitvoer altijd vergelijkbaar is. |
+          | FR-04 | BA | Het systeem moet risico's wegen ten opzichte van elkaar en de ernst hiervan inzichtelijk maken, inclusief de vastgestelde risk appetite van het waterschap. | Demonstratie van een gewogen risicoanalyse met zichtbare risk appetite-grens. |
+          | FR-05 | BA | Het systeem moet toetsen aan vigerende wet- en regelgeving en de gebruiker signaleren wanneer er sprake is van (potentiële) non-compliance, inclusief bronvermelding. | Test met een scenario dat non-compliance oplevert; verificatie dat dit wordt gesignaleerd met bronvermelding. |
+          | FR-06 | BA | Het systeem moet mitigerende maatregelen voorstellen en de consequenties van de gekozen actie inzichtelijk maken. | Demonstratie waarin meerdere maatregelen worden voorgesteld met bijbehorende consequenties. |
+          | FR-07 | BA | Het systeem moet een PDF-rapport genereren met de volledige risicoanalyse, inclusief welke domeinen wel of niet meegenomen zijn. | Generatie van een PDF-rapport en verificatie van volledigheid en leesbaarheid. |
+          | FR-08 | BA | Het systeem moet de gekozen actie/maatregel doorgeven aan een apart dashboard voor organisatiebreed inzicht. | Verificatie dat de keuze zichtbaar wordt in het dashboard na afronding van een analyse. |
+          | FR-09 | BA | Het systeem moet op het dashboard trends in risico's over tijd tonen op basis van alle uitgevoerde analyses. | Verificatie dat na meerdere analyses trends zichtbaar zijn in het dashboard. |
+          | FR-10 | BA | Het systeem moet een volledig audit trail bijhouden: wie wat wanneer heeft ingevoerd, gewijzigd of goedgekeurd, los van het dashboard. | Verificatie dat elke actie in het audit trail wordt vastgelegd met gebruiker, tijdstip en inhoud. |
+          | FR-11 | BA | Het systeem moet audit trail-gegevens vernietigen op basis van de selectielijst van de waterschappen. | Verificatie dat gegevens na afloop van de bewaartermijn automatisch worden verwijderd. |
+          | FR-12 | BA | Het systeem moet toegang tot analyses en risico-inschattingen regelen op basis van het principle of least privilege. De eigenaar van een analyse kan expliciet toegang verlenen aan anderen. | Test met twee gebruikersrollen: verificatie dat gebruiker A geen toegang heeft tot analyse van gebruiker B tenzij expliciet verleend. |
+          | FR-13 | BA | Het systeem moet medewerkers in staat stellen om eerdere risico-inschattingen in te zien en voort te bouwen op bestaand werk (op basis van toegangsrechten). | Demonstratie van het hergebruik van een eerdere analyse als startpunt voor een nieuwe inschatting. |
+          | FR-14 | BA | Het systeem moet een domeinexpert signaleren wanneer een risico boven de vastgestelde risk appetite uitkomt, en de voorgestelde mitigerende maatregelen ter beoordeling voorleggen. | Test met een hoog risico: verificatie dat de expert een signalering ontvangt en de maatregelen kan beoordelen. |
+          | FR-15 | BA | Het systeem moet de goedkeuringsstroom afhandelen op basis van het mandaat van de gebruiker: sommige gebruikers mogen zelfstandig beslissen, anderen vereisen goedkeuring van een leidinggevende. | Test met twee mandaatniveaus: verificatie dat de juiste goedkeuringsstroom wordt gevolgd. |
+          | FR-16 | BA | Het systeem moet bronnen vermelden bij gebruik van algemene kennis (wetgeving, best practices). | Verificatie dat elke claim op basis van wetgeving of best practices vergezeld gaat van een bronvermelding. |
+          | FR-17 | BA | Het systeem moet aangeven welke onderdelen van de analyse niet relevant zijn en waarom deze niet meegenomen zijn in de rapportage. | Verificatie dat een gegenereerd rapport een sectie bevat met uitgesloten domeinen en de reden hiervan. |
+
+          ## 4. Bedrijfsregels & Logica
+
+          | Regel-ID | Beschrijving | Voorwaarde | Uitkomst |
+          |----------|--------------|------------|----------|
+          | BR-01 | Methodiekselectie | Gebruiker start een nieuwe risico-inschatting | De agent selecteert een methodiek uit een goedgekeurde set, gebaseerd op het type vraag en situatie |
+          | BR-02 | Risk appetite-toetsing | Een risico wordt ingeschat | De agent vergelijkt het risiconiveau met de vastgestelde risk appetite en markeert risico's die hierboven uitstijgen |
+          | BR-03 | Expert signalering | Risico boven risk appetite | De agent stelt mitigerende maatregelen voor en legt deze ter beoordeling voor aan de relevante domeinexpert |
+          | BR-04 | Goedkeuringsstroom | Gebruiker kiest een actie/maatregel | Als de gebruiker onvoldoende mandaat heeft, wordt de keuze voorgelegd aan de bevoegde leidinggevende |
+          | BR-05 | Toegangsbeheer | Gebruiker wil een analyse inzien | Toegang wordt verleend op basis van least privilege; alleen analyses waarvoor de gebruiker expliciete toegang heeft (als eigenaar of via toestemming) zijn inzichtelijk |
+          | BR-06 | Bronvermelding | Agent gebruikt wetgeving of best practices | De agent vermeldt altijd de bron (wet, richtlijn, publicatie) |
+          | BR-07 | Uitsluiting domeinen | Bepaalde domeinen zijn niet relevant voor de situatie | De agent rapporteert expliciet welke domeinen niet meegenomen zijn en de reden hiervoor |
+          | BR-08 | Bewaartermijn | Audit trail-gegevens bereiken de bewaartermijn volgens de selectielijst | Gegevens worden automatisch vernietigd |
+          | BR-09 | Domeinoverstijgende signalering | Gebruiker beschrijft een situatie die raakvlakken heeft met andere domeinen | De agent stelt proactief voor om deze domeinen in de analyse te betrekken |
+
+          ## 5. Informatiebehoeften
+
+          | Informatie | Beschrijving | Bron | Gebruikt door |
+          |------------|--------------|------|---------------|
+          | Goedgekeurde methodieken | De set van vastgestelde risicomethodieken waaruit de agent kiest | Waterschap (nog vast te stellen) | Agent |
+          | Risk appetite | De vastgestelde risicobereidheid per domein | Waterschap (nog vast te stellen) | Agent |
+          | Vigerende wet- en regelgeving | Relevante wetten, richtlijnen en voorschriften per risicodomein | Algemene kennis met bronvermelding | Agent |
+          | Project- of situatiegegevens | Beschrijving van het project of de situatie waarvoor risico's worden ingeschat | Gebruiker (via chat) | Agent |
+          | Eerdere risico-inschattingen | Historische analyses binnen het waterschap | Centrale opslag | Agent, Gebruiker |
+          | Selectielijst waterschappen | Bewaartermijnen voor (audit trail-)gegevens | Waterschap | Systeem (automatische vernietiging) |
+          | Gebruikersmandaten | Welke bevoegdheid een medewerker heeft voor het vastleggen van risicomaatregelen | Waterschap / HR-systeem | Agent (goedkeuringsstroom) |
+          | Domeinexpert-toewijzing | Welke expert verantwoordelijk is voor welk risicodomein | Waterschap | Agent (signalering) |
+
+          ## 6. Gebruikersreizen
+
+          ### Journey 1: Nieuwe risico-inschatting uitvoeren (projectleider)
+          - **Actor:** Projectleider
+          - **Doel:** Een risico-inschatting maken voor een nieuw project
+          1. Projectleider opent de risico-inschattingsagent en start een nieuwe sessie.
+          2. De agent stelt intake-vragen: wat is het project, wat is de aard, wat is de context?
+          3. De agent identificeert relevante risicodomeinen (ook domeinen die de projectleider niet noemde) en legt deze voor.
+          4. De agent selecteert een methodiek uit de goedgekeurde set en communiceert deze keuze.
+          5. De agent stelt verdiepende vragen per relevant domein via het chat-gesprek.
+          6. De agent toetst de situatie aan vigerende wet- en regelgeving en signaleert eventuele compliance-risico's met bronvermelding.
+          7. De agent analyseert en weegt de risico's, toetst aan de risk appetite, en presenteert de resultaten.
+          8. De agent stelt mitigerende maatregelen voor en toont de consequenties van elke optie.
+          9. Als een risico boven de risk appetite uitkomt: de agent signaleert de domeinexpert en legt de maatregelen ter beoordeling voor.
+          10. De projectleider kiest een actie/maatregel.
+          11. Indien nodig op basis van mandaat: de keuze wordt voorgelegd aan de leidinggevende voor goedkeuring.
+          12. De agent genereert een PDF-rapport met de volledige analyse.
+          13. De gekozen actie wordt doorgegeven aan het dashboard.
+          14. Het audit trail wordt vastgelegd.
+
+          ### Journey 2: Voortbouwen op bestaande analyse (adviseur)
+          - **Actor:** Adviseur
+          - **Doel:** Een eerdere risico-inschatting als basis gebruiken voor een nieuwe situatie
+          1. Adviseur opent de agent en zoekt naar relevante eerdere analyses (op basis van toegangsrechten).
+          2. De adviseur selecteert een bestaande analyse als startpunt.
+          3. De agent toont de eerdere analyse en vraagt wat gewijzigd is in de nieuwe situatie.
+          4. De agent her-evalueert de risico's op basis van de nieuwe informatie.
+          5. De agent toont trends ten opzichte van de vorige inschatting.
+          6. Het proces vervolgt zoals Journey 1 vanaf stap 7.
+
+          ### Journey 3: Expert beoordeelt hoog risico (domeinexpert)
+          - **Actor:** Domeinexpert
+          - **Doel:** Voorgestelde mitigerende maatregelen beoordelen bij een risico boven de risk appetite
+          1. De domeinexpert ontvangt een signalering dat een risico boven de risk appetite is ingeschat.
+          2. De expert opent de betreffende analyse en beoordeelt de voorgestelde maatregelen.
+          3. De expert keurt, wijzigt of wijst de maatregelen af met toelichting.
+          4. De uitkomst wordt vastgelegd in het audit trail en doorgegeven aan de oorspronkelijke gebruiker.
+
+          ### Journey 4: Organisatiebreed inzicht (manager / beleidsmaker)
+          - **Actor:** Manager of beleidsmaker
+          - **Doel:** Overzicht krijgen van alle risico's en trends in het dashboard
+          1. De manager opent het dashboard.
+          2. Het dashboard toont alle risico-analyses waarvoor de manager toegangsrechten heeft.
+          3. Het dashboard toont trends: risico's die toenemen, afnemen of nieuw zijn.
+          4. De manager kan filteren op domein, tijdvak, risiconiveau, of afdeling.
+
+          ## 7. Integratiepunten
+
+          | Systeem/Dienst | Interactietype | Doel |
+          |----------------|----------------|------|
+          | Dashboard (los van agent) | Eenrichtingsverkeer (agent → dashboard) | Gekozen acties en risico-inschattingen doorgeven voor organisatiebreed overzicht |
+          | Platform-authenticatie (Keycloak) | Authenticatie | Gebruikersidentificatie en toegangsbeheer op basis van rol/mandaat |
+          | Audit trail-opslag | Wegschrijven | Volledige logging van acties, keuzes, wijzigingen en goedkeuringen |
+          | PDF-generator | Generatie | Rapporten produceren op basis van de risicoanalyse |
+
+          ## 8. Niet-Functionele Eisen
+
+          | ID | Bron | Eis | Verificatiemethode |
+          |----|------|-----|--------------------|
+          | NFR-01 | BA | De agent moet binnen 5 seconden een inhoudelijk antwoord geven op een gebruikersbijdrage in het chat-gesprek, of een tussentijdse statusindicatie tonen. | Responstijd meten tijdens normaal gebruik met 25 gelijktijdige gebruikers. |
+          | NFR-02 | BA | Het dashboard moet binnen 5 seconden een actueel overzicht tonen van alle risico-inschattingen waarvoor de gebruiker toegang heeft. | Laadtijd meten bij een representatief aantal opgeslagen analyses. |
+          | NFR-03 | BA | De agent moet minstens 25 gelijktijdige gebruikers kunnen ondersteunen zonder merkbare vertraging. | Stresstest met 25 gelijktijdige sessies. |
+          | NFR-04 | BA | Het PDF-rapport moet binnen 10 seconden na afronding van de analyse beschikbaar zijn. | Generatietijd meten na voltooiing van een analyse. |
+          | NFR-05 | BA | Audit trail-gegevens mogen niet aanpasbaar zijn door gebruikers na vastlegging. | Verificatie dat records alleen aangemaakt en (na bewaartermijn) vernietigd kunnen worden, niet gewijzigd. |
+
+          ## 9. Beveiliging & Compliance-eisen
+
+          - **Persoonsgegevens:** Ja — afhankelijk van het project kunnen persoonsgegevens (bijv. namen van betrokkenen) in analyses voorkomen.
+          - **Vertrouwelijke bedrijfsdata:** Ja — met name financiële risico-inschattingen zijn gevoelig. Toegang is gebaseerd op het principle of least privilege.
+          - **Authenticatie:** Vereist — via het platform (Keycloak). Gebruikers moeten geauthenticeerd zijn om de agent te gebruiken.
+          - **Toegangsbeperkingen:** Alleen medewerkers met de juiste rol/mandaat zien relevante analyses. De eigenaar van een analyse kan expliciet toegang verlenen aan anderen. Financiële en andere gevoelige analyses zijn beperkt zichtbaar.
+          - **Foutafhandeling:** Bij twijfelachtige uitkomsten of onverwachte situaties moet de agent de gebruiker hierover informeren en een domeinexpert signaleren. De voorkeur is om transparant te communiceren over onzekerheden.
+          - **Gegevensretentie:** Audit trail-gegevens worden vernietigd op basis van de selectielijst van de waterschappen. De bewaartermijn volgt de wettelijk vastgestelde termijnen.
+
+          ## 10. Aannames & Open Vragen
+
+          | ID | Type | Beschrijving | Default/Fallback |
+          |----|------|--------------|------------------|
+          | A-01 | Aanname | De goedgekeurde set risicomethodieken wordt nog vastgesteld door het waterschap. De agent is ontworpen om methodieken te kunnen toevoegen/wijzigen zonder technische aanpassing. | De set is configureerbaar; bij gebrek aan vaststelling kiest de agent een generieke risicomatrix als fallback. |
+          | A-02 | Aanname | De risk appetite per domein wordt nog vastgesteld door het waterschap. | Bij gebrek aan vaststelling kan de agent zonder risk appetite-grens werken (alle risico's worden gelijk gerapporteerd). |
+          | A-03 | Aanname | De selectielijst van de waterschappen is bekend en kan als regelgeving worden geconfigureerd. | Standaard bewaartermijn van 7 jaar als fallback. |
+          | A-04 | Aanname | Domeinexpert-toewijzing (wie verantwoordelijk is voor welk domein) wordt beheerd door het waterschap. | De agent kan signaleringen sturen naar een algemeen verantwoordelijke als geen specifieke expert is toegewezen. |
+          | A-05 | Aanname | Het mandaat van medewerkers (wel/niet zelfstandig beslissen) is vastgelegd in een rol- of mandatensysteem. | De agent vraagt bij elke keuze expliciet of de gebruiker voldoende mandaat heeft, als het mandaat niet bekend is in het systeem. |
+          | O-01 | Open vraag | Welke specifieke risicomethodieken behoren tot de goedgekeurde set? | Nog vast te stellen door het waterschap. |
+          | O-02 | Open vraag | Wat is de exacte risk appetite per domein? | Nog vast te stellen door het waterschap. |
+          | O-03 | Open vraag | Welke specifieke wet- en regelgeving is het meest relevant per domein? | De agent gebruikt algemene kennis met bronvermelding; specifieke wetgeving kan later worden verrijkt. |
+          | O-04 | Open vraag | Hoe wordt het mandaat van medewerkers technisch aangeleverd (via rollen in Keycloak, apart register, etc.)? | Architect bepaalt de technische invulling. |
+
+          ## 11. Buiten Scope
+
+          - **Manuele risicoberekeningen of adviezen door menselijke experts:** De agent ondersteunt, maar vervangt geen experts. Experts blijven verantwoordelijk voor de uiteindelijke beoordeling bij hoge risico's.
+          - **Vervanging van bestaande risicomanagement-tools:** De agent is een nieuw instrument, geen migratie van bestaande systemen.
+          - **Koppeling met externe wetgevingsdatabases of automatische wetgevingsmonitoring:** De agent gebruikt algemene kennis met bronvermelding; niet realtime gekoppeld aan wetgevingsdatabronnen.
+          - **Beheer van de goedgekeurde methodiekenset:** Dit is een organisatorisch proces buiten het systeem; de set wordt geconfigureerd in het systeem.
+          - **Trainings- of educatiemodule:** De agent helpt bij risico-inschattingen, maar biedt geen formele training in risicomanagement.
+          - **Integratie met zaaksystemen of documentmanagementsystemen van het waterschap:** Niet in de eerste versie.
+          - **Beheer van gebruikersrollen en mandaten:** Dit verloopt via het platform (Keycloak); het systeem beheert geen eigen gebruikersadministratie.
+
+          ## 12. Processtroomdiagram
+
+          ```mermaid
+          flowchart TD
+              A(["Gebruiker start risico-inschatting"]) --> B["Agent stelt intake-vragen"]
+              B --> C["Agent identificeert relevante domeinen en risico's"]
+              C --> D["Agent kiest methodiek uit goedgekeurde set"]
+              D --> E["Agent toetst aan vigerende wet- en regelgeving"]
+              E --> F["Agent weegt risico's en stelt mitigerende maatregelen voor"]
+              F --> G{"Risico boven risk appetite?"}
+              G -->|"Ja"| H["Domeinexpert beoordeelt maatregelen"]
+              G -->|"Nee"| I["Gebruiker kiest actie"]
+              H --> I
+              I --> J{"Goedkeuring nodig (mandaat-toets)?"}
+              J -->|"Ja"| K["Leidinggevende keurt goed"]
+              J -->|"Nee"| L[("Opslaan: analyse plus audit trail")]
+              K --> L
+              L --> M["PDF-rapport plus dashboard-update"]
+              M --> N(["Sessie afgerond"])
+          ```
+
+          ## 13. Mogelijke Oplossingsrichting
+
+          | Bestaande Module/Project | Wat het doet | Relevantie voor dit ontwerp |
+          |--------------------------|--------------|-----------------------------|
+          | Geen bestaande modules gevonden | — | Er zijn geen bestaande modules of projecten op het platform die direct gerelateerd zijn aan risicomanagement of risico-inschatting. Het project wordt nieuw opgebouwd. |
+
+          ## 14. Platformstandaardafwijkingen
+
+          | Standaard | Afwijking | Onderbouwing |
+          |-----------|-----------|--------------|
+          | (geen) | — | Er zijn geen expliciete afwijkingen van de platformstandaarden. Authenticatie verloopt via Keycloak, foutafhandeling volgens platformnormen, en de interface is responsief. |
+
+    # No more steps -- the chain ends with the BA paused on the pending approval.
+
+  verify:
+    - gitea_repo_exists: true
