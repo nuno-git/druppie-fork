@@ -50,8 +50,15 @@ dns() { # host
 }
 
 # --- HTTP(S) reachability --------------------------------------------------
+# A failed connection makes curl BOTH print "000" (via -w) AND exit non-zero,
+# so a trailing `|| echo 000` would append a second 000 and corrupt every
+# comparison below. Capture curl's own output and only substitute 000 when it
+# printed nothing at all (e.g. curl binary missing). Result is always a single
+# clean value.
 http() { # url
-  curl -sS -k -o /dev/null -m "$TIMEOUT" -w '%{http_code}' "$1" 2>/dev/null || echo "000"
+  local out
+  out=$(curl -sS -k -o /dev/null -m "$TIMEOUT" -w '%{http_code}' "$1" 2>/dev/null)
+  printf '%s' "${out:-000}"
 }
 
 echo "# Sandbox network probe  (timeout=${TIMEOUT}s)"

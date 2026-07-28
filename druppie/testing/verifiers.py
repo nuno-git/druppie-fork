@@ -242,3 +242,32 @@ def _verify_gitea_repo_exists(session_id: UUID, db: DbSession, gitea_url: str | 
         return VerifyResult("gitea_repo_exists", False, f"Repo {owner}/{repo} not found (HTTP {r.status_code})")
     except Exception as e:
         return VerifyResult("gitea_repo_exists", False, f"Error checking repo: {e}")
+
+
+def delete_project_repo(session_id: UUID, db: DbSession, gitea_url: str | None) -> VerifyResult:
+    """Delete the Gitea repo backing *session_id*'s project (teardown helper).
+
+    Used by the test runner to clean up repos created during a tool test so
+    repeated runs don't leave orphans behind. Resolves the repo via the same
+    _get_project_repo_info() the verifiers use and deletes it with the admin
+    credentials from _gitea_auth(), so it targets exactly the repo the verify
+    checks looked at. Idempotent: a missing repo (HTTP 404) is treated as
+    success. Never raises — returns a VerifyResult the caller can log.
+    """
+    if not gitea_url:
+        return VerifyResult("delete_project_repo", False, "No gitea_url configured")
+    owner, repo = _get_project_repo_info(session_id, db)
+    if not repo:
+        # Nothing was created (or the project never committed) — nothing to do.
+        return VerifyResult("delete_project_repo", True, "No project repo to delete")
+    try:
+        r = httpx.delete(
+            f"{gitea_url}/api/v1/repos/{owner}/{repo}",
+            auth=_gitea_auth(),
+            timeout=15,
+        )
+        if r.status_code in (204, 404):
+            return VerifyResult("delete_project_repo", True, f"Repo {owner}/{repo} deleted (HTTP {r.status_code})")
+        return VerifyResult("delete_project_repo", False, f"Repo {owner}/{repo} delete failed (HTTP {r.status_code})")
+    except Exception as e:
+        return VerifyResult("delete_project_repo", False, f"Error deleting repo {owner}/{repo}: {e}")

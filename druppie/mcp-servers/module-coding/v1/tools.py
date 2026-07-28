@@ -284,12 +284,19 @@ async def _write_to_container(
         entry = _find_entry_by_container_id(container_id)
         if entry and entry.get("_k8s_handle"):
             try:
+                # Budget: write_file stages via files.write (<=60s upload) then a
+                # mv exec (<=70s: exec's own 60s + its 10s wrapper), so the inner
+                # worst case is ~130s. This outer bound must comfortably exceed
+                # that or a legitimately slow/large upload gets cancelled between
+                # the upload and the mv — which used to orphan a staged
+                # /app/.druppie-write-*.tmp. 180s leaves headroom; even if this
+                # bound ever trips, write_file's own finally rm's the staged temp.
                 await asyncio.wait_for(
                     _get_k8s_manager().write_file(entry["_k8s_handle"], container_path, content),
-                    timeout=30,
+                    timeout=180,
                 )
             except asyncio.TimeoutError:
-                return (1, "Write file timed out")
+                return (1, "Write file timed out after 180s")
             return 0, ""
     proc = await asyncio.create_subprocess_exec(
         "docker", "exec", "-i", container_id,

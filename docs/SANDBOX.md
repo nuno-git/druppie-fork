@@ -139,7 +139,7 @@ mechanisms that address it (all in `server.py` + `k8s_sandbox.py` + `tools.py`):
 
 - **Watchdog (60s)** — `_sandbox_watchdog` in `server.py`. Destroys dead
   sandboxes and **idle-reaps** any sandbox with no tool activity for
-  `> SANDBOX_MAX_IDLE` (default 900s). `last_activity` is touched on every
+  `> DRUPPIE_SANDBOX_MAX_IDLE` (default 900s). `last_activity` is touched on every
   resolve.
 - **Orphan-claim reaper** — `K8sSandboxManager.cleanup_orphan_claims`. Lists
   `SandboxClaim`s in the sandbox namespace and deletes any whose
@@ -190,7 +190,7 @@ the container lifecycle differs. This mode is what the Python tests
 | `DRUPPIE_SANDBOX_MODE` | ConfigMap | `k8s` when `agentSandbox.enabled`, else `docker` |
 | `SANDBOX_NAMESPACE` | ConfigMap | `{instance}-sandbox` — where sandboxes live (see debt #3) |
 | `SANDBOX_WARMPOOL` | ConfigMap | `{instance}-warmpool` — warm pool to claim from (see debt #3) |
-| `SANDBOX_MAX_IDLE` | env/default | Idle seconds before the watchdog reaps a sandbox (default 900) |
+| `DRUPPIE_SANDBOX_MAX_IDLE` | env/default | Idle seconds before the watchdog reaps a sandbox (default 900) |
 
 ### MCP tools exposed to the agent
 

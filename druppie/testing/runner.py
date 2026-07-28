@@ -93,6 +93,11 @@ class TestRunner:
     Handles both tool tests and agent tests with user isolation.
     """
 
+    # Tool tests carrying this tag create a real Gitea repo that must be
+    # deleted after the run (in a finally block) so repeated runs don't
+    # leave orphaned repos behind. See _run_tool_test / _teardown_gitea_repo.
+    _TEARDOWN_GITEA_REPO_TAG = "teardown:gitea-repo"
+
     def __init__(self, db: DbSession, testing_dir: Path | None = None, gitea_url: str | None = None):
         self._db = db
         self._testing_dir = testing_dir or (Path(__file__).resolve().parents[2] / "testing")
@@ -200,6 +205,39 @@ class TestRunner:
             self._replay_chain(setup_test, user.id, run_namespace)
             self._db.commit()  # Commit each setup replay so subsequent steps can see the data
 
+        # Run the chain + assertions + verify + judge + persistence in a body
+        # method wrapped in try/finally so opt-in teardown always runs — even
+        # if the body raises or the test's assertions merely fail. The body
+        # records the replay session id into session_holder so teardown can
+        # resolve and delete the project's Gitea repo.
+        session_holder: dict[str, UUID | None] = {"session_id": None}
+        try:
+            return self._run_tool_test_body(
+                test, user, test_user, benchmark_run,
+                run_namespace, start, batch_id, session_holder,
+            )
+        finally:
+            if self._TEARDOWN_GITEA_REPO_TAG in test.tags:
+                self._teardown_gitea_repo(session_holder["session_id"])
+
+    def _run_tool_test_body(
+        self,
+        test: ToolTestDefinition,
+        user: User,
+        test_user: str,
+        benchmark_run: BenchmarkRun,
+        run_namespace: str,
+        start: float,
+        batch_id: str | None,
+        session_holder: dict[str, UUID | None],
+    ) -> TestRunResult:
+        """Run the chain, assertions, verify, judge and persist results.
+
+        Extracted from _run_tool_test so the caller can wrap it in a
+        try/finally and guarantee teardown runs regardless of outcome.
+        Publishes the replay session id via *session_holder* so teardown
+        can resolve the project repo even when a later phase raises.
+        """
         # Phase 2: Replay the tool call chain
         # If the test extends another, merge the chains so they run in the
         # SAME session.  This is critical: the extended chain creates the
@@ -229,6 +267,10 @@ class TestRunner:
             self._db.rollback()  # Roll back partial replay state on failure
             chain_error = f"{type(e).__name__}: {e}"
             logger.error("Tool chain replay failed: test=%s error=%s", test.name, e, exc_info=True)
+
+        # Publish the session id so teardown (in _run_tool_test's finally) can
+        # resolve and delete the project repo even if a later phase raises.
+        session_holder["session_id"] = replay_session_id
 
         # Phase 3: Run top-level check assertions
         if replay_session_id:
@@ -343,6 +385,26 @@ class TestRunner:
             test_name=test.name, test_user=test_user, test_type="tool",
             assertion_results=all_assertion_results, status=status, duration_ms=duration_ms,
         )
+
+    def _teardown_gitea_repo(self, session_id: UUID | None) -> None:
+        """Delete the Gitea repo created for *session_id*'s project.
+
+        Best-effort and never raises: teardown failures are logged but must
+        not mask the test result. Idempotent — a missing repo is treated as
+        success. Reuses verifiers.delete_project_repo so it targets exactly
+        the repo the verify checks looked at (same resolution + auth).
+        """
+        if session_id is None:
+            return
+        try:
+            from druppie.testing.verifiers import delete_project_repo
+            result = delete_project_repo(session_id, self._db, self._gitea_url)
+            if result.passed:
+                logger.info("Tool test teardown: %s", result.message)
+            else:
+                logger.warning("Tool test teardown incomplete: %s", result.message)
+        except Exception as e:
+            logger.warning("Tool test teardown raised: %s", e, exc_info=True)
 
     def _replay_chain(self, test: ToolTestDefinition, user_id: UUID,
                       run_namespace: str) -> tuple[UUID | None, list[AssertionResult]]:

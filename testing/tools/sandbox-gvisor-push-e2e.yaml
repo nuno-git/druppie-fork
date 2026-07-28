@@ -33,7 +33,10 @@ tool-test:
     E2E proof for sandbox AC1: clone → edit → push_changes → commit visible on
     Gitea, exercised through the real (gVisor in k8s mode) sandbox. Verifies the
     pushed file on Gitea via the API, not just the local workspace.
-  tags: [sandbox, gvisor, e2e, push, gitea]
+  # The 'teardown:gitea-repo' tag opts this test into automatic cleanup: the
+  # runner deletes the Gitea repo created for this run in a finally block, so
+  # repeated runs do not accumulate orphaned repos on Gitea.
+  tags: [sandbox, gvisor, e2e, push, gitea, "teardown:gitea-repo"]
 
   chain:
     # =========================================================================
@@ -75,14 +78,31 @@ tool-test:
 
     # 1. CLONE leg: the host-side clone must have delivered a real git work tree
     #    into /workspace inside the (gVisor) sandbox. Prove it before editing.
+    #    An empty `git init` also reports "true" for --is-inside-work-tree, so
+    #    that alone does NOT prove the clone landed. We additionally assert:
+    #      * the work tree tracks at least one file (ls-files > 0) — a bare
+    #        `git init` tracks zero, so WORKTREE_FILES= only prints on a real
+    #        clone (auto_init README + scaffolded template are always present);
+    #      * origin points at THIS project's repo — the repo name is
+    #        "<project_name>-<uuid8>" (see builtin set_intent create_project),
+    #        so the stable "sandbox-gvisor-push-e2e-" prefix in the REMOTE echo
+    #        distinguishes a genuine clone from a locally re-initialised repo.
+    #    Robust in both docker and k8s sandbox modes (/workspace is the checkout
+    #    in both); `tr -d` strips any wc padding so the numeric test is portable.
     - agent: developer
       tool: coding:bash
       arguments:
-        command: "git -C /workspace rev-parse --is-inside-work-tree && echo REMOTE=$(git -C /workspace remote get-url origin 2>/dev/null)"
+        command: |
+          git -C /workspace rev-parse --is-inside-work-tree
+          n=$(git -C /workspace ls-files | wc -l | tr -d '[:space:]')
+          if [ "$n" -gt 0 ]; then echo "WORKTREE_FILES=$n"; else echo "WORKTREE_EMPTY"; fi
+          echo "REMOTE=$(git -C /workspace remote get-url origin 2>/dev/null)"
         timeout: 30
       assert:
         result:
           - { contains: "true" }
+          - { contains: "WORKTREE_FILES=" }
+          - { contains: "sandbox-gvisor-push-e2e-" }
 
     # 2. EDIT leg: write a marker file with a token unique to this test so the
     #    Gitea verify below cannot pass on pre-existing content.

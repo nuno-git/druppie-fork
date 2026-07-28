@@ -20,7 +20,6 @@ The backend is selected via DRUPPIE_SANDBOX_MODE env var.
 from __future__ import annotations
 
 import asyncio
-import base64
 import io
 import logging
 import os
@@ -94,19 +93,16 @@ class K8sSandboxManager:
         self.client = AsyncSandboxClient(connection_config=config)
         self._sandboxes: dict[str, object] = {}
 
-        # KNOWN DEBT (see docs/SANDBOX.md "Known limitations"): patch the SDK —
-        # the sandbox operator deletes Sandbox resources before the SDK can watch
-        # them (warm pool adoption race). The claim status already has podIPs, so
-        # skip the broken wait_for_sandbox_ready. This monkeypatch is fragile: it
-        # can break on a k8s-agent-sandbox upgrade and must be re-verified then.
-        _orig_wait = self.client.k8s_helper.wait_for_sandbox_ready
+        # KNOWN DEBT (see docs/SANDBOX.md "Known limitations"): neutralise the
+        # SDK's wait_for_sandbox_ready. In the warm-pool adoption race the
+        # operator deletes the transient Sandbox resource before the SDK can
+        # establish its watch, so the SDK wait raises/hangs even though the pod
+        # is coming up healthy. Replacing it with a no-op unblocks create_sandbox;
+        # readiness is NOT dropped — create() re-establishes it with a command
+        # probe (_wait_until_ready) that depends on no SDK watch internals. This
+        # monkeypatch is fragile: a k8s-agent-sandbox upgrade can change the
+        # method's signature and it must be re-verified then.
         async def _patched_wait(sandbox_id, namespace, timeout):
-            # Get pod IP from the SandboxClaim status instead of watching Sandbox
-            claim_name = None
-            # The SDK sets claim_name on the sandbox object, but we don't have it here.
-            # Instead, just return None — the SDK will resolve the pod IP from
-            # the Sandbox resource, which is already available in the claim status.
-            # The connector uses the sandbox_id (pod name) to connect via port-forward.
             return None
         self.client.k8s_helper.wait_for_sandbox_ready = _patched_wait
 
@@ -152,6 +148,24 @@ class K8sSandboxManager:
         sandbox_id = sandbox.sandbox_id
         logger.info("Sandbox claimed: %s (session=%s, scope=%s)",
                      sandbox_id, session_id, git_scope)
+
+        # The SDK's readiness wait is neutralised in __init__ (warm-pool
+        # adoption race), so gate readiness ourselves BEFORE cloning / git
+        # config — otherwise those steps race a pod whose runtime is not yet
+        # answering and fail only on their own timeouts. On timeout terminate
+        # the just-claimed sandbox (same pattern as the clone-failure path
+        # below) so the claim does not leak, then surface a clear error.
+        try:
+            await self._wait_until_ready(sandbox, sandbox_id)
+        except Exception:
+            try:
+                await asyncio.wait_for(sandbox.terminate(), timeout=30)
+            except Exception:
+                logger.warning(
+                    "Failed to terminate sandbox %s after readiness timeout",
+                    sandbox_id,
+                )
+            raise
 
         if repo_clone_url:
             try:
@@ -208,6 +222,45 @@ class K8sSandboxManager:
             branch=branch,
             _backend=sandbox,
         )
+
+    async def _wait_until_ready(
+        self, sandbox, sandbox_id: str, timeout: float = 60.0
+    ) -> None:
+        """Block until the sandbox runtime answers a trivial command.
+
+        The SDK's own readiness wait is neutralised in __init__ (warm-pool
+        adoption race), so readiness is gated here instead: poll
+        ``echo ok`` with exponential backoff until it exits 0 or ``timeout``
+        seconds elapse. Depends on no SDK watch internals — just the same
+        command channel every later step uses. Raises ``TimeoutError`` on
+        expiry so create() can terminate the just-claimed sandbox rather than
+        hand back a handle to a pod whose runtime never came up.
+        """
+        deadline = time.monotonic() + timeout
+        delay = 0.5
+        last_err: Optional[Exception] = None
+        while True:
+            try:
+                result = await asyncio.wait_for(
+                    sandbox.commands.run("echo ok", timeout=5),
+                    timeout=10,
+                )
+                if result.exit_code == 0:
+                    return
+                last_err = RuntimeError(
+                    "readiness probe exited %s" % result.exit_code
+                )
+            except asyncio.TimeoutError:
+                last_err = TimeoutError("readiness probe timed out")
+            except Exception as e:  # not-yet-ready runtimes surface transient errors
+                last_err = e
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "sandbox %s not ready after %.0fs: %s"
+                    % (sandbox_id, timeout, last_err)
+                )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 5.0)
 
     async def _host_side_clone(
         self,
@@ -400,23 +453,27 @@ class K8sSandboxManager:
     async def read_file_bytes(self, handle: SandboxHandle, path: str) -> bytes:
         """Read a binary file from the sandbox (e.g. a git bundle).
 
-        ``exec`` returns stdout as ``str`` (decoded text), which corrupts binary
-        content. We base64-encode inside the sandbox and decode here so the bytes
-        round-trip exactly. ``base64.b64decode`` discards the newlines that the
-        shell ``base64`` wrapper emits.
+        Uses the SDK's native binary download (``sandbox.files.read`` -> the
+        runtime's ``GET download/<path>`` endpoint), the symmetric twin of the
+        ``files.write`` upload write_file relies on. It returns raw bytes with
+        no base64 shell hop, so large/binary payloads (the git bundles from
+        git_fetch/git_pull) round-trip exactly instead of being corrupted by
+        ``exec``'s text-decoded ``str`` stdout.
 
-        KNOWN DEBT (see docs/SANDBOX.md "Known limitations"): this base64 shell
-        hop is a workaround for the SDK lacking a reliable binary-download path;
-        it is slower/larger than a native download and should be replaced when
-        the SDK gains one. (``write_file`` no longer uses base64 — it stages via
-        the SDK upload endpoint + ``mv``.)
+        ``allow_unsafe_paths=True`` passes the caller's path through verbatim:
+        the SDK's default sanitiser strips a leading ``/`` and rejects ``..``,
+        which would rewrite an absolute path like ``/tmp/x.bundle`` to a
+        relative one resolved under ``/app`` — the wrong file. The paths read
+        here are internal, code-generated bundle paths (``/tmp/...``), never
+        user-controlled, so bypassing the sanitiser is safe.
         """
-        rc, out, err = await self.exec(handle, "base64 " + shlex.quote(path))
-        if rc != 0:
+        sandbox = handle._backend
+        try:
+            return await sandbox.files.read(path, allow_unsafe_paths=True)
+        except Exception as e:
             raise RuntimeError(
-                "read_file_bytes from %s failed: %s" % (path, err.strip())
-            )
-        return base64.b64decode(out.encode("ascii"))
+                "read_file_bytes from %s failed: %s" % (path, e)
+            ) from e
 
     async def write_file(self, handle: SandboxHandle, path: str,
                          content: str | bytes) -> None:
@@ -437,20 +494,40 @@ class K8sSandboxManager:
         sandbox = handle._backend
         tmp_name = ".druppie-write-%s.tmp" % uuid.uuid4().hex
         tmp_abs = "/app/" + tmp_name
+        moved = False
         try:
-            await asyncio.wait_for(sandbox.files.write(tmp_name, content), timeout=60)
-        except asyncio.TimeoutError:
-            raise RuntimeError("write_file to %s failed: upload timed out" % path)
-        parent = posixpath.dirname(path) or "/"
-        mv_cmd = (
-            "mkdir -p " + shlex.quote(parent)
-            + " && mv -f " + shlex.quote(tmp_abs) + " " + shlex.quote(path)
-        )
-        rc, _, err = await self.exec(handle, mv_cmd)
-        if rc != 0:
-            # Best-effort cleanup so a failed move doesn't leave staged temps.
-            await self.exec(handle, "rm -f " + shlex.quote(tmp_abs))
-            raise RuntimeError("write_file to %s failed: %s" % (path, err.strip()))
+            try:
+                await asyncio.wait_for(sandbox.files.write(tmp_name, content), timeout=60)
+            except asyncio.TimeoutError:
+                raise RuntimeError("write_file to %s failed: upload timed out" % path)
+            parent = posixpath.dirname(path) or "/"
+            mv_cmd = (
+                "mkdir -p " + shlex.quote(parent)
+                + " && mv -f " + shlex.quote(tmp_abs) + " " + shlex.quote(path)
+            )
+            rc, _, err = await self.exec(handle, mv_cmd)
+            if rc != 0:
+                raise RuntimeError("write_file to %s failed: %s" % (path, err.strip()))
+            moved = True
+        finally:
+            # Guarantee the staged temp never leaks: clean it up on mv failure,
+            # on upload timeout, AND on an outer cancellation (v1/tools.py wraps
+            # this call in asyncio.wait_for). A successful mv already consumed
+            # the temp, so skip in that case. The cleanup exec is shielded so an
+            # outer wait_for cancellation cannot abort the cleanup itself and
+            # orphan a /app/.druppie-write-*.tmp forever — the rm runs to
+            # completion even while the CancelledError propagates out of here.
+            if not moved:
+                try:
+                    await asyncio.shield(
+                        self.exec(handle, "rm -f " + shlex.quote(tmp_abs))
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "write_file: failed to clean up staged temp %s", tmp_abs
+                    )
 
     async def file_exists(self, handle: SandboxHandle, path: str) -> bool:
         """Check if a file exists in the sandbox."""
@@ -502,7 +579,7 @@ class K8sSandboxManager:
     async def cleanup_orphan_claims(
         self, known_keys: set[str], min_age_seconds: int = 300
     ) -> int:
-        """Reap SandboxClaims in sandbox-runtime this process doesn't track.
+        """Reap SandboxClaims in the configured SANDBOX_NAMESPACE this process doesn't track.
 
         After a restart the in-memory ``sandbox_containers`` / ``_sandboxes``
         dicts are empty, so leftover SandboxClaims from the previous run — or
@@ -514,7 +591,7 @@ class K8sSandboxManager:
         Single-replica assumption holds (module-coding replicas=1).
 
         Uses the in-cluster ServiceAccount; RBAC already grants list/delete on
-        sandboxclaims in sandbox-runtime (helm agent-sandbox/rbac.yaml).
+        sandboxclaims in SANDBOX_NAMESPACE (helm agent-sandbox/rbac.yaml).
         """
 
         def _sweep() -> int:

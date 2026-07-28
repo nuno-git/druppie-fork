@@ -12,6 +12,7 @@ Loaded via importlib because ``druppie/mcp-servers/module-coding`` uses hyphens
 and has no package ``__init__.py`` (same approach as ``test_sandbox.py``).
 """
 
+import asyncio
 import base64 as _b64
 import importlib.util
 import posixpath
@@ -129,10 +130,15 @@ class _CmdResult:
 
 
 class _FakeFiles:
-    """Stand-in for sandbox.files — the SDK upload endpoint used by write_file.
+    """Stand-in for sandbox.files — the SDK upload/download endpoints.
 
-    A RELATIVE name lands at /app/<name> (matching the real endpoint, which
-    500s on absolute paths); an absolute name is stored verbatim.
+    ``write`` mirrors the upload endpoint used by write_file: a RELATIVE name
+    lands at /app/<name> (matching the real endpoint, which 500s on absolute
+    paths); an absolute name is stored verbatim. ``read`` mirrors the native
+    download endpoint now used by read_file_bytes: with ``allow_unsafe_paths``
+    the caller's path is honoured verbatim (so absolute bundle paths like
+    ``/tmp/x.bundle`` resolve correctly); without it the SDK's sanitiser strips
+    the leading ``/`` and resolves relative names under /app.
     """
 
     def __init__(self, fs):
@@ -143,6 +149,16 @@ class _FakeFiles:
             content = content.encode("utf-8")
         abspath = name if name.startswith("/") else "/app/" + name
         self._fs[abspath] = bytes(content)
+
+    async def read(self, name, timeout=60, allow_unsafe_paths=False):
+        if allow_unsafe_paths:
+            abspath = name  # verbatim — absolute paths preserved
+        else:
+            abspath = "/app/" + name.lstrip("/")
+        if abspath not in self._fs:
+            # The real connector raises on the download endpoint's 404.
+            raise RuntimeError("download %s: not found" % abspath)
+        return self._fs[abspath]
 
 
 class FakeSandbox:
@@ -291,11 +307,14 @@ class TestWriteFileLargePayload:
 
     @pytest.mark.asyncio
     async def test_binary_bytes_round_trip(self):
+        # Bundles live at absolute /tmp/... paths in production; read_file_bytes
+        # now pulls them over the SDK's native binary download (files.read),
+        # not a base64 shell hop.
         mgr, fake = _bare_manager(), FakeSandbox()
         handle = _handle_over(fake)
         blob = bytes(range(256)) * 512  # 128 KB of non-UTF-8 bytes (git bundle)
-        await mgr.write_file(handle, "bundle.bundle", blob)
-        assert await mgr.read_file_bytes(handle, "bundle.bundle") == blob
+        await mgr.write_file(handle, "/tmp/bundle.bundle", blob)
+        assert await mgr.read_file_bytes(handle, "/tmp/bundle.bundle") == blob
 
     @pytest.mark.asyncio
     async def test_writes_into_subdirectory(self):
@@ -320,6 +339,48 @@ class TestWriteFileLargePayload:
         with pytest.raises(RuntimeError, match="write_file to bad.txt failed"):
             await mgr.write_file(handle, "bad.txt", "data")
         # The staged /app/*.tmp must have been rm -f'd on the failure path.
+        assert not [p for p in fake._fs if p.startswith("/app/")]
+
+    @pytest.mark.asyncio
+    async def test_upload_timeout_cleans_up_temp(self):
+        # Fix #4: even if the upload trips its own timeout after staging bytes,
+        # write_file raises AND the finally must clear the staged temp.
+        mgr = _bare_manager()
+
+        class _StageThenTimeoutFiles(_FakeFiles):
+            async def write(self, name, content):
+                await super().write(name, content)  # stage the temp
+                raise asyncio.TimeoutError()
+
+        fake = FakeSandbox()
+        fake.files = _StageThenTimeoutFiles(fake._fs)
+        handle = _handle_over(fake)
+        with pytest.raises(RuntimeError, match="upload timed out"):
+            await mgr.write_file(handle, "slow.txt", "data")
+        assert not [p for p in fake._fs if p.startswith("/app/")]
+
+    @pytest.mark.asyncio
+    async def test_outer_cancellation_still_cleans_up_temp(self):
+        # Fix #4: v1/tools.py wraps write_file in asyncio.wait_for. If that outer
+        # bound fires mid-move, the shielded cleanup must still run to completion
+        # so no /app/.druppie-write-*.tmp is orphaned.
+        mgr = _bare_manager()
+
+        class _SlowMv(FakeSandbox):
+            async def run(self, cmd, timeout=None):
+                # Only the mv stalls; the shielded rm (no "mv -f") stays fast.
+                if "mv -f" in cmd:
+                    await asyncio.sleep(5)
+                return await super().run(cmd, timeout)
+
+        fake = _SlowMv()
+        handle = _handle_over(fake)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                mgr.write_file(handle, "slow.txt", "data"), timeout=0.1
+            )
+        # Let the detached, shielded rm task finish, then assert no temp leaked.
+        await asyncio.sleep(0.05)
         assert not [p for p in fake._fs if p.startswith("/app/")]
 
 
@@ -379,6 +440,130 @@ class TestCreateCloneFailure:
         assert mgr._sandboxes["sess-1::current_project"] is fake
         assert fake.terminated is False
 
+    @pytest.mark.asyncio
+    async def test_readiness_timeout_terminates_and_raises(self):
+        # Fix #3: the readiness gate runs before clone/git-config. If the pod's
+        # runtime never answers, create() must terminate the claim and raise
+        # rather than hand back a handle to a not-ready sandbox.
+        mgr, fake = _bare_manager(), FakeSandbox("sb-notready")
+
+        class _Client:
+            async def create_sandbox(self, warmpool, namespace, labels):
+                return fake
+
+        mgr.client = _Client()
+
+        async def _never_ready(sandbox, sandbox_id, timeout=60.0):
+            raise TimeoutError("sandbox %s not ready" % sandbox_id)
+
+        mgr._wait_until_ready = _never_ready
+
+        clone_called = {"n": 0}
+
+        async def _clone(*a, **k):
+            clone_called["n"] += 1
+
+        mgr._host_side_clone = _clone
+
+        with pytest.raises(TimeoutError, match="not ready"):
+            await mgr.create(
+                "sess-1", "current_project",
+                repo_clone_url="https://user:tok@gitea/org/repo.git",
+            )
+        assert fake.terminated is True
+        assert mgr._sandboxes == {}          # claim not leaked into tracking
+        assert clone_called["n"] == 0        # gate fires before the clone
+
+
+# ---------------------------------------------------------------------------
+# Fix #3: _wait_until_ready is the real readiness barrier — it replaces the
+# SDK's neutralised wait_for_sandbox_ready. It must return once the runtime
+# answers, tolerate transient not-ready errors with backoff, and raise on
+# timeout so create() can reclaim the sandbox.
+# ---------------------------------------------------------------------------
+
+
+class TestWaitUntilReady:
+    @pytest.mark.asyncio
+    async def test_returns_when_runtime_answers(self):
+        mgr, fake = _bare_manager(), FakeSandbox()
+        # A healthy FakeSandbox answers "echo ok" with exit 0 immediately.
+        await mgr._wait_until_ready(fake, "sb-ok", timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_retries_transient_errors_then_succeeds(self):
+        mgr = _bare_manager()
+
+        class _ReadyAfter(FakeSandbox):
+            def __init__(self, fail_times):
+                super().__init__()
+                self._fail = fail_times
+
+            async def run(self, cmd, timeout=None):
+                if self._fail > 0:
+                    self._fail -= 1
+                    raise ConnectionError("pod warming up")
+                return await super().run(cmd, timeout)
+
+        fake = _ReadyAfter(fail_times=2)
+        await mgr._wait_until_ready(fake, "sb-warming", timeout=10)
+        assert fake._fail == 0  # both transient failures were retried
+
+    @pytest.mark.asyncio
+    async def test_raises_timeout_when_never_ready(self):
+        mgr = _bare_manager()
+
+        class _NeverReady(FakeSandbox):
+            async def run(self, cmd, timeout=None):
+                self.run_log.append(cmd)
+                return _CmdResult(1, "", "not ready")
+
+        fake = _NeverReady()
+        with pytest.raises(TimeoutError, match="not ready"):
+            await mgr._wait_until_ready(fake, "sb-dead", timeout=0.1)
+
+
+# ---------------------------------------------------------------------------
+# Fix #5: read_file_bytes now uses the SDK's native binary download
+# (files.read, allow_unsafe_paths=True) instead of a base64 shell hop. Raw
+# bytes round-trip and download failures surface as a clear RuntimeError.
+# ---------------------------------------------------------------------------
+
+
+class TestReadFileBytesNativeDownload:
+    @pytest.mark.asyncio
+    async def test_reads_absolute_path_verbatim(self):
+        mgr, fake = _bare_manager(), FakeSandbox()
+        handle = _handle_over(fake)
+        blob = bytes(range(256))
+        fake._fs["/tmp/x.bundle"] = blob  # placed as git would, at an abs path
+        assert await mgr.read_file_bytes(handle, "/tmp/x.bundle") == blob
+
+    @pytest.mark.asyncio
+    async def test_passes_allow_unsafe_paths(self):
+        # The absolute path must reach files.read verbatim (allow_unsafe_paths),
+        # not be rewritten under /app by the SDK's default sanitiser.
+        mgr, fake = _bare_manager(), FakeSandbox()
+        handle = _handle_over(fake)
+        captured = {}
+
+        async def _read(name, timeout=60, allow_unsafe_paths=False):
+            captured["name"] = name
+            captured["allow_unsafe_paths"] = allow_unsafe_paths
+            return b"data"
+
+        fake.files.read = _read
+        await mgr.read_file_bytes(handle, "/tmp/x.bundle")
+        assert captured["name"] == "/tmp/x.bundle"
+        assert captured["allow_unsafe_paths"] is True
+
+    @pytest.mark.asyncio
+    async def test_missing_file_raises_runtimeerror(self):
+        mgr, fake = _bare_manager(), FakeSandbox()
+        handle = _handle_over(fake)
+        with pytest.raises(RuntimeError, match="read_file_bytes from /tmp/missing"):
+            await mgr.read_file_bytes(handle, "/tmp/missing.bundle")
+
 
 # ---------------------------------------------------------------------------
 # Source-level regression guards for cluster-only code paths that the fake
@@ -404,3 +589,29 @@ class TestFixRegressionGuards:
         # Fix #3: '&&' so a failed wipe doesn't overlay the new repo on stale
         # files from a recycled warm-pool sandbox.
         assert "find /workspace -mindepth 1 -delete && tar -xf" in self._source()
+
+    def test_read_file_bytes_uses_native_download_not_base64(self):
+        # Fix #5: read_file_bytes moved off the base64 shell hop onto the SDK's
+        # native binary download. Split the docstring off so the rationale's
+        # prose doesn't mask a base64/shell call sneaking back into the body.
+        rb = (
+            self._source()
+            .split("async def read_file_bytes")[1]
+            .split("\n    async def ")[0]
+        )
+        code = rb.split('"""', 2)[-1]
+        assert "files.read" in code
+        assert "allow_unsafe_paths=True" in code
+        assert "base64" not in code
+        assert "self.exec" not in code  # no shell hop
+
+    def test_write_file_cleanup_is_shielded(self):
+        # Fix #4: the staged-temp cleanup must survive an outer cancellation, so
+        # it runs under asyncio.shield inside a finally.
+        wf = (
+            self._source()
+            .split("async def write_file")[1]
+            .split("\n    async def ")[0]
+        )
+        assert "finally:" in wf
+        assert "asyncio.shield" in wf
