@@ -89,6 +89,7 @@ spec:
                 name: {{ include "druppie.fullname" . }}-config
             - secretRef:
                 name: {{ include "druppie.fullname" . }}-secrets
+                optional: true
             {{- if .Values.global.extraEnvFromSecret }}
             # Branch environments: Vault-sourced overrides (ESO-managed). Listed
             # last so its keys win; optional so pods start while it syncs.
