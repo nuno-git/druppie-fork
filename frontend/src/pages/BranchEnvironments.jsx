@@ -103,11 +103,11 @@ const PR_STATE_STYLE = {
 // "Merge terug"-knop: opent (of toont) een pull request die deze branch
 // terugmerget in de basisbranch waar de omgeving vanaf is gestart
 // (colab-dev of main). De PR-status komt live van de Gitea-API.
-const PullRequestSection = ({ env }) => {
+const PullRequestSection = ({ env, canMerge }) => {
   const qc = useQueryClient()
   const toast = useToast()
 
-  const { data: pr, isLoading } = useQuery({
+  const { data: pr, isLoading, isError, error } = useQuery({
     queryKey: ['branch-env-pr', env.id],
     queryFn: () => branchEnvironmentsApi.getPullRequest(env.id),
     // A terminating env is gone from git — its PR endpoint 404s; skip it.
@@ -118,6 +118,11 @@ const PullRequestSection = ({ env }) => {
       return d?.exists && d.state === 'open' && d.mergeable == null ? POLL_MS : false
     },
   })
+
+  // A 404 means the branch was never pushed to Gitea (so there is no PR to
+  // open yet) — distinguish that from "no PR yet, go ahead and open one".
+  const branchNotPushed = isError && error?.status === 404
+  const statusUnknown = isError && !branchNotPushed
 
   const createMut = useMutation({
     mutationFn: () => branchEnvironmentsApi.createPullRequest(env.id),
@@ -157,14 +162,18 @@ const PullRequestSection = ({ env }) => {
             <ExternalLink className="w-3.5 h-3.5" />
             PR #{pr.number}
           </a>
-        ) : (
+        ) : canMerge ? (
           <button
             onClick={() => createMut.mutate()}
-            disabled={createMut.isPending || isLoading || nothingToMerge}
+            disabled={createMut.isPending || isLoading || nothingToMerge || isError}
             title={
               nothingToMerge
                 ? `"${env.branch}" is de basisbranch — niets om terug te mergen`
-                : `Open een pull request naar ${base || 'de basisbranch'}`
+                : branchNotPushed
+                  ? `Push branch "${env.branch}" eerst naar Gitea`
+                  : statusUnknown
+                    ? 'PR-status onbekend — probeer het later opnieuw'
+                    : `Open een pull request naar ${base || 'de basisbranch'}`
             }
             className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -175,19 +184,33 @@ const PullRequestSection = ({ env }) => {
             )}
             Pull request openen
           </button>
-        )}
+        ) : null}
       </div>
-      <p className="mt-1 text-[10px] text-gray-400">
-        {pr?.exists
-          ? merged
-            ? `Samengevoegd in ${base}.`
-            : pr.mergeable === false
-              ? `Kan nog niet mergen — los eerst conflicten met ${base} op.`
+      {isError ? (
+        <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+          <AlertCircle className="w-3 h-3 flex-shrink-0" />
+          {branchNotPushed
+            ? `Branch nog niet gepusht — push "${env.branch}" naar Gitea om terug te mergen.`
+            : 'PR-status onbekend — kon de pull request niet ophalen.'}
+        </p>
+      ) : pr?.exists && !merged && pr.mergeable === false ? (
+        <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+          <AlertCircle className="w-3 h-3 flex-shrink-0" />
+          Kan nog niet mergen — los eerst conflicten met {base} op.
+        </p>
+      ) : (
+        <p className="mt-1 text-[10px] text-gray-400">
+          {pr?.exists
+            ? merged
+              ? `Samengevoegd in ${base}.`
               : `Open pull request: ${env.branch} → ${base}.`
-          : nothingToMerge
-            ? 'Dit is de basisbranch.'
-            : `Merge ${env.branch} terug in ${base || 'de basisbranch'}.`}
-      </p>
+            : nothingToMerge
+              ? 'Dit is de basisbranch.'
+              : canMerge
+                ? `Merge ${env.branch} terug in ${base || 'de basisbranch'}.`
+                : 'Alleen de eigenaar (of een admin) kan deze branch terugmergen.'}
+        </p>
+      )}
     </div>
   )
 }
@@ -329,6 +352,8 @@ const WorkspaceSection = ({
 
 const BranchEnvCard = ({
   env,
+  currentUserId,
+  isAdmin,
   onRedeploy,
   onDelete,
   onEnableWorkspace,
@@ -344,6 +369,11 @@ const BranchEnvCard = ({
 }) => {
   const isTransitional = TRANSITIONAL.has(env.status)
   const canOpen = env.status === 'running' && env.url
+
+  // Merge-back is owner-or-admin only, mirroring the backend. When the owner
+  // annotation is unreadable (owner_id null) the backend falls back to
+  // admin-only, so we do too.
+  const canMerge = isAdmin || (!!env.owner_id && env.owner_id === currentUserId)
 
   // Deploy pipeline: auto-open while the env is transitioning or failed so you
   // can see which hop is busy/broken; the toggle overrides the default.
@@ -573,7 +603,7 @@ const BranchEnvCard = ({
       </div>
 
       {/* Merge terug (pull request) */}
-      <PullRequestSection env={env} />
+      <PullRequestSection env={env} canMerge={canMerge} />
 
       {/* Workspace */}
       <WorkspaceSection
@@ -911,6 +941,8 @@ const BranchEnvironments = () => {
   const [showDeploy, setShowDeploy] = useState(false)
   const [deployError, setDeployError] = useState(null)
   const { user } = useAuth() || {}
+  const currentUserId = user?.id
+  const isAdmin = !!user?.roles?.includes('admin')
   const toast = useToast()
   const qc = useQueryClient()
 
@@ -1088,6 +1120,8 @@ const BranchEnvironments = () => {
             <BranchEnvCard
               key={env.branch}
               env={env}
+              currentUserId={currentUserId}
+              isAdmin={isAdmin}
               onRedeploy={(id) => redeployMut.mutate(id)}
               onDelete={(id) => deleteMut.mutate(id)}
               onEnableWorkspace={(id) => enableWorkspaceMut.mutate(id)}

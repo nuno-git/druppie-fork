@@ -13,11 +13,20 @@ vi.mock('../services/api', () => ({
     teardown: vi.fn(),
     enableWorkspace: vi.fn(),
     disableWorkspace: vi.fn(),
+    getPullRequest: vi.fn(),
+    createPullRequest: vi.fn(),
+    listBranches: vi.fn(),
   },
+}))
+
+// Mock useAuth so we can control the current user (owner / admin gating).
+vi.mock('../App', () => ({
+  useAuth: vi.fn(() => ({ user: null })),
 }))
 
 import BranchEnvironments, { slugifyBranch } from './BranchEnvironments'
 import { branchEnvironmentsApi } from '../services/api'
+import { useAuth } from '../App'
 import { ToastProvider } from '../components/Toast'
 
 describe('slugifyBranch', () => {
@@ -64,6 +73,14 @@ const renderPage = () => {
 describe('BranchEnvironments page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Sensible defaults: no current user (non-owner) and a "no PR yet" status so
+    // rendering a card never leaves the PR query unmocked.
+    useAuth.mockReturnValue({ user: null })
+    branchEnvironmentsApi.getPullRequest.mockResolvedValue({
+      exists: false,
+      base_branch: 'colab-dev',
+    })
+    branchEnvironmentsApi.listBranches.mockResolvedValue([])
   })
 
   it('renders a running environment with its branch and Open link', async () => {
@@ -158,7 +175,7 @@ describe('BranchEnvironments page', () => {
     renderPage()
 
     fireEvent.click(await screen.findByRole('button', { name: /deploy branch/i }))
-    fireEvent.change(screen.getByPlaceholderText('feature/my-branch'), {
+    fireEvent.change(await screen.findByPlaceholderText(/type or select a branch name/i), {
       target: { value: 'feature/foo' },
     })
     fireEvent.submit(screen.getByRole('button', { name: /^deploy$/i }).closest('form'))
@@ -173,22 +190,22 @@ describe('BranchEnvironments page', () => {
     )
   })
 
-  it('deploys with the developer secrets source when selected', async () => {
+  it('deploys with a developer secrets source when selected', async () => {
     branchEnvironmentsApi.list.mockResolvedValue({ items: [], total: 0 })
     branchEnvironmentsApi.deploy.mockResolvedValue({})
 
     renderPage()
 
     fireEvent.click(await screen.findByRole('button', { name: /deploy branch/i }))
-    fireEvent.change(screen.getByPlaceholderText('feature/my-branch'), {
+    fireEvent.change(await screen.findByPlaceholderText(/type or select a branch name/i), {
       target: { value: 'feature/foo' },
     })
-    fireEvent.click(screen.getByRole('radio', { name: /my developer vault map/i }))
+    fireEvent.click(screen.getByRole('radio', { name: /robbe/i }))
     fireEvent.submit(screen.getByRole('button', { name: /^deploy$/i }).closest('form'))
 
     await waitFor(() =>
       expect(branchEnvironmentsApi.deploy).toHaveBeenCalledWith(
-        expect.objectContaining({ secrets_source: 'developer' })
+        expect.objectContaining({ secrets_source: 'robbe' })
       )
     )
   })
@@ -349,5 +366,68 @@ describe('BranchEnvironments page', () => {
     await waitFor(() =>
       expect(branchEnvironmentsApi.disableWorkspace).toHaveBeenCalledWith('feature-ws')
     )
+  })
+
+  const runningEnv = (overrides = {}) => ({
+    id: 'feature-pr',
+    branch: 'feature/pr',
+    slug: 'feature-pr',
+    namespace: 'druppie-feature-pr',
+    url: 'https://druppie-feature-pr.rijnland.dev',
+    image_tag: 'abc123',
+    status: 'running',
+    status_message: null,
+    created_at: '2026-07-07T10:00:00Z',
+    workspace_enabled: false,
+    workspace_url: null,
+    workspace_status: null,
+    owner_id: 'owner-123',
+    ...overrides,
+  })
+
+  it('hides the "Pull request openen" button for a non-owner', async () => {
+    useAuth.mockReturnValue({ user: { id: 'someone-else', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [runningEnv()], total: 1 })
+
+    renderPage()
+
+    await screen.findByText('feature/pr')
+    expect(screen.queryByRole('button', { name: /pull request openen/i })).toBeNull()
+    expect(await screen.findByText(/alleen de eigenaar/i)).toBeTruthy()
+  })
+
+  it('opens a pull request when the owner clicks the button', async () => {
+    useAuth.mockReturnValue({ user: { id: 'owner-123', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [runningEnv()], total: 1 })
+    branchEnvironmentsApi.createPullRequest.mockResolvedValue({
+      exists: true,
+      number: 42,
+      url: 'https://gitea/pr/42',
+    })
+
+    renderPage()
+
+    const btn = await screen.findByRole('button', { name: /pull request openen/i })
+    // Wait until the PR-status query settles so the button is no longer disabled.
+    await waitFor(() => expect(btn.disabled).toBe(false))
+    fireEvent.click(btn)
+
+    await waitFor(() =>
+      expect(branchEnvironmentsApi.createPullRequest).toHaveBeenCalledWith('feature-pr')
+    )
+  })
+
+  it('shows a branch-not-pushed message and disables the button on a 404 status', async () => {
+    useAuth.mockReturnValue({ user: { id: 'owner-123', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [runningEnv()], total: 1 })
+    branchEnvironmentsApi.getPullRequest.mockRejectedValue(
+      Object.assign(new Error('not found'), { status: 404 })
+    )
+
+    renderPage()
+
+    expect(await screen.findByText(/branch nog niet gepusht/i)).toBeTruthy()
+    const btn = screen.getByRole('button', { name: /pull request openen/i })
+    expect(btn.disabled).toBe(true)
   })
 })
