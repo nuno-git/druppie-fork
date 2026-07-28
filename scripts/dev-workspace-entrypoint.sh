@@ -723,6 +723,21 @@ printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.venvs/\n.data/\n.claude/\n' \
 checkout_branch
 configure_git
 clone_side_repos
+
+# ---------------------------------------------------------------------------
+# 2d. Copy AGENTS.md and CLAUDE.md from the druppie repo to /workspace/ so
+#     they are visible at the top level alongside all repo checkouts.
+# ---------------------------------------------------------------------------
+copy_repo_docs() {
+    for f in AGENTS.md CLAUDE.md; do
+        if [ -f "${REPO_DIR}/${f}" ]; then
+            cp "${REPO_DIR}/${f}" "${WORKSPACE}/${f}"
+            log "copied ${f} to ${WORKSPACE}"
+        fi
+    done
+}
+copy_repo_docs
+
 if [ "${RECOVERY_MODE:-}" != "true" ]; then
     ensure_frontend_deps
     ensure_backend_deps
