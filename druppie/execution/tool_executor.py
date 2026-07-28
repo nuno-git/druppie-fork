@@ -1179,6 +1179,10 @@ class ToolExecutor:
         """
         from druppie.core.entra_token import check_entra_linked, is_entra_configured
 
+        # Capture the id up front: the commits below expire the ORM object
+        # (expire_on_commit), so the post-commit logger reads must not touch it.
+        tc_id = tool_call.id
+
         if not is_entra_configured():
             self.execution_repo.update_tool_call(
                 tool_call.id,
@@ -1205,7 +1209,7 @@ class ToolExecutor:
         if not is_linked:
             logger.info(
                 "entra_token_missing_not_linked_proceeding",
-                tool_call_id=str(tool_call.id),
+                tool_call_id=str(tc_id),
                 user_id=user_id,
             )
             return None
@@ -1219,7 +1223,7 @@ class ToolExecutor:
 
         logger.info(
             "entra_token_missing_waiting_auth",
-            tool_call_id=str(tool_call.id),
+            tool_call_id=str(tc_id),
             user_id=user_id,
         )
         return ToolCallStatus.WAITING_ENTRA_AUTH
@@ -1446,6 +1450,13 @@ class ToolExecutor:
 
         args = tool_call.arguments or {}
 
+        # Capture immutable identifiers up front. The commits below expire the
+        # ORM object (expire_on_commit); in the approval/replay path the row can
+        # already be gone, so a post-commit tool_call.<attr> read would raise
+        # ObjectDeletedError. Use these locals for logging/updates instead.
+        tc_id = tool_call.id
+        tc_name = tool_call.tool_name
+
         try:
             # Mark as executing
             self.execution_repo.update_tool_call(
@@ -1475,7 +1486,7 @@ class ToolExecutor:
                 self._active_db.commit()
                 logger.info(
                     "builtin_tool_waiting_sandbox",
-                    tool_call_id=str(tool_call.id),
+                    tool_call_id=str(tc_id),
                 )
                 return ToolCallStatus.WAITING_SANDBOX
 
@@ -1496,8 +1507,8 @@ class ToolExecutor:
 
             logger.info(
                 "builtin_tool_completed",
-                tool_call_id=str(tool_call.id),
-                tool_name=tool_call.tool_name,
+                tool_call_id=str(tc_id),
+                tool_name=tc_name,
                 result_status=result.get("status"),
                 success=is_success,
             )
@@ -1507,13 +1518,13 @@ class ToolExecutor:
         except Exception as e:
             logger.error(
                 "builtin_tool_error",
-                tool_call_id=str(tool_call.id),
-                tool_name=tool_call.tool_name,
+                tool_call_id=str(tc_id),
+                tool_name=tc_name,
                 error=str(e),
             )
             # Mark as failed with error
             self.execution_repo.update_tool_call(
-                tool_call.id,
+                tc_id,
                 status=ToolCallStatus.FAILED,
                 error=str(e),
             )
