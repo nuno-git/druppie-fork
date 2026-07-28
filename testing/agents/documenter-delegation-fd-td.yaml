@@ -1,0 +1,43 @@
+## Agent test: full BA → Architect pipeline with documenter delegation
+##
+## Exercises the complete design pipeline where:
+## - BA gathers requirements via HITL, delegates FD formatting to documenter subagent
+## - Planner routes to architect after BA completes
+## - Architect reads FD, delegates TR + TD formatting to documenter subagent
+## - All documents are submitted via approval gates and pushed to Gitea
+##
+## After completion, open the session in the UI to inspect:
+## - docs/functional-design.md (formatted by documenter for BA)
+## - docs/technical-research.md (formatted by documenter for architect)
+## - docs/technical-design.md (formatted by documenter for architect)
+##
+## Uses approving-cooperative-user HITL profile: answers BA questions
+## cooperatively and auto-approves all design document submissions.
+
+agent-test:
+  name: documenter-delegation-fd-td
+  description: "Full BA → Architect pipeline with documenter formatting FD, TR, and TD"
+  tags: [documenter, business_analyst, architect, e2e, pipeline]
+
+  message: "Build me a complaints tracking app for our water authority. Citizens report water quality issues and we need to track, assign, and resolve them. We handle about 50 complaints per week and currently use a shared Excel file which causes data loss."
+  agents: [router, planner, business_analyst, architect]
+  hitl: approving-cooperative-user
+
+  judge:
+    context: all
+    checks:
+      - "The business_analyst must have called subagents() to delegate document formatting to the documenter agent. Look for a subagents tool call where one of the agents has agent='documenter' and the prompt contains 'FORMAT DOCUMENT: functional_design'."
+      - "The business_analyst must have called coding:submit_design_for_review for docs/functional-design.md. The content should be a properly structured functional design with sections for requirements, user roles, and process flows."
+      - "The architect must have called subagents() to delegate document formatting to the documenter agent. Look for subagents tool calls where the prompt contains 'FORMAT DOCUMENT: technical_research' and/or 'FORMAT DOCUMENT: technical_design'."
+      - "The architect must have called coding:submit_design_for_review for both docs/technical-research.md and docs/technical-design.md."
+      - "Both the business_analyst and architect must have called coding:push_changes to commit their documents to the repository."
+      - "The architect's final done() summary must contain DESIGN_APPROVED."
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-research.md
+    - file_exists: docs/technical-design.md
+    - file_not_empty: docs/functional-design.md
+    - file_not_empty: docs/technical-research.md
+    - file_not_empty: docs/technical-design.md
