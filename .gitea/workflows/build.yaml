@@ -328,6 +328,21 @@ jobs:
             exit 0
           fi
 
+          # Check the auto-deploy annotation on the namespace. When set to
+          # "false" the user has opted out of CI/CD auto-upgrades from the
+          # Druppie UI — skip the image tag patch so the environment stays on
+          # its current image until manually redeployed.
+          if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "colab-dev" ]; then
+            NS_FILE="clusters/branch-envs/druppie-${SLUG}/namespace.yaml"
+            if [ -f "$NS_FILE" ]; then
+              AUTO_DEPLOY=$(yq '.metadata.annotations."druppie.io/auto-deploy" // "true"' "$NS_FILE")
+              if [ "$AUTO_DEPLOY" = "false" ]; then
+                echo "Auto-deploy is disabled for druppie-${SLUG} — skipping image tag update"
+                exit 0
+              fi
+            fi
+          fi
+
           git config user.name "druppie-ci"
           git config user.email "druppie-ci@users.noreply.rijnland.dev"
 

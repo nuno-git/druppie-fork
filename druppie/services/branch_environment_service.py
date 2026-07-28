@@ -200,6 +200,7 @@ def build_namespace_yaml(
     owner_id: UUID,
     created_at: str,
     secrets_source: str = SECRETS_SOURCE_COLAB_DEV,
+    auto_deploy_enabled: bool = True,
 ) -> str:
     return _dump(
         {
@@ -216,6 +217,7 @@ def build_namespace_yaml(
                     f"{_ANN}/owner-id": str(owner_id),
                     f"{_ANN}/created-at": created_at,
                     f"{_ANN}/secrets-source": secrets_source,
+                    f"{_ANN}/auto-deploy": "true" if auto_deploy_enabled else "false",
                 },
             },
         }
@@ -1246,6 +1248,105 @@ class BranchEnvironmentService:
             env, status=status, message=message, workspace_status=None
         )
 
+    async def enable_auto_deploy(
+        self,
+        env_id: str,
+        user_id: UUID,
+        user_roles: list[str],
+    ) -> BranchEnvironmentDetail:
+        """Re-enable CI/CD auto-deploy for this branch environment.
+
+        Commits an updated namespace.yaml with ``druppie.io/auto-deploy: "true"``
+        so the next CI run patches the HelmRelease image tag again.
+        """
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
+        if env is None:
+            raise NotFoundError("branch_environment", slug)
+
+        _require_owner_or_admin(env["owner_id"], user_id, user_roles, "enable auto-deploy for")
+        _assert_safe_namespace(env["namespace"], slug)
+
+        if env["auto_deploy_enabled"]:
+            raise ConflictError(f"auto-deploy is already enabled for '{slug}'")
+
+        ns_content, ns_sha = await self._read_namespace_file(slug)
+        new_ns = build_namespace_yaml(
+            slug,
+            env["branch"],
+            env["owner_id"] or UUID(int=0),
+            env["created_at"] or _utcnow_iso(),
+            secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
+            auto_deploy_enabled=True,
+        )
+        await self._change_files_with_retry(
+            slug,
+            f"branch-env: enable auto-deploy {env['namespace']} (by {user_id})",
+            [
+                {
+                    "operation": "update",
+                    "path": self._env_path(slug, "namespace.yaml"),
+                    "content": new_ns,
+                    "sha": ns_sha,
+                }
+            ],
+        )
+        logger.info("branch_env_auto_deploy_enabled", slug=slug, namespace=env["namespace"])
+
+        env["auto_deploy_enabled"] = True
+        status, message = await self._live_status(env["namespace"])
+        return self._detail_from_env(env, status=status, message=message)
+
+    async def disable_auto_deploy(
+        self,
+        env_id: str,
+        user_id: UUID,
+        user_roles: list[str],
+    ) -> BranchEnvironmentDetail:
+        """Disable CI/CD auto-deploy for this branch environment.
+
+        Commits an updated namespace.yaml with ``druppie.io/auto-deploy: "false"``.
+        Future CI runs will skip the HelmRelease image tag patch, so the
+        environment stays on its current image until manually redeployed.
+        """
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
+        if env is None:
+            raise NotFoundError("branch_environment", slug)
+
+        _require_owner_or_admin(env["owner_id"], user_id, user_roles, "disable auto-deploy for")
+        _assert_safe_namespace(env["namespace"], slug)
+
+        if not env["auto_deploy_enabled"]:
+            raise ConflictError(f"auto-deploy is already disabled for '{slug}'")
+
+        ns_content, ns_sha = await self._read_namespace_file(slug)
+        new_ns = build_namespace_yaml(
+            slug,
+            env["branch"],
+            env["owner_id"] or UUID(int=0),
+            env["created_at"] or _utcnow_iso(),
+            secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
+            auto_deploy_enabled=False,
+        )
+        await self._change_files_with_retry(
+            slug,
+            f"branch-env: disable auto-deploy {env['namespace']} (by {user_id})",
+            [
+                {
+                    "operation": "update",
+                    "path": self._env_path(slug, "namespace.yaml"),
+                    "content": new_ns,
+                    "sha": ns_sha,
+                }
+            ],
+        )
+        logger.info("branch_env_auto_deploy_disabled", slug=slug, namespace=env["namespace"])
+
+        env["auto_deploy_enabled"] = False
+        status, message = await self._live_status(env["namespace"])
+        return self._detail_from_env(env, status=status, message=message)
+
     async def list_all(self, page: int = 1, limit: int = 100):
         """List all branch environments (git = source of truth, plus any
         namespaces still terminating after teardown)."""
@@ -1449,6 +1550,9 @@ class BranchEnvironmentService:
         except ValueError:
             owner_id = None
 
+        auto_deploy_raw = annotations.get(f"{_ANN}/auto-deploy", "true")
+        auto_deploy_enabled = auto_deploy_raw.lower() != "false"
+
         return {
             "slug": slug,
             "branch": annotations.get(f"{_ANN}/branch", slug),
@@ -1464,7 +1568,18 @@ class BranchEnvironmentService:
             "developer": developer,
             "stack_mode": stack_mode,
             "recovery_mode": recovery_mode,
+            "auto_deploy_enabled": auto_deploy_enabled,
         }
+
+    async def _read_namespace_file(self, slug: str) -> tuple[str, str]:
+        """Read the namespace.yaml content and its blob SHA for a slug.
+
+        Raises NotFoundError if the file doesn't exist.
+        """
+        result = await self.gitea.get_file(self._env_path(slug, "namespace.yaml"))
+        if result is None:
+            raise NotFoundError("branch_environment", slug)
+        return result
 
     async def _live_status(self, namespace: str) -> tuple[str, str | None]:
         if not self.cluster.available:
@@ -1513,6 +1628,7 @@ class BranchEnvironmentService:
             workspace_url=f"https://{_workspace_host(env['host'])}" if enabled else None,
             workspace_status=workspace_status,
             recovery_mode=env.get("recovery_mode", False),
+            auto_deploy_enabled=env.get("auto_deploy_enabled", True),
         )
 
     def _detail_from_namespace(self, ns: dict) -> BranchEnvironmentDetail:
@@ -1526,6 +1642,8 @@ class BranchEnvironmentService:
             owner_id = UUID(owner_raw) if owner_raw else None
         except ValueError:
             owner_id = None
+        auto_deploy_raw = annotations.get(f"{_ANN}/auto-deploy", "true")
+        auto_deploy_enabled = auto_deploy_raw.lower() != "false"
         return BranchEnvironmentDetail(
             id=slug,
             branch=annotations.get(f"{_ANN}/branch", slug),
@@ -1537,6 +1655,7 @@ class BranchEnvironmentService:
             status_message="removed from GitOps repo; namespace is terminating",
             created_at=self._parse_ts(annotations.get(f"{_ANN}/created-at")),
             owner_id=owner_id,
+            auto_deploy_enabled=auto_deploy_enabled,
         )
 
     @staticmethod
