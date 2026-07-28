@@ -309,21 +309,18 @@ def test_helmrelease_yaml_contains_branch_overrides():
     values = manifest["spec"]["values"]
     assert values["global"]["instance"] == "druppie-foo"
     assert values["global"]["imageTag"] == "tag-1"
-    assert values["backend"]["service"]["type"] == "ClusterIP"
     assert manifest["spec"]["chart"]["spec"]["sourceRef"]["name"] == "druppie-branch-foo"
     assert "helm/druppie/values-rijnland.yaml" in manifest["spec"]["chart"]["spec"]["valuesFiles"]
+    # Static branch-env defaults (externalSecrets, storageClass, service type,
+    # embedded modules) now live in the chart's values-branch-env.yaml — only
+    # truly dynamic values are inlined into the committed HelmRelease.
+    assert "helm/druppie/values-branch-env.yaml" in manifest["spec"]["chart"]["spec"]["valuesFiles"]
     # The branch namespace IS the hot-reload dev workspace.
-    assert values["externalSecrets"]["managed"] is True
-    assert values["persistence"]["storageClass"] == "longhorn-local"
     dw = values["devWorkspace"]
     assert dw["enabled"] is True
     assert dw["stackMode"] == "real"
     assert dw["gitBranch"] == "feature/foo"
     assert dw["codeServer"]["devHost"] == "druppie-foo-dev.rijnland.dev"
-    # Modules are embedded into the workspace pod (no separate Deployments), so
-    # the env pulls no per-module images and needs no RWO-PVC co-location.
-    assert "coding" in dw["embedModules"]
-    assert "docker" in dw["embedModules"]
 
 
 # ---------------------------------------------------------------------------
@@ -610,14 +607,10 @@ def _hr_values(fake_gitea, slug="feature-foo"):
 def test_create_enables_workspace_by_default(client, as_owner, fake_gitea):
     _deploy(client)
     values = _hr_values(fake_gitea)
-    assert values["externalSecrets"]["managed"] is True
-    assert values["persistence"]["storageClass"] == "longhorn-local"
     dw = values["devWorkspace"]
     assert dw["enabled"] is True
     assert dw["gitBranch"] == "feature/foo"
     assert dw["codeServer"]["devHost"] == "druppie-feature-foo-dev.rijnland.dev"
-    # Modules run inside the workspace pod, not as separate Deployments.
-    assert "coding" in dw["embedModules"]
     body = client.get("/api/branch-environments/feature-foo").json()
     assert body["workspace_enabled"] is True
     assert body["workspace_url"] == "https://druppie-feature-foo-dev.rijnland.dev"
@@ -959,3 +952,89 @@ def test_create_pull_request_unknown_env_404(client, as_owner):
 def test_get_pull_request_requires_developer_role(client, app):
     app.dependency_overrides[get_current_user] = lambda: _user(OWNER_SUB, developer=False)
     assert client.get(_PR_URL).status_code == 403
+
+
+def test_create_persists_base_branch_annotation(client, as_owner, fake_gitea):
+    _deploy(client)
+    ns = yaml.safe_load(fake_gitea.files[f"{_env_dir('feature-foo')}/namespace.yaml"])
+    assert ns["metadata"]["annotations"]["druppie.io/base-branch"] == "colab-dev"
+
+
+def test_pull_request_uses_persisted_base_branch(client, as_owner, fake_gitea, monkeypatch):
+    """Merge-back targets the branch the env was created from, even if the
+    global default changes afterwards (the base is persisted per env)."""
+    import druppie.services.branch_environment_service as svc
+
+    _deploy(client)  # base persisted as colab-dev
+    # The global default changes after the env was created (e.g. new setting).
+    monkeypatch.setattr(svc, "APP_BASE_BRANCH", "some-new-default")
+
+    r = client.post(_PR_URL)
+    assert r.status_code == 200, r.text
+    assert r.json()["base_branch"] == "colab-dev"
+    # PR opened against the persisted base, not the changed global default.
+    assert ("ai/druppie", "feature/foo", "colab-dev") in fake_gitea.pulls
+    assert ("ai/druppie", "feature/foo", "some-new-default") not in fake_gitea.pulls
+    # Status endpoint agrees.
+    assert client.get(_PR_URL).json()["base_branch"] == "colab-dev"
+
+
+# ---------------------------------------------------------------------------
+# robustness: corrupt manifest / PR pagination
+# ---------------------------------------------------------------------------
+
+
+def test_list_survives_corrupt_manifest(client, as_owner, fake_gitea):
+    """One corrupt manifest degrades that env only — it must not 500 the whole
+    overview or hide the healthy environments."""
+    _deploy(client)  # healthy env "feature-foo"
+    bad_dir = _env_dir("broken")
+    fake_gitea.files[f"{bad_dir}/namespace.yaml"] = "foo: [bar"  # invalid YAML
+    fake_gitea.files[f"{bad_dir}/helmrelease.yaml"] = "kind: HelmRelease\n"
+
+    r = client.get("/api/branch-environments")
+    assert r.status_code == 200, r.text
+    items = {i["id"]: i for i in r.json()["items"]}
+    # Healthy env still listed.
+    assert "feature-foo" in items
+    assert items["feature-foo"]["status"] == "deploying"
+    # Corrupt env degrades to failed with the slug still shown.
+    assert "broken" in items
+    assert items["broken"]["status"] == "failed"
+
+
+@pytest.mark.anyio
+async def test_find_pull_request_paginates():
+    """find_pull_request pages through results so an older matching PR isn't
+    missed once newer PRs push it past the first page."""
+    import httpx
+
+    from druppie.services.branch_environment_service import GiteaGitopsClient
+
+    target = {
+        "head": {"ref": "feature/foo"},
+        "base": {"ref": "colab-dev"},
+        "number": 99,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", "1"))
+        if page < 3:
+            # Full pages of non-matching PRs.
+            data = [
+                {"head": {"ref": f"other-{page}-{i}"}, "base": {"ref": "colab-dev"}}
+                for i in range(50)
+            ]
+        else:
+            data = [target]
+        return httpx.Response(200, json=data)
+
+    gitea = GiteaGitopsClient(
+        base_url="https://git.test", repo="ai/druppie", branch="main", token="", ca_path=""
+    )
+    transport = httpx.MockTransport(handler)
+    gitea._client = lambda: httpx.AsyncClient(transport=transport)  # type: ignore[method-assign]
+
+    pr = await gitea.find_pull_request("ai/druppie", "feature/foo", "colab-dev")
+    assert pr is not None
+    assert pr["number"] == 99
