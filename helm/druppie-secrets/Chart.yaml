@@ -1,0 +1,6 @@
+apiVersion: v2
+name: druppie-secrets
+description: ExternalSecrets for Druppie — deployed before the main app chart so secrets exist at pod start time
+type: application
+version: 0.1.0
+appVersion: "1.0"

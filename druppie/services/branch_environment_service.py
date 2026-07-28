@@ -305,6 +305,12 @@ def build_helmrelease_yaml(
                 "annotations": annotations,
             },
             "spec": {
+                "dependsOn": [
+                    {
+                        "name": f"{HELMRELEASE_NAME}-secrets",
+                        "namespace": namespace,
+                    }
+                ],
                 "interval": "10m",
                 "releaseName": HELMRELEASE_NAME,
                 "storageNamespace": namespace,
@@ -340,6 +346,71 @@ def build_helmrelease_yaml(
     )
 
 
+def build_helmrelease_secrets_yaml(
+    slug: str,
+    branch: str,
+    host: str,
+    updated_at: str,
+    secrets_source: str = SECRETS_SOURCE_COLAB_DEV,
+) -> str:
+    """Build a HelmRelease for the druppie-secrets chart (ExternalSecrets only).
+
+    Deployed before the main app HelmRelease so secrets exist at pod start time.
+    The main app HelmRelease dependsOn this one.
+    """
+    namespace = f"druppie-{slug}"
+    annotations = {
+        f"{_ANN}/branch": branch,
+        f"{_ANN}/updated-at": updated_at,
+    }
+
+    values: dict = {
+        "global": {
+            "instance": namespace,
+        },
+        "devWorkspace": {
+            "secretsSource": secrets_source,
+        },
+    }
+
+    return _dump(
+        {
+            "apiVersion": "helm.toolkit.fluxcd.io/v2",
+            "kind": "HelmRelease",
+            "metadata": {
+                "name": f"{HELMRELEASE_NAME}-secrets",
+                "namespace": namespace,
+                "annotations": annotations,
+            },
+            "spec": {
+                "dependsOn": [],
+                "interval": "10m",
+                "releaseName": f"{HELMRELEASE_NAME}-secrets",
+                "storageNamespace": namespace,
+                "targetNamespace": namespace,
+                "chart": {
+                    "spec": {
+                        "chart": "./helm/druppie-secrets",
+                        "sourceRef": {
+                            "kind": "GitRepository",
+                            "name": f"druppie-branch-{slug}",
+                            "namespace": "flux-system",
+                        },
+                        "reconcileStrategy": "Revision",
+                    }
+                },
+                "install": {"timeout": "5m", "remediation": {"retries": 3}},
+                "upgrade": {
+                    "timeout": "5m",
+                    "cleanupOnFail": True,
+                    "remediation": {"retries": 3},
+                },
+                "values": values,
+            },
+        }
+    )
+
+
 def _workspace_host(host: str) -> str:
     """Env host with ``-dev`` inserted before the first dot.
 
@@ -362,6 +433,7 @@ _ENV_FILES = (
     "namespace.yaml",
     "gitrepository.yaml",
     "helmrelease.yaml",
+    "helmrelease-secrets.yaml",
 )
 
 
@@ -1031,6 +1103,14 @@ class BranchEnvironmentService:
                     slug, branch, host, image_tag, created_at,
                     secrets_source=secrets_source, recovery_mode=recovery_mode,
                     ca_chain=ca_chain,
+                ),
+            },
+            {
+                "operation": "create",
+                "path": self._env_path(slug, "helmrelease-secrets.yaml"),
+                "content": build_helmrelease_secrets_yaml(
+                    slug, branch, host, created_at,
+                    secrets_source=secrets_source,
                 ),
             },
         ]

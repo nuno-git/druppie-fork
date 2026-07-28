@@ -162,8 +162,8 @@ spec:
             - name: ENTRA_ALLOWED_EMAILS
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "druppie.fullname" . }}-entra-id
-                  key: allowed-emails
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: ENTRA_ALLOWED_EMAILS
                   optional: true
           ports:
             - name: http

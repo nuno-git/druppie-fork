@@ -263,9 +263,9 @@ spec:
                 --password "${KEYCLOAK_ADMIN_PASSWORD}"
 
               while true; do
-                CLIENT_ID=$(cat "${SECRET_DIR}/client-id" 2>/dev/null || echo "")
-                CLIENT_SECRET=$(cat "${SECRET_DIR}/client-secret" 2>/dev/null || echo "")
-                TENANT_ID=$(cat "${SECRET_DIR}/tenant-id" 2>/dev/null || echo "")
+                CLIENT_ID=$(cat "${SECRET_DIR}/ENTRA_ID_CLIENT_ID" 2>/dev/null || echo "")
+                CLIENT_SECRET=$(cat "${SECRET_DIR}/ENTRA_ID_CLIENT_SECRET" 2>/dev/null || echo "")
+                TENANT_ID=$(cat "${SECRET_DIR}/ENTRA_ID_TENANT_ID" 2>/dev/null || echo "")
 
                 if [ -n "$CLIENT_ID" ] && [ -n "$CLIENT_SECRET" ] && [ -n "$TENANT_ID" ]; then
                   echo "entra-id-sync: updating IdP '${IDP_ALIAS}'..."
@@ -312,7 +312,7 @@ spec:
       volumes:
         - name: entra-id
           secret:
-            secretName: {{ include "druppie.fullname" . }}-entra-id
+            secretName: {{ include "druppie.fullname" . }}-secrets
             optional: true
         {{- if .Values.keycloak.realmImport.enabled }}
         - name: realm-import
