@@ -28,6 +28,14 @@ Druppie is a full-stack platform composed of the following services:
 
 All services run in Docker containers on a shared bridge network (`druppie-new-network`). The backend communicates with MCP servers over HTTP using internal container hostnames.
 
+> **Note on the sandbox rows.** "Sandbox Control Plane" (`:8787`) and "Sandbox
+> Manager" are a **separate, older subsystem** — `druppie/api/routes/sandbox.py`
+> proxies to an external `sandbox-control-plane:8787` service that is **not
+> shipped in the Helm chart**. The *coding-agent* sandbox (the one that clones,
+> edits and pushes code) is a different thing: a **gVisor**-isolated Kubernetes
+> pod managed by `module-coding`. See [`docs/SANDBOX.md`](SANDBOX.md) — the
+> source of truth for the coding sandbox — and don't conflate the two.
+
 ---
 
 ## 2. Backend (Python / FastAPI)

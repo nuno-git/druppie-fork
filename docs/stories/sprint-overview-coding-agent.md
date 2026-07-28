@@ -38,6 +38,13 @@ De orchestrator importeert `AgentV2` als `Agent` op 6 locaties in `druppie/execu
 
 ## 3. Sandbox Infrastructure
 
+> **⚠️ Superseded — see [`docs/SANDBOX.md`](../SANDBOX.md).** This section
+> describes the original per-agent **Docker/Sysbox** design. In production the
+> coding sandbox is now a **gVisor**-isolated Kubernetes pod (agent-sandbox
+> controller); Docker/Sysbox is only the *local dev* mode. The Sysbox /
+> Docker-in-Docker / resource details below remain accurate for docker mode,
+> but treat `docs/SANDBOX.md` as the source of truth for the runtime.
+
 Per-agent Docker containers via `druppie/mcp-servers/module-coding/`.
 
 ### Container Lifecycle

@@ -102,6 +102,12 @@ De nieuwe Agent class die alle agents via agent_runtime draait. De orchestrator 
 
 ### 3. Sandbox Infrastructure (`druppie/mcp-servers/module-coding/`)
 
+> **⚠️ Verouderd — zie [`docs/SANDBOX.md`](../SANDBOX.md).** De criteria
+> hieronder (o.a. SB-4 "Sysbox runtime voor Docker-in-Docker" en de resources)
+> beschrijven de oorspronkelijke **Docker/Sysbox**-opzet. In productie draait de
+> sandbox nu als **gVisor**-pod op Kubernetes; Docker/Sysbox is alleen nog de
+> lokale dev-modus. `docs/SANDBOX.md` is de bron van waarheid voor de runtime.
+
 #### Sandbox Container Lifecycle (`v1/tools.py`, 2762 regels)
 
 | # | Acceptatiecriterium | Status |

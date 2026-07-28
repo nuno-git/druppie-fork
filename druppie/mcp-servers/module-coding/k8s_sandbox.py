@@ -426,11 +426,11 @@ class K8sSandboxManager:
         RELATIVE temp name (absolute paths 500 on that endpoint; a relative
         name lands at ``/app/<name>``) and then moved into place. The previous
         approach piped base64 through ``bash -c``, but that passes the whole
-        payload as a single argv entry and silently fails for content larger
-        than ~96 KB (Linux ``MAX_ARG_STRLEN`` caps one argument at 128 KB, and
-        base64 adds ~33%). The upload endpoint has no such limit — it is the
-        same path used to ship the repo tar in — so large files and binary
-        bundles (git_fetch/git_pull) now round-trip correctly.
+        payload as a single argv entry, which fails (execve ``E2BIG``) for
+        content larger than ~96 KB (Linux ``MAX_ARG_STRLEN`` caps one argument
+        at 128 KB, and base64 adds ~33%). The upload endpoint has no such
+        limit — it is the same path used to ship the repo tar in — so large
+        files and binary bundles (git_fetch/git_pull) now round-trip correctly.
         """
         if isinstance(content, str):
             content = content.encode("utf-8")

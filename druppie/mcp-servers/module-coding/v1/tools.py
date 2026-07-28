@@ -498,6 +498,7 @@ async def _create_sandbox_container(
             "git_scope": scope,
             "session_id": session_id,
             "branch": branch,
+            "base_branch": branch,
             "created_at": handle.created_at,
             "last_activity": time.time(),
             "repo_name": repo_name,
@@ -694,6 +695,7 @@ async def _create_sandbox_container(
         "git_scope": scope,
         "session_id": session_id,
         "branch": branch,
+        "base_branch": branch,
         "created_at": time.time(),
         "repo_name": repo_name,
         "repo_owner": repo_owner or GITEA_ORG,
@@ -782,12 +784,23 @@ async def _resolve_container(
             entry = sandbox_containers[key]
             container_id = entry.get("container_id", entry["container_name"])
             if await _is_container_running(container_id):
-                rc, _, _ = await _exec_in_container(container_id, ["echo", "ok"], timeout=5)
-                if rc == 0:
+                # A single failed probe is often a transient setns / port-forward
+                # blip. Recreating on it triggers a fresh clone and discards the
+                # agent's uncommitted work, so re-probe a few times before
+                # concluding the sandbox is actually wedged.
+                alive = False
+                for probe in range(3):
+                    rc, _, _ = await _exec_in_container(container_id, ["echo", "ok"], timeout=5)
+                    if rc == 0:
+                        alive = True
+                        break
+                    if probe < 2:
+                        await asyncio.sleep(1)
+                if alive:
                     _touch_sandbox(key)
                     return entry["container_name"]
                 logger.warning(
-                    "Container %s running but exec failed (setns?), recreating",
+                    "Container %s running but exec failed 3x (setns?), recreating",
                     entry["container_name"],
                 )
             else:
@@ -848,7 +861,13 @@ async def _sandbox_session(
     net_lock = _get_network_lock(key)
     async with net_lock:
         await _sync_networks(container, agent_networks or [])
-        yield container
+        try:
+            yield container
+        finally:
+            # Refresh activity on completion too: a long op (build, full test
+            # suite) stamps last_activity only at start, so without this the
+            # watchdog could see it as idle the moment a slow call returns.
+            _touch_sandbox(key)
 
 
 async def _destroy_container(session_id: str, git_scope: str) -> None:
@@ -1918,6 +1937,10 @@ async def push_changes(
         )
         container = entry["container_name"]
         branch = entry.get("branch", "main")
+        # The branch the repo was cloned from is the base the bundle is thinned
+        # against and the prerequisite we prefetch on the host. It is NOT always
+        # "main" (e.g. update_core clones colab-dev), so use the recorded value.
+        base_branch = entry.get("base_branch") or "main"
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
         resolved_gitea_url = entry.get("gitea_url", GITEA_URL)
@@ -1956,11 +1979,11 @@ async def push_changes(
 
         rc, _, stderr = await _exec_in_container(
             container,
-            ["git", "bundle", "create", bundle_container_path, "HEAD", "^origin/main"],
+            ["git", "bundle", "create", bundle_container_path, "HEAD", f"^origin/{base_branch}"],
             timeout=120,
         )
         if rc != 0:
-            # Fallback: bundle everything (e.g. no origin/main reference)
+            # Fallback: bundle everything (e.g. no origin/<base_branch> reference)
             rc, _, stderr = await _exec_in_container(
                 container,
                 ["git", "bundle", "create", bundle_container_path, "--all"],
@@ -1986,13 +2009,14 @@ async def push_changes(
             # Fetch base branch from Gitea so prerequisites exist for bundle fetch
             push_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name, resolved_gitea_url)
             rc, _, stderr = await _docker_run(
-                ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "fetch", push_url, "main:refs/heads/main"],
+                ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "fetch", push_url,
+                 f"{base_branch}:refs/heads/{base_branch}"],
                 timeout=60,
             )
             if rc != 0:
                 logger.warning(
-                    "Base branch fetch failed (%s), proceeding with bundle anyway",
-                    stderr[:200],
+                    "Base branch (%s) fetch failed (%s), proceeding with bundle anyway",
+                    base_branch, stderr[:200],
                 )
 
             rc, _, stderr = await _docker_run(

@@ -92,8 +92,8 @@ exercises end to end.
 2. **Edit** — the agent uses `read_file` / `write_file` / `edit_file` / `bash`.
    In k8s mode file writes stage the content via the SDK upload endpoint under a
    relative temp name and `mv` it into place (absolute paths 500 on that
-   endpoint; the older base64-through-`bash -c` approach silently truncated
-   files larger than ~96 KB). Binary reads (e.g. git bundles) still round-trip
+   endpoint; the older base64-through-`bash -c` approach failed with execve
+   `E2BIG` for files larger than ~96 KB). Binary reads (e.g. git bundles) still round-trip
    via `base64` in the shell.
 
 3. **`push_changes`** (`tools.py`)
