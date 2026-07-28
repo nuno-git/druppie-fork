@@ -13,6 +13,7 @@ For deployment management (stop/restart/logs), see deployments.py.
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import structlog
@@ -141,6 +142,7 @@ async def get_project(
 
 class DeleteProjectsRequest(BaseModel):
     """Body for project deletion."""
+
     project_ids: list[UUID] | None = None
 
 
@@ -295,13 +297,18 @@ async def get_project_file_changes(
     client = GiteaClient()
     try:
         commits_result = await client.list_commits_for_path(
-            project.repo_name, path, branch=branch or "main", limit=2,
+            project.repo_name,
+            path,
+            branch=branch or "main",
+            limit=2,
         )
         commits = commits_result.get("commits") if commits_result.get("success") else []
         if not commits:
             return ProjectFileChangesResponse(
-                path=path, branch=branch or "main",
-                added_identifiers=[], removed_identifiers=[],
+                path=path,
+                branch=branch or "main",
+                added_identifiers=[],
+                removed_identifiers=[],
             )
 
         # Read at the latest commit
@@ -309,10 +316,12 @@ async def get_project_file_changes(
         current = await client.get_file(project.repo_name, path, branch=latest["sha"])
         if not current.get("success") or not current.get("content"):
             return ProjectFileChangesResponse(
-                path=path, branch=branch or "main",
+                path=path,
+                branch=branch or "main",
                 last_commit_sha=latest["sha"],
                 last_commit_message=latest["message"],
-                added_identifiers=[], removed_identifiers=[],
+                added_identifiers=[],
+                removed_identifiers=[],
             )
 
         # Read at the previous commit (if any)
@@ -362,3 +371,57 @@ async def get_project_dependencies(
         }
         for d in deps
     ]
+
+
+DESIGN_DOC_TYPES = {
+    "functional-design": ("functional_design", "Functioneel Ontwerp"),
+    "technical-design": ("technical_design", "Technisch Ontwerp"),
+    "technical-research": ("technical_research", "Technisch Onderzoek"),
+}
+
+
+@router.get("/projects/{project_id}/design-pdf")
+async def get_design_pdf(
+    project_id: UUID,
+    path: str = Query(..., description="Markdown file path (e.g. docs/functional-design.md)"),
+    db: Session = Depends(get_db),
+    service: ProjectService = Depends(get_project_service),
+    user: dict = Depends(get_current_user),
+):
+    """Generate a Rijnland-branded PDF from a markdown design document."""
+    from pathlib import Path as P
+
+    from druppie.services.pdf_render_service import PdfRenderService
+
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    project = service.get_detail(project_id, user_id, user_roles)
+    if not project.repo_name or not project.repo_owner:
+        raise ValidationError("Project has no Gitea repository", field="project_id")
+
+    stem = P(path).stem
+    doc_type, default_title = DESIGN_DOC_TYPES.get(
+        stem, ("core_documentation", stem.replace("-", " ").title())
+    )
+    title = f"{default_title} — {project.name}"
+
+    pdf_service = PdfRenderService(db=db)
+    pdf_bytes, _, error = await pdf_service.render_markdown_pdf(
+        project_id=project_id,
+        repo_name=project.repo_name,
+        repo_owner=project.repo_owner,
+        markdown_path=path,
+        document_type=doc_type,
+        title=title,
+        project_name=project.name,
+        branches=["main"],
+    )
+    if error:
+        raise ValidationError(f"PDF generation failed: {error}", field="path")
+
+    filename = f"{stem}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

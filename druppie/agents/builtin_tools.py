@@ -34,7 +34,12 @@ logger = structlog.get_logger()
 # =============================================================================
 
 # Default builtin tools every agent gets (unless overridden in YAML)
-DEFAULT_BUILTIN_TOOLS = ["done", "hitl_ask_question", "hitl_ask_multiple_choice_question", "read_attachment"]
+DEFAULT_BUILTIN_TOOLS = [
+    "done",
+    "hitl_ask_question",
+    "hitl_ask_multiple_choice_question",
+    "read_attachment",
+]
 
 # All builtin tool definitions, keyed by tool name
 BUILTIN_TOOL_DEFS: dict[str, dict] = {
@@ -336,6 +341,45 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
+    "make_design_pdf": {
+        "type": "function",
+        "function": {
+            "name": "make_design_pdf",
+            "description": (
+                "Generate a Rijnland corporate-identity PDF from a markdown design document. "
+                "The tool reads the markdown file from Gitea, converts it to Typst with the "
+                "Rijnland template (headings, tables, branding, watermark), compiles to PDF, "
+                "and returns a downloadable attachment. "
+                "IMPORTANT: push_changes MUST be called BEFORE this tool so the markdown is in Gitea."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "markdown_path": {
+                        "type": "string",
+                        "description": "Workspace-relative path to the .md file (e.g. 'docs/functional-design.md')",
+                    },
+                    "document_type": {
+                        "type": "string",
+                        "description": "One of: functional_design, technical_design, technical_research, core_documentation",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Document title for the cover page (e.g. 'Functioneel Ontwerp — Klachtenregistratie')",
+                    },
+                    "project_name": {
+                        "type": "string",
+                        "description": "Project name shown in header/footer",
+                    },
+                    "output_pdf_name": {
+                        "type": "string",
+                        "description": "Optional custom PDF filename. Defaults to '{stem}.pdf'",
+                    },
+                },
+                "required": ["markdown_path", "document_type", "title", "project_name"],
+            },
+        },
+    },
     "execute_coding_task": {
         "type": "function",
         "function": {
@@ -458,10 +502,10 @@ def get_builtin_tools(tool_names: list[str]) -> list[dict]:
     return tools
 
 
-
 # =============================================================================
 # INTENT TOOL IMPLEMENTATION
 # =============================================================================
+
 
 async def set_intent(
     intent: str,
@@ -608,7 +652,9 @@ async def set_intent(
                         # Push project template into the new repo
                         from pathlib import Path
 
-                        template_dir = Path(__file__).resolve().parent.parent / "templates" / "project"
+                        template_dir = (
+                            Path(__file__).resolve().parent.parent / "templates" / "project"
+                        )
                         if template_dir.is_dir():
                             template_result = await gitea.push_template(
                                 repo=repo_name,
@@ -644,7 +690,7 @@ async def set_intent(
             return {
                 "success": False,
                 "error": f"Failed to create Git repository: {gitea_error}. "
-                         "Check that Gitea is running and configured (run: ./setup_dev.sh infra).",
+                "Check that Gitea is running and configured (run: ./setup_dev.sh infra).",
                 "project_id": str(new_project.id),
                 "project_name": project_name,
             }
@@ -836,10 +882,12 @@ async def make_plan(
         steps = [s for s in steps if s.get("agent_id") != "planner"]
         has_summarizer = any(s.get("agent_id") == "summarizer" for s in steps)
         if not has_summarizer:
-            steps.append({
-                "agent_id": "summarizer",
-                "prompt": "Summarize what was accomplished for the user. Note: the iteration limit was reached, so this is a forced finalization.",
-            })
+            steps.append(
+                {
+                    "agent_id": "summarizer",
+                    "prompt": "Summarize what was accomplished for the user. Note: the iteration limit was reached, so this is a forced finalization.",
+                }
+            )
 
     # Cancel any stale pending runs from a previous plan
     cancelled_count = execution_repo.cancel_pending_runs(session_id)
@@ -876,11 +924,15 @@ async def make_plan(
             planned_prompt=step_prompt,
             sequence_number=seq,
         )
-        planned_steps.append({
-            "sequence": seq,
-            "agent_id": step_agent_id,
-            "prompt_preview": step_prompt[:100] + "..." if len(step_prompt) > 100 else step_prompt,
-        })
+        planned_steps.append(
+            {
+                "sequence": seq,
+                "agent_id": step_agent_id,
+                "prompt_preview": (
+                    step_prompt[:100] + "..." if len(step_prompt) > 100 else step_prompt
+                ),
+            }
+        )
 
     # Build full plan view: completed runs + new pending runs
     completed_steps = [
@@ -912,6 +964,7 @@ async def make_plan(
 # MESSAGE TOOL IMPLEMENTATION
 # =============================================================================
 
+
 async def create_message(
     content: str,
     session_id: UUID,
@@ -938,13 +991,12 @@ async def create_message(
     try:
         from druppie.repositories import SessionRepository
         from druppie.core.translation import get_translation_service
+
         session_repo = SessionRepository(execution_repo.db)
         session = session_repo.get_by_id(session_id)
         if session and session.language and session.language != "en":
             translator = get_translation_service()
-            display_content = await translator.translate_from_english(
-                content, session.language
-            )
+            display_content = await translator.translate_from_english(content, session.language)
             if display_content != content:
                 logger.info(
                     "create_message_translated",
@@ -981,7 +1033,8 @@ async def create_message(
     linked_count = 0
     if attachment_ids:
         raw_ids = [
-            aid for aid in attachment_ids
+            aid
+            for aid in attachment_ids
             if aid and isinstance(aid, str) and aid.lower() not in ("null", "none", "")
         ]
         if raw_ids:
@@ -993,6 +1046,7 @@ async def create_message(
             )
             try:
                 from druppie.repositories import AttachmentRepository
+
                 att_repo = AttachmentRepository(execution_repo.db)
                 att_ids = [UUID(aid) for aid in raw_ids]
                 att_repo.link_to_message(
@@ -1233,6 +1287,7 @@ async def done(
 # SKILL TOOL IMPLEMENTATION
 # =============================================================================
 
+
 async def invoke_skill(
     skill_name: str,
     session_id: UUID,
@@ -1307,6 +1362,7 @@ async def invoke_skill(
 # SANDBOX CODING TASK IMPLEMENTATION
 # =============================================================================
 
+
 async def execute_sandbox_coding_task(
     args: dict,
     session_id: UUID,
@@ -1327,6 +1383,7 @@ async def execute_sandbox_coding_task(
 
     task = args.get("task", "")
     from druppie.core.config import DEFAULT_SANDBOX_AGENT
+
     raw_agent = args.get("agent")
     raw_repo_target = args.get("repo_target")
 
@@ -1337,6 +1394,7 @@ async def execute_sandbox_coding_task(
     # allowed value rather than falling through to "project" / DEFAULT_SANDBOX_AGENT
     # and hitting the validation below.
     from druppie.agents.runtime import Agent as AgentLoader
+
     definition = None
     constraints = None
     try:
@@ -1350,14 +1408,22 @@ async def execute_sandbox_coding_task(
 
     if raw_agent is not None:
         agent = raw_agent
-    elif constraints and constraints.allowed_agents and DEFAULT_SANDBOX_AGENT not in constraints.allowed_agents:
+    elif (
+        constraints
+        and constraints.allowed_agents
+        and DEFAULT_SANDBOX_AGENT not in constraints.allowed_agents
+    ):
         agent = constraints.allowed_agents[0]
     else:
         agent = DEFAULT_SANDBOX_AGENT
 
     if raw_repo_target is not None:
         repo_target = raw_repo_target
-    elif constraints and constraints.allowed_repo_targets and "project" not in constraints.allowed_repo_targets:
+    elif (
+        constraints
+        and constraints.allowed_repo_targets
+        and "project" not in constraints.allowed_repo_targets
+    ):
         repo_target = constraints.allowed_repo_targets[0]
     else:
         repo_target = "project"
@@ -1372,7 +1438,10 @@ async def execute_sandbox_coding_task(
                     f"{constraints.allowed_agents}. Got: '{agent}'"
                 ),
             }
-        if constraints.allowed_repo_targets is not None and repo_target not in constraints.allowed_repo_targets:
+        if (
+            constraints.allowed_repo_targets is not None
+            and repo_target not in constraints.allowed_repo_targets
+        ):
             return {
                 "success": False,
                 "error": (
@@ -1386,6 +1455,7 @@ async def execute_sandbox_coding_task(
 
     # Get project context from the session via repositories
     from druppie.repositories import SessionRepository, ProjectRepository
+
     db = execution_repo.db
     session_repo = SessionRepository(db)
     session = session_repo.get_by_id(session_id)
@@ -1397,9 +1467,13 @@ async def execute_sandbox_coding_task(
 
     # Validate repo_target value
     if repo_target not in VALID_REPO_TARGETS:
-        return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
+        return {
+            "success": False,
+            "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}.",
+        }
 
     from druppie.opencode.repo_context import resolve_repo_context
+
     try:
         repo_ctx = resolve_repo_context(repo_target, session_id, db)
     except ValueError as e:
@@ -1476,6 +1550,7 @@ async def execute_sandbox_coding_task(
 # =============================================================================
 # TEST REPORT TOOL IMPLEMENTATION
 # =============================================================================
+
 
 async def test_report(
     iteration: int,
@@ -1609,7 +1684,11 @@ async def _resolve_typ_file(
                 timeout=30,
             )
         except Exception:
-            logger.warning("_resolve_typ_file_git_pull_failed", session_id=str(session.id), workspace=str(workspace_path))
+            logger.warning(
+                "_resolve_typ_file_git_pull_failed",
+                session_id=str(session.id),
+                workspace=str(workspace_path),
+            )
             pass
 
     if not typ_file.exists():
@@ -1653,10 +1732,10 @@ async def _resolve_typ_file(
 
                 image_refs: set[str] = set()
 
-                for match in re.finditer(r'[#\s]*image\s*\(', file_content):
+                for match in re.finditer(r"[#\s]*image\s*\(", file_content):
                     start = match.end()
-                    rest = file_content[start:start + 500]
-                    quoted = re.search(r'''["']([^"']+)["']''', rest)
+                    rest = file_content[start : start + 500]
+                    quoted = re.search(r"""["']([^"']+)["']""", rest)
                     if quoted:
                         img_path = quoted.group(1).strip()
                         if img_path.startswith(("http://", "https://", "/")):
@@ -1688,7 +1767,9 @@ async def _resolve_typ_file(
                     if img_ref.startswith("docs/"):
                         gitea_img_path = img_ref
                     else:
-                        gitea_img_path = str(typ_parent / img_ref) if typ_parent != Path(".") else img_ref
+                        gitea_img_path = (
+                            str(typ_parent / img_ref) if typ_parent != Path(".") else img_ref
+                        )
 
                     try:
                         img_res = await gitea.get_file(
@@ -1758,6 +1839,7 @@ async def make_pdf_document(
         return {"success": False, "error": "Session has no project"}
 
     from druppie.repositories import ProjectRepository
+
     project_repo = ProjectRepository(execution_repo.db)
     project = project_repo.get_by_id(session.project_id)
     if not project or not project.repo_name or not project.repo_owner:
@@ -1822,6 +1904,100 @@ async def make_pdf_document(
     }
 
 
+async def make_design_pdf(
+    markdown_path: str,
+    document_type: str,
+    title: str,
+    project_name: str,
+    output_pdf_name: str | None,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Generate a Rijnland-branded PDF from a markdown design document.
+
+    Reads markdown from Gitea, converts to Typst with the Rijnland
+    template, compiles, and returns a downloadable attachment.
+    """
+    from druppie.repositories import ProjectRepository, SessionRepository
+    from druppie.services.pdf_render_service import PdfRenderService
+
+    db = execution_repo.db
+    session_repo = SessionRepository(db)
+    session = session_repo.get_by_id(session_id)
+    if not session:
+        return {"success": False, "error": f"Session {session_id} not found"}
+
+    if not session.project_id:
+        return {"success": False, "error": "Session has no project"}
+
+    project_repo = ProjectRepository(db)
+    project = project_repo.get_by_id(session.project_id)
+    if not project or not project.repo_name or not project.repo_owner:
+        return {"success": False, "error": "Project has no Gitea repository configured"}
+
+    branches = ["main", f"session-{str(session.id)[:8]}"]
+    service = PdfRenderService(db=db)
+    pdf_bytes, storage_path, error = await service.render_markdown_pdf(
+        project_id=session.project_id,
+        repo_name=project.repo_name,
+        repo_owner=project.repo_owner,
+        markdown_path=markdown_path,
+        document_type=document_type,
+        title=title,
+        project_name=project_name,
+        branches=branches,
+        output_pdf_name=output_pdf_name,
+    )
+    if error:
+        return {"success": False, "error": error}
+
+    pdf_name = output_pdf_name or f"{Path(markdown_path).stem}.pdf"
+    pdf_name = pdf_name.replace(" ", "_").replace("/", "_")
+
+    attachment_id = None
+    attachment_error = None
+    try:
+        from druppie.repositories import AttachmentRepository
+
+        att_repo = AttachmentRepository(db)
+        attachment = att_repo.create(
+            original_filename=pdf_name,
+            content_type="application/pdf",
+            file_size=len(pdf_bytes),
+            storage_path=storage_path,
+            session_id=session_id,
+            owner_user_id=session.user_id,
+        )
+        db.flush()
+        attachment_id = str(attachment.id)
+    except Exception as e:
+        attachment_error = str(e)
+        logger.error(
+            "design_pdf_attachment_failed",
+            session_id=str(session_id),
+            pdf_name=pdf_name,
+            error=attachment_error,
+            exc_info=True,
+        )
+
+    if not attachment_id:
+        return {
+            "success": False,
+            "error": f"PDF compiled but attachment failed: {attachment_error or 'unknown'}",
+            "pdf_path": pdf_name,
+            "pdf_size": len(pdf_bytes),
+        }
+
+    return {
+        "success": True,
+        "pdf_path": pdf_name,
+        "pdf_size": len(pdf_bytes),
+        "message": f"Rijnland PDF generated: {pdf_name} ({len(pdf_bytes)} bytes)",
+        "attachment_id": attachment_id,
+    }
+
+
 async def verify_typst(
     typ_path: str,
     session_id: UUID,
@@ -1855,6 +2031,7 @@ async def verify_typst(
 # =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
+
 
 async def execute_builtin(
     tool_name: str,
@@ -1934,6 +2111,17 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
+    elif tool_name == "make_design_pdf":
+        return await make_design_pdf(
+            markdown_path=args.get("markdown_path", ""),
+            document_type=args.get("document_type", "functional_design"),
+            title=args.get("title", "Design Document"),
+            project_name=args.get("project_name", ""),
+            output_pdf_name=args.get("output_pdf_name"),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
     elif tool_name == "execute_coding_task":
         return await execute_sandbox_coding_task(
             args=args,
@@ -1982,6 +2170,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "create_message",
         "invoke_skill",
         "make_pdf_document",
+        "make_design_pdf",
         "verify_typst",
         "execute_coding_task",
         "test_report",

@@ -55,7 +55,8 @@ Last updated: 2026-07-15
 - Sandbox — Investigate Rootless Docker (dockerd-rootless) for E2E Testing
 - ~~Document Formatter — Agent Pipeline Integration (Phase 2)~~ ✅ DONE
 - ~~Document Formatter — Mermaid/ArchiMate Rendering Inside PDFs~~ ✅ DONE (Mermaid via @preview/mmdr:0.2.2; ArchiMate via Python SVG export)
-- Document Formatter — Database Persistence & Download API (render cache exists; full document domain model + REST endpoints still needed)
+- Document Formatter — Markdown-to-Typst Conversion & Frontend Download ✅ DONE (`markdown_to_typst()`, `make_design_pdf` tool, design-pdf API endpoint, frontend download routing)
+- Document Formatter — Full Document Domain Model & REST API (design-pdf endpoint exists; full `DocumentSummary`/`DocumentDetail` domain models still needed)
 - ~~Document Formatter — Replace Lato with Neusa Next Std (if licensed)~~ ✅ DONE (Neusa Next Pro fonts added alongside Lato)
 
 ---
@@ -597,25 +598,32 @@ Security review findings from the Entra ID broker implementation. These are know
 
 ### Document Formatter (PDF Generation)
 
-**Status:** Phase 2 is live. Agents write native Typst (`.typ`) directly; the old Markdown→cmarker pipeline is gone.
+**Status:** Phase 3 is live. Two authoring paths: native Typst (`.typ`) and markdown (`.md` via `markdown_to_typst()` converter).
 
 **Location:**
-- `druppie/services/document_formatter_service.py` — Typst CLI wrapper (`compile_typ`, `verify_typ`)
-- `druppie/services/pdf_render_service.py` — Render cache (`PdfRenderService.get_or_create_pdf()`)
-- `druppie/agents/builtin_tools.py` — `make_pdf_document`, `verify_typst` builtin tools
+- `druppie/services/document_formatter_service.py` — Typst CLI wrapper (`compile_typ`, `verify_typ`) + `markdown_to_typst()` converter + `wrap_with_rijnland_template()`
+- `druppie/services/pdf_render_service.py` — Render cache (`PdfRenderService.get_or_create_pdf()`, `PdfRenderService.render_markdown_pdf()`)
+- `druppie/agents/builtin_tools.py` — `make_pdf_document`, `make_design_pdf`, `verify_typst` builtin tools
 - `druppie/agents/definitions/documenter.yaml` — Agent instructions for Typst authoring + PDF export
 - `druppie/templates/documents/rijnland.typ` — Corporate identity template
+- `druppie/api/routes/projects.py` — `GET /api/projects/{id}/design-pdf` endpoint
+- `frontend/src/utils/downloadDesign.js` — Frontend design doc PDF routing
+- `frontend/src/services/api.js` — `downloadDesignPdf()` API client function
 - Tests: `test_document_formatter.py` (16 tests), `test_pdf_render_service.py` (4 tests), `test_builtin_tools.py` (2 tests)
 
 **Current state:**
-- Agents write native `.typ` files using the Rijnland template (`#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`).
-- `make_pdf_document` uses `PdfRenderService`, which reads source from Gitea (not local workspace), compiles via Typst, and caches renders keyed by Git blob SHA in `pdf_renders` table + `/app/workspace/uploads/pdf-cache/`.
+- Agents write native `.typ` files OR standard markdown. Markdown is converted to Typst automatically.
+- `make_pdf_document` handles native Typst; `make_design_pdf` handles markdown via `render_markdown_pdf()`.
+- `markdown_to_typst()` converts headings, bold/italic, tables (equal-width columns, escaped special chars, breakable), mermaid (via `@preview/mmdr:0.2.2`), archimate SVG references, code blocks, links, images, blockquotes, horizontal rules.
+- Frontend routes design doc downloads through `GET /api/projects/{id}/design-pdf`, bypassing browser-side rendering.
+- Tables are breakable across pages (all document types).
 - Mermaid diagrams render via `@preview/mmdr:0.2.2` Typst package (no Chromium/Node.js).
 - ArchiMate diagrams export to SVG via pure-Python `svg_export.py` in `module-archimate/v1/` on `save_model`; embedded in Typst via `#image("docs/diagrams/...")`.
 - Font stack: Lato (Google Fonts, fallback) + Neusa Next Pro (brand fonts, installed in `assets/fonts/`).
 
-**Remaining work:**
-- Full document domain model (`DocumentSummary`/`DocumentDetail`) and REST endpoints (`GET /api/projects/{id}/documents`, etc.) for direct user-initiated PDF generation without an agent.
-- Frontend "Download PDF" button in chat timeline or project page.
+**Known limitation:** Mermaid ER diagrams rendered by mmdr have tight element spacing (e.g. overlapping labels). The mmdr WASM plugin's layout engine does not expose configuration for ER diagram spacing; `%%{init: ...}%%` directives and layout parameters have no effect.
 
-**Priority:** Medium — agent-driven PDF generation works; REST API purely adds convenience.
+**Remaining work:**
+- Full document domain model (`DocumentSummary`/`DocumentDetail`) and REST endpoints (`GET /api/projects/{id}/documents`, etc.) for listing all project documents.
+
+**Priority:** Low — both authoring paths and frontend download work. Only the document listing API remains.

@@ -5,7 +5,12 @@
  * so they never enter the initial bundle.
  */
 
+import { downloadDesignPdf } from '../services/api'
 import { getAgentConfig } from './agentConfig'
+
+const DESIGN_DOC_STEMS = new Set([
+  'functional-design', 'technical-design', 'technical-research',
+])
 
 const basename = (path) => path?.split('/').pop() || 'document'
 
@@ -430,6 +435,17 @@ export function buildChatTranscript(sessionData) {
 }
 
 export async function downloadContentAsPdf(markdownContent, path, repoContext = null) {
+  // For design documents with a project context, use the backend Rijnland PDF
+  const stem = path?.split('/').pop()?.replace(/\.(md|pdf)$/, '') || ''
+  if (repoContext?.id && DESIGN_DOC_STEMS.has(stem)) {
+    try {
+      await downloadDesignPdf(repoContext.id, path.replace(/\.pdf$/, '.md'))
+      return
+    } catch (err) {
+      console.warn('[PDF] Rijnland backend PDF failed, falling back to browser rendering:', err.message)
+    }
+  }
+
   const [{ marked }, { default: DOMPurify }] = await Promise.all([
     import('marked'),
     import('dompurify'),

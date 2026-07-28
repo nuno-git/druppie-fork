@@ -247,11 +247,20 @@ Consumed by the **Product Owner** agent. Isolation is pinned by
 
 ### 2.6 Document Formatter Service
 
-PDF compilation from native **Typst** source files authored by agents. The Documenter agent writes `.typ` files using the Rijnland corporate identity template, pushes them to Gitea, and calls `builtin:make_pdf_document` to generate PDFs.
+PDF generation from agent-authored content. Two authoring paths:
 
-**Flow:** Agent writes `.typ` file → pushes to Gitea → calls `builtin:make_pdf_document` → `PdfRenderService.get_or_create_pdf()` fetches source from Gitea → checks render cache (`pdf_renders` table keyed by Git blob SHA) → cache hit returns instantly; cache miss compiles via `DocumentFormatterService.compile_typ()` → stores PDF → creates `MessageAttachment` record → user downloads via `/api/attachments/{id}`.
+1. **Native Typst** — agents write `.typ` files, call `builtin:make_pdf_document`.
+2. **Markdown** — agents write standard markdown, call `builtin:make_design_pdf`. The platform converts via `markdown_to_typst()`.
 
-**Template library:** `druppie/templates/documents/rijnland.typ` — exposes a `rijnland_doc(body, ...)` function with parameters for document type (FO, TO, technical_research, core_documentation), title, status, TOC, watermark, section breaks, and author. Agents import it with `#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`. `base.typ` remains as a backward-compat alias but the Markdown conversion pipeline is gone.
+**Flow (native Typst):** Agent writes `.typ` file → pushes to Gitea → calls `builtin:make_pdf_document` → `PdfRenderService.get_or_create_pdf()` fetches source from Gitea → checks render cache (`pdf_renders` table keyed by Git blob SHA) → cache hit returns instantly; cache miss compiles via `DocumentFormatterService.compile_typ()` → stores PDF → creates `MessageAttachment` record → user downloads via `/api/attachments/{id}`.
+
+**Flow (markdown):** Agent writes `.md` file → pushes to Gitea → calls `builtin:make_design_pdf` → `PdfRenderService.render_markdown_pdf()` fetches markdown from Gitea → `markdown_to_typst()` converts to Typst → `wrap_with_rijnland_template()` adds template preamble → compiles and caches → creates `MessageAttachment`.
+
+**Frontend design-PDF download:** `GET /api/projects/{id}/design-pdf?path=docs/functional-design.md` — the frontend detects design document stems (`functional-design`, `technical-design`, `technical-research`) and calls this endpoint directly, bypassing the agent pipeline. Implemented in `frontend/src/utils/downloadDesign.js` and `frontend/src/services/api.js`.
+
+**Markdown-to-Typst converter:** `document_formatter_service.py:markdown_to_typst()` converts markdown to native Typst. Handles headings, bold/italic (sentinel-based to prevent double-conversion), tables (equal-width `1fr` columns with escaped `#`/`@`/`$`/`\`), mermaid fenced blocks (via `@preview/mmdr:0.2.2` import), archimate fenced blocks (parsed `view-id=X` → `#image("docs/diagrams/X.svg")`), code blocks, links, images, blockquotes, and horizontal rules. Helper `wrap_with_rijnland_template()` prepends the Rijnland template import and show rule.
+
+**Template library:** `druppie/templates/documents/rijnland.typ` — exposes a `rijnland_doc(body, ...)` function with parameters for document type (FO, TO, technical_research, core_documentation), title, status, TOC, watermark, section breaks, and author. Agents import it with `#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`.
 
 **Rijnland corporate identity applied by the template:**
 
@@ -263,7 +272,7 @@ PDF compilation from native **Typst** source files authored by agents. The Docum
 - Grid-based margins: 25mm sides, 32mm bottom
 - Draft watermark: semi-transparent rotated text in **foreground** layer (`transparentize(50%)`) when `include_watermark == true && status != "FINAL"` — visible above all content including title page
 - Table of contents: optional via `include_toc`
-- Tables: Rijnland blue header row, striped rows, rounded corners
+- Tables: Rijnland blue header row, striped rows, rounded corners, breakable across pages
 - Code blocks: light blue background (`#E9EFFA`), rounded corners
 - Footer: Full-bleed dijk-en-sloot shape (`dijkEnSloot.png`) above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page / total". Excluded from title page.
 - Diagram rendering: Mermaid diagrams are rendered inline by the `@preview/mmdr:0.2.2` Typst package (pure Typst, no Chromium/Node.js). ArchiMate diagrams export to SVG via the `archimate:save_model` MCP tool (`module-archimate/v1/svg_export.py`, pure Python) and are embedded via `#image()` in the Typst source.

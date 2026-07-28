@@ -1164,7 +1164,10 @@ The choice between ArchiMate and Mermaid, plus the full element/relationship voc
 
 ## Document Formatter (PDF Generation)
 
-Druppie converts agent-authored **Typst** (`.typ`) source files into professionally formatted PDFs that follow the Rijnland corporate identity (Huisstijlhandboek). Agents write native Typst directly — the old Markdown pipeline was replaced in Phase 2.
+Druppie generates professionally formatted PDFs that follow the Rijnland corporate identity (Huisstijlhandboek). Two authoring paths are supported:
+
+1. **Native Typst** — agents write `.typ` files directly using the Rijnland template and call `builtin:make_pdf_document`.
+2. **Markdown** — agents write standard markdown and call `builtin:make_design_pdf`. The platform converts markdown to Typst via `markdown_to_typst()`, wraps it in the Rijnland template, and compiles to PDF.
 
 ### Supported Document Types
 
@@ -1177,13 +1180,39 @@ Druppie converts agent-authored **Typst** (`.typ`) source files into professiona
 
 ### How It Works
 
-1. The **Documenter agent** writes a native `.typ` file using the Rijnland template (`#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`).
-2. The agent **pushes to Gitea** — this is mandatory because `PdfRenderService` reads source from Gitea, not the local workspace.
+#### Path 1: Native Typst (`make_pdf_document`)
+
+1. The **Documenter agent** writes a native `.typ` file using `#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`.
+2. The agent **pushes to Gitea** — mandatory because `PdfRenderService` reads source from Gitea.
 3. The agent calls `builtin:make_pdf_document` with the `.typ` path.
-4. `PdfRenderService.get_or_create_pdf()` fetches the source from Gitea, builds a cache key from `(project_id, typ_path, git_blob_sha)`, and checks the `pdf_renders` table.
+4. `PdfRenderService.get_or_create_pdf()` fetches the source, builds a cache key from `(project_id, typ_path, git_blob_sha)`, and checks the `pdf_renders` table.
    - **Cache hit** → serves the cached PDF instantly.
-   - **Cache miss** → `DocumentFormatterService.compile_typ()` compiles via Typst CLI subprocess; the PDF is written to `/app/workspace/uploads/pdf-cache/` and the cache record is inserted.
+   - **Cache miss** → `DocumentFormatterService.compile_typ()` compiles via Typst CLI; PDF is written to `/app/workspace/uploads/pdf-cache/` and the cache record is inserted.
 5. A `MessageAttachment` record is created so the frontend serves the PDF via `/api/attachments/{id}`.
+
+#### Path 2: Markdown (`make_design_pdf`)
+
+1. The **Documenter agent** writes a standard markdown design document and pushes to Gitea.
+2. The agent calls `builtin:make_design_pdf` with the markdown path, document type, title, and project name.
+3. `PdfRenderService.render_markdown_pdf()` fetches the markdown from Gitea, converts it to Typst via `markdown_to_typst()`, wraps it with the Rijnland template via `wrap_with_rijnland_template()`, compiles, and caches.
+4. A `MessageAttachment` record is created for the PDF.
+
+#### Frontend Download
+
+Users can download design PDFs directly from the frontend without an agent:
+- The frontend detects design document stems (`functional-design`, `technical-design`, `technical-research`) and routes downloads through `GET /api/projects/{id}/design-pdf?path=...`.
+- The backend fetches the markdown from Gitea, converts and compiles on demand, and returns the PDF.
+
+### Markdown-to-Typst Conversion
+
+The `markdown_to_typst()` function in `document_formatter_service.py` converts standard markdown to native Typst syntax:
+
+- **Headings** (`#`→`=`, `##`→`==`, etc.)
+- **Bold/italic** with sentinel-based approach to prevent double-conversion of nested formatting
+- **Tables** with equal-width `1fr` columns, escaped special characters (`#`, `@`, `$`, `\`), and breakable pagination
+- **Mermaid diagrams** via `@preview/mmdr:0.2.2` — fenced ` ```mermaid ` blocks become `#mermaid("...")` calls
+- **ArchiMate diagrams** — fenced ` ```archimate ` blocks with `view-id=X` become `#image("docs/diagrams/X.svg")`
+- **Code blocks**, **links**, **images**, **blockquotes**, **horizontal rules**
 
 ### Corporate Identity Applied
 
@@ -1198,7 +1227,7 @@ Druppie converts agent-authored **Typst** (`.typ`) source files into professiona
 ### Template Features
 
 - **Table of contents:** Optional, auto-generated from Typst headings (`include_toc: true`).
-- **Tables:** Blue header row with white text, subtle striped rows, rounded corners.
+- **Tables:** Blue header row with white text, subtle striped rows, rounded corners. All tables are breakable across pages.
 - **Code blocks:** Light blue background (`#E9EFFA`), rounded corners, monospace font.
 - **Blockquotes:** Light sand background with a Rijnland-blue left border.
 - **Mermaid diagrams:** Rendered inline by the `@preview/mmdr:0.2.2` Typst package (no Chromium/Node.js). Agents embed them with `#mermaid("...")`.
@@ -1208,12 +1237,14 @@ Druppie converts agent-authored **Typst** (`.typ`) source files into professiona
 
 ### Current Phase
 
-Phase 2 is **live**. The agent pipeline is wired:
-- **Documenter agent** (`documenter.yaml`) has instructions for native Typst authoring and a step-by-step PDF export workflow.
-- **Builtin tools** `make_pdf_document` and `verify_typst` are registered in `builtin_tools.py` and exposed to the Documenter agent.
-- **`PdfRenderService`** (`pdf_render_service.py`) provides render caching keyed by Git blob SHA so identical source revisions compile once.
-- **22 pytest tests** cover compilation, watermark logic, document types, Typst syntax validation, timeout/failure branches, cache hit/miss, and image dependency resolution over Gitea.
+Phase 3 — **Markdown path and frontend download**. Building on Phase 2's native Typst pipeline:
+- **`make_design_pdf` builtin tool** generates PDFs from markdown design documents. The Documenter agent can now write markdown instead of native Typst.
+- **`markdown_to_typst()` converter** handles headings, tables, bold/italic, mermaid diagrams, archimate references, code blocks, links, images, blockquotes, and horizontal rules.
+- **`PdfRenderService.render_markdown_pdf()`** provides the full pipeline: fetch markdown from Gitea → convert → wrap with template → compile → cache.
+- **Design PDF API endpoint** `GET /api/projects/{id}/design-pdf` allows frontend-initiated PDF generation for design documents.
+- **Frontend download** routes design doc PDFs through the backend endpoint, bypassing browser-side rendering.
+- **Breakable tables** — all tables now paginate correctly across page boundaries.
 
 **Remaining work:**
-- Full `DocumentSummary`/`DocumentDetail` domain models and REST endpoints for direct user-initiated PDF generation without an agent.
-- Frontend "Download PDF" convenience button outside the chat flow.
+- Full `DocumentSummary`/`DocumentDetail` domain models and REST endpoints for listing all documents.
+- Mermaid ER diagram spacing — the mmdr WASM package renders ER diagrams with tight element spacing; no workaround available within mmdr's layout engine.
