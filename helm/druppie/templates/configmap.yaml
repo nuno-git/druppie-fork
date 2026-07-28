@@ -109,6 +109,13 @@ data:
   DRUPPIE_SANDBOX_MODE: "k8s"
   SANDBOX_NAMESPACE: "{{ .Values.global.instance }}-sandbox"
   SANDBOX_WARMPOOL: "{{ .Values.global.instance }}-warmpool"
+  # Per-tier warm pools. MUST stay in lock-step with the chart's
+  # agentSandbox.gateway.enabled: when true, warmpool.yaml renders the three
+  # per-tier SandboxWarmPools ("{instance}-warmpool-{tier}") and k8s_sandbox.py
+  # must claim the tier-specific pool; when false, the single "{instance}-warmpool"
+  # is rendered and the code claims the plain base. This env var is what bridges
+  # the two flags (nil-safe: absent gateway -> "false").
+  DRUPPIE_SANDBOX_TIERS: "{{ if .Values.agentSandbox.gateway.enabled }}true{{ else }}false{{ end }}"
 {{- else }}
   DRUPPIE_SANDBOX_MODE: "docker"
 {{- end }}

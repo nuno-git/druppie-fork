@@ -125,6 +125,12 @@ init:
     repository: druppie-init
     tag: latest
 
+# Agent sandbox egress gateway — explicitly OFF for hetzner.
+# hetzner uses its own in-cluster Gitea; gateway feature excluded per decision.
+agentSandbox:
+  gateway:
+    enabled: false
+
 # Secrets — populated from values-hetzner.secrets.yaml (gitignored)
 secrets:
   zaiApiKey: ""

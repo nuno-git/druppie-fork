@@ -113,21 +113,72 @@ operation happens on the host.
 
 ---
 
-## Network reachability
+## Network reachability & the per-tier gateway
 
-What a gVisor sandbox pod can and cannot reach (from the SandboxTemplate egress
-rules + the gVisor netstack limitation):
+What a gVisor sandbox pod can reach depends on its **network tier** and on the
+`agentSandbox.gateway.enabled` feature flag.
 
-| Destination | Reachable from sandbox? | How / notes |
-|-------------|-------------------------|-------------|
-| **Gitea** (code) | ❌ No | `ClusterIP` — unreachable by gVisor. Handled host-side; code moves via git bundles. |
-| **Internet** (pip, npm, docs, public APIs) | ✅ Yes | Egress to `0.0.0.0/0:443` is allowed on the SandboxTemplate. |
-| **LLM** | ⚠️ Allowed, not verified | Egress rule permits the release-namespace backend pods on `:8000`. Not confirmed end-to-end from a gVisor sandbox — see `docs/sandbox-network-findings.md`. |
-| **Other modules** (filesearch, registry, …) | ❌ Not wired | These are `ClusterIP` services. The per-tier "modules gateway" that would bridge this was reverted (see `docs/specs/sandbox-modules-gateway-proposal.md`); the current tree has no path from the sandbox to module ClusterIPs. |
-| **Cluster DNS (CoreDNS)** | ❌ No | Pod uses `dnsPolicy: Default` (node resolver), not `ClusterFirst`. |
+### The feature flag
+
+`agentSandbox.gateway.enabled` (bool, **default `false`**) controls the whole
+per-tier + gateway machinery:
+
+- **`false`** (default; **`hetzner`** — it runs its own in-cluster Gitea): renders
+  EXACTLY the current single `SandboxTemplate` + single `SandboxWarmPool`
+  (`{instance}-warmpool`), no gateway, no per-tier resources. Historic behaviour,
+  unchanged.
+- **`true`** (**`rijnland`/prod**): renders 3 per-tier `SandboxTemplate`s
+  (`agent-coding-template-{tier}` in namespace `sandbox-runtime`), 3
+  `SandboxWarmPool`s (`{instance}-warmpool-{tier}`), and the gateway
+  DaemonSet/namespace.
+
+### The three tiers
+
+The tier is selected from the agent's `coding.networks` declaration:
+
+| Tier | Selected when | Reach |
+|------|---------------|-------|
+| **airgapped** | no `networks` / `[]` (default) | egress `[]` — default-deny. No internet, no modules. |
+| **internet** | non-empty `networks` without `"modules"` | External DNS + HTTP/HTTPS egress (`0.0.0.0/0:443`). No in-cluster reach. |
+| **modules** | `"modules"` in `networks` | Internet egress **direct** (packages/git) **plus** in-cluster hostnames via the gateway proxy. |
+
+### The gateway (when the flag is on)
+
+In-cluster `ClusterIP` services are unreachable from a gVisor sandbox (its
+userspace netstack bypasses the cluster service LB, and it uses the node
+resolver, not CoreDNS). The gateway bridges this for the `modules` tier:
+
+- A **DaemonSet** in namespace `sandbox-gateway` (PSA `enforce: privileged`,
+  required because it runs `hostNetwork: true`) runs an HTTP `CONNECT` proxy
+  listening on **`:3128`**, with `dnsPolicy: ClusterFirstWithHostNet` so it can
+  resolve and reach in-cluster services. Image is the Harbor sandbox image
+  (`{{ .Values.global.imageRegistry }}/druppie-sandbox-k8s:{{ .Values.global.imageTag }}`,
+  override `.Values.agentSandbox.gateway.image`) with `imagePullSecrets:
+  [harbor-regcred]`. It runs on **all schedulable nodes** (no worker-only
+  `nodeSelector`) and has TCP `:3128` readiness + liveness probes.
+- Its allowlist `ALLOW_HOSTS` (from `.Values.agentSandbox.gateway.allowHosts`)
+  contains **only in-cluster hostnames**, so it cannot become an open relay.
+- The `modules` tier points `HTTPS_PROXY`/`https_proxy` at the node proxy but
+  keeps external hosts in `NO_PROXY` so **packages and git go direct, not via the
+  proxy**: `NO_PROXY = pypi.org, files.pythonhosted.org, github.com,
+  codeload.github.com, aigit.waterschap.org, 10.23.0.101, 127.0.0.1, localhost`.
+
+> This design revives (and hardens) the reverted `0fe1509c` gateway. The five
+> defects that caused that revert, and their fixes, are recorded in
+> `docs/specs/sandbox-modules-gateway-proposal.md`.
+
+### Reachability by tier
+
+| Destination | airgapped | internet | modules | How / notes |
+|-------------|-----------|----------|---------|-------------|
+| **Gitea** (code) | ❌ | 🌐 network path | 🌐 network path (direct) | External for real instances (`aigit.waterschap.org` / `10.23.0.101:443`). `hostAliases` map the name → the IP; egress `:443` allowed. Git still runs **host-side via bundles** — the sandbox holds NO credentials; this is a network path only. |
+| **Internet** (pip, npm, docs) | ❌ | ✅ | ✅ (direct via `NO_PROXY`) | `internet`/`modules` allow `0.0.0.0/0:443`. |
+| **LLM** | ❌ | ⚠️ | ⚠️ | Reachable only if its host is in the gateway `ALLOW_HOSTS` and routed via the proxy (`modules`). Not verified — see `docs/sandbox-network-findings.md`. |
+| **Other modules** (filesearch, registry) | ❌ | ❌ | ✅ via gateway | `ClusterIP` services, reachable on the `modules` tier through the `:3128` proxy if the host is in `ALLOW_HOSTS`. |
+| **Cluster DNS (CoreDNS)** | ❌ | ❌ | ❌ (in-cluster names resolve only inside the gateway) | Sandbox pods use the node resolver, not `ClusterFirst`. |
 
 To (re-)establish the actual state on a live cluster, run the probe in
-**`scripts/sandbox_network_probe.sh`** and record the outcome in
+**`scripts/sandbox_network_probe.sh`** **per tier** and record the outcome in
 `docs/sandbox-network-findings.md`.
 
 ---
@@ -164,7 +215,7 @@ candidate for hardening.
 | 2 | **base64 shell pipe for binary reads** — the SDK's `files.write` 500s on absolute paths, so `read_file_bytes` (git bundles) reads via `base64` in the shell. `write_file` no longer uses base64: it stages via the SDK upload endpoint under a relative temp name + `mv`, which also fixed a silent ~96 KB `MAX_ARG_STRLEN` truncation. | `k8s_sandbox.read_file_bytes` | Slower/larger than a native binary download; an upstream SDK fix should replace it. |
 | 3 | **Namespace / warmpool fallbacks** — code defaults (`sandbox-runtime` / `agent-coding-warmpool`) match no chart resource; the Helm ConfigMap injects the real per-instance values. `__init__` now warns loudly if the fallback is ever used. | `k8s_sandbox.py` top + `__init__` | Only bites if run in k8s mode without the ConfigMap; then create/reap target a non-existent namespace. |
 | 4 | **`/management/sandbox/warmup` is a noop** — warming is declarative via the `SandboxWarmPool` CRD, so there is nothing imperative to trigger. Endpoint kept for API compatibility. | `server.py` `warmup_pool` | None functionally; was previously mislabelled "not implemented". |
-| 5 | **No module-tier egress** — the sandbox cannot reach in-cluster module services; the per-tier gateway was reverted. | Helm agent-sandbox templates | Agents that need real module APIs from inside the sandbox cannot; see the gateway proposal. |
+| 5 | **Module-tier egress is gated behind a flag** — reaching in-cluster module services requires `agentSandbox.gateway.enabled = true` (the hardened `hostNetwork` gateway DaemonSet). Default-off; on for `rijnland`/prod, off for `hetzner`. | Helm agent-sandbox templates + `agent-sandbox/gateway.yaml` | With the flag off there is no `modules` path; with it on, reach depends on the host being in `.Values.agentSandbox.gateway.allowHosts`. See the gateway decision record. |
 | 6 | **Two things named "sandbox"** — the gVisor orchestrator (this doc) is separate from a `sandbox_session` "control plane" (`druppie/api/routes/sandbox.py`) that talks to an external `sandbox-control-plane:8787` service not shipped in this chart. Don't conflate them. | `api/routes/sandbox.py` | Confusing; unrelated to the gVisor runtime. |
 | 7 | **`_get_death_reason` is static in k8s mode** — always returns `"sandbox terminated (k8s mode)"`. | `tools.py` | Crash diagnostics are poorer than docker mode. |
 
@@ -189,7 +240,7 @@ the container lifecycle differs. This mode is what the Python tests
 |----------|--------|-------------|
 | `DRUPPIE_SANDBOX_MODE` | ConfigMap | `k8s` when `agentSandbox.enabled`, else `docker` |
 | `SANDBOX_NAMESPACE` | ConfigMap | `{instance}-sandbox` — where sandboxes live (see debt #3) |
-| `SANDBOX_WARMPOOL` | ConfigMap | `{instance}-warmpool` — warm pool to claim from (see debt #3) |
+| `SANDBOX_WARMPOOL` | ConfigMap | `{instance}-warmpool` — warm pool to claim from (see debt #3). With `agentSandbox.gateway.enabled`, per-tier pools are `{instance}-warmpool-{tier}` — i.e. `{base}-{tier}` where `{base}` is this same value. |
 | `DRUPPIE_SANDBOX_MAX_IDLE` | env/default | Idle seconds before the watchdog reaps a sandbox (default 900) |
 
 ### MCP tools exposed to the agent

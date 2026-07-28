@@ -1,4 +1,179 @@
 {{- if .Values.agentSandbox.enabled }}
+{{- if .Values.agentSandbox.gateway.enabled }}
+# SandboxTemplates: agent-coding — gVisor-isolated sandboxes for AI agent code
+# execution, split into three network tiers (airgapped / internet / modules).
+# Rendered ONLY when agentSandbox.gateway.enabled=true. All tiers share
+# runtimeClassName gVisor, priorityClass druppie-agent, the workspace
+# volumeClaimTemplate, imagePullSecrets harbor-regcred, and the runner container
+# image (agent-sandbox runtime server on port 8888).
+#
+# IMPORTANT: the base image must include the agent-sandbox runtime server.
+# Build with: druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s
+# Push to: harbor.rijnland.dev/druppie/druppie-sandbox-k8s:latest
+#
+# gVisor's userspace netstack bypasses Cilium's eBPF service load-balancing, so
+# ClusterIP Services (incl. kube-dns 10.43.0.10) are UNREACHABLE from the
+# sandbox. Use a public resolver instead; external IPs (incl. external Gitea via
+# hostAliases) work fine under gVisor.
+#   - airgapped: no egress (repo delivered host-side; default deny).
+#   - internet:  external DNS + HTTP/HTTPS only (pip/npm/github/package APIs).
+#   - modules:   internet rules DIRECT for packages/git, PLUS the per-node
+#                gateway proxy (:3128) carrying ONLY in-cluster hostnames
+#                (NO_PROXY keeps external hosts direct). Repo clone stays
+#                host-side.
+#
+# CREDENTIAL INVARIANT: the sandbox holds NO git credentials. Gitea reachability
+# is a network path only (hostAliases + egress to the external IP). Push is
+# host-side (git bundle) in the module-coding pod.
+{{- $tiers := list "airgapped" "internet" "modules" }}
+{{- range $tier := $tiers }}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: agent-coding-template-{{ $tier }}
+  # Same namespace as the per-tier WarmPools ({instance}-sandbox == the code's
+  # SANDBOX_NAMESPACE); sandboxTemplateRef is namespace-scoped, so template and
+  # warmpool MUST co-locate here or the ref will not resolve at runtime.
+  namespace: "{{ $.Values.global.instance }}-sandbox"
+spec:
+  podTemplate:
+    spec:
+      runtimeClassName: gvisor
+      priorityClassName: druppie-agent
+{{- if eq $tier "airgapped" }}
+      # No egress anyway; cluster DNS is unreachable under gVisor.
+      dnsPolicy: Default
+{{- else }}
+      # kube-dns is a ClusterIP → unreachable under gVisor. Use a public resolver.
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+          - 1.1.1.1
+{{- if $.Values.gitea.external.ip }}
+      # External Gitea has no public DNS from the sandbox; pin the hostname to
+      # its external IP. Network path only — NO credentials are mounted.
+      hostAliases:
+      - ip: {{ $.Values.gitea.external.ip | quote }}
+        hostnames:
+        - aigit.waterschap.org
+{{- end }}
+{{- end }}
+      containers:
+      - name: runner
+        image: {{ $.Values.global.imageRegistry }}/druppie-sandbox-k8s:{{ $.Values.global.imageTag }}
+        ports:
+        - containerPort: 8888
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        resources:
+          requests:
+            cpu: "250m"
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: {{ $.Values.agentSandbox.coding.cpuLimit | default "2" }}
+            memory: {{ $.Values.agentSandbox.coding.memoryLimit | default "4Gi" }}
+{{- if eq $tier "modules" }}
+        # Route ONLY in-cluster hostnames through this node's gateway proxy
+        # (host IP :3128). NO_PROXY keeps pip/npm/git DIRECT to external hosts
+        # (egress 0.0.0.0/0:443 already allows that) so the proxy is not a
+        # bottleneck/SPOF for package + git traffic. SANDBOX_NODE_IP is the node
+        # the sandbox landed on; the gateway DaemonSet runs everywhere, so the
+        # proxy is always node-local (no cross-node hop).
+        env:
+        - name: SANDBOX_NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: HTTPS_PROXY
+          value: "http://$(SANDBOX_NODE_IP):3128"
+        - name: https_proxy
+          value: "http://$(SANDBOX_NODE_IP):3128"
+        - name: http_proxy
+          value: "http://$(SANDBOX_NODE_IP):3128"
+        - name: NO_PROXY
+          value: "pypi.org,files.pythonhosted.org,github.com,codeload.github.com,aigit.waterschap.org,10.23.0.101,127.0.0.1,localhost"
+        - name: no_proxy
+          value: "pypi.org,files.pythonhosted.org,github.com,codeload.github.com,aigit.waterschap.org,10.23.0.101,127.0.0.1,localhost"
+{{- end }}
+      imagePullSecrets:
+      - name: harbor-regcred
+  volumeClaimTemplatesPolicy: Overrides
+  volumeClaimTemplates:
+  - metadata:
+      name: workspace
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: {{ $.Values.agentSandbox.storageClass | default "longhorn-local" }}
+      resources:
+        requests:
+          storage: {{ $.Values.agentSandbox.coding.workspaceSize | default "10Gi" }}
+  networkPolicy:
+    ingress:
+    # Allow the workspace pod (coding MCP server) to reach the sandbox on 8888.
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+      ports:
+      - protocol: TCP
+        port: 8888
+{{- if eq $tier "airgapped" }}
+    # Default deny: empty egress list ⇒ all egress blocked. The repo is
+    # delivered host-side by module-coding; no runtime egress is needed.
+    egress: []
+{{- else }}
+    egress:
+    # External DNS + HTTP/HTTPS only (pip/npm/github/package APIs). Package and
+    # git traffic goes DIRECT here — the gateway proxy is NOT in this path.
+    - to:
+      - ipBlock:
+          cidr: 0.0.0.0/0
+      ports:
+      - protocol: UDP
+        port: 53
+      - protocol: TCP
+        port: 53
+      - protocol: TCP
+        port: 80
+      - protocol: TCP
+        port: 443
+{{- if $.Values.gitea.external.ip }}
+    # External Gitea (in-cluster-routable external IP) on :443. Network path
+    # only — NO credentials in the sandbox; push is host-side (git bundle).
+    - to:
+      - ipBlock:
+          cidr: {{ $.Values.gitea.external.ip }}/32
+      ports:
+      - protocol: TCP
+        port: 443
+{{- end }}
+{{- if eq $tier "modules" }}
+    # Reach this node's gateway proxy (hostNetwork pod in sandbox-gateway), which
+    # carries proxied in-cluster traffic. NetworkPolicy egress is stateful, so
+    # the management ingress (module-coding → sandbox:8888) still works.
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: sandbox-gateway
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: sandbox-gateway
+      ports:
+      - protocol: TCP
+        port: 3128
+{{- end }}
+{{- end }}
+{{- end }}
+{{- else }}
 # SandboxTemplate: agent-coding — gVisor-isolated sandbox for AI agent code execution.
 # Uses a custom image built on the agent-sandbox runtime (port 8888 server)
 # with Druppie tools (Python, git, pip packages) added.
@@ -103,4 +278,5 @@ spec:
       ports:
       - protocol: TCP
         port: 8000
+{{- end }}
 {{- end }}

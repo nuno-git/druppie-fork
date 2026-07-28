@@ -618,8 +618,30 @@ agentSandbox:
     workspaceSize: 10Gi
   devEnv:
     workspaceSize: 20Gi
+  # Per-tier egress gateway (blast-radius flag). DEFAULT false → the chart
+  # renders EXACTLY the current single SandboxTemplate + single warmpool with
+  # NO gateway and NO per-tier split (current behaviour preserved). When true,
+  # the chart renders 3 per-tier SandboxTemplates (agent-coding-template-{tier})
+  # + 3 per-tier SandboxWarmPools ({base}-{tier}) + the sandbox-gateway
+  # DaemonSet. Tiers: airgapped (egress default-deny) | internet (external
+  # HTTP/HTTPS + DNS) | modules (internet egress DIRECT for packages/git, plus
+  # HTTPS_PROXY→gateway ONLY for in-cluster hostnames).
+  gateway:
+    enabled: false
+    # Empty → chart defaults to the Harbor sandbox image
+    # ({{ .Values.global.imageRegistry }}/druppie-sandbox-k8s:{{ .Values.global.imageTag }}).
+    image: ""
+    # Hostname suffix(es) the gateway proxies for in-cluster traffic. External
+    # package/git hosts stay DIRECT (NO_PROXY), only these route via :3128.
+    allowHosts: ".svc.cluster.local"
   warmPool:
+    # Backward-compat: consumed by warmpool.yaml when gateway.enabled=false
+    # (single warmpool). Keep in sync with the airgapped tier below.
     replicas: 5
+    # Per-tier warm replica counts, used only when gateway.enabled=true.
+    airgapped: 1
+    internet: 2
+    modules: 1
 # Scheduled PR-review agent (runs in the module-coding pod). Empty repos =
 # disabled: no PRREVIEW_* config is rendered and cnp-module-coding-gitea is not
 # created. Per-env values (repos, jobEnabled) are set in the ai/k8s HelmRelease.

@@ -51,6 +51,47 @@ SANDBOX_MODE = os.getenv("DRUPPIE_SANDBOX_MODE", "docker")  # "k8s" or "docker"
 SANDBOX_NAMESPACE = os.getenv("SANDBOX_NAMESPACE", _NAMESPACE_FALLBACK)
 SANDBOX_WARMPOOL = os.getenv("SANDBOX_WARMPOOL", _WARMPOOL_FALLBACK)
 
+# Per-tier warm pools (blast-radius flag). Default OFF: create() claims the
+# plain SANDBOX_WARMPOOL, exactly matching the pre-feature behaviour and the
+# Helm chart's agentSandbox.gateway.enabled=false rendering (a single template
+# + single warmpool, no gateway). When DRUPPIE_SANDBOX_TIERS is truthy the
+# chart is expected to render the three per-tier SandboxWarmPools named
+# "{SANDBOX_WARMPOOL}-{tier}", and create() claims the tier-specific pool
+# derived from the agent's requested networks. Keep this flag in lock-step with
+# the chart flag so code and chart never disagree about which pools exist.
+SANDBOX_TIERS_ENABLED = os.getenv("DRUPPIE_SANDBOX_TIERS", "").lower() in (
+    "1", "true", "yes", "on",
+)
+
+
+def _tier_from_networks(networks: Optional[list[str]]) -> str:
+    """Map an agent's requested networks to a sandbox tier.
+
+    - None / []            -> "airgapped"  (default; egress default-deny)
+    - contains "modules"   -> "modules"    (internet egress + in-cluster proxy)
+    - else (non-empty)     -> "internet"   (external DNS + HTTP/HTTPS only)
+    """
+    if not networks:
+        return "airgapped"
+    if "modules" in networks:
+        return "modules"
+    return "internet"
+
+
+def _warmpool_for_tier(tier: str) -> str:
+    """Resolve the warm-pool name to claim from for a given tier.
+
+    Reconciled with the CURRENT env-based scheme: the base pool name is the
+    existing SANDBOX_WARMPOOL ("{instance}-warmpool"). With tiers OFF (default)
+    the plain base is returned so behaviour is byte-for-byte the pre-feature
+    single-pool path. With tiers ON the per-tier pool "{base}-{tier}" is used,
+    matching the chart's SandboxWarmPool names when
+    agentSandbox.gateway.enabled=true.
+    """
+    if not SANDBOX_TIERS_ENABLED:
+        return SANDBOX_WARMPOOL
+    return f"{SANDBOX_WARMPOOL}-{tier}"
+
 
 def _strip_credentials(url: str) -> str:
     """Remove any user:password@ from a URL, leaving scheme://host[:port]/path.
@@ -130,24 +171,39 @@ class K8sSandboxManager:
         git_scope: str,
         repo_clone_url: Optional[str] = None,
         branch: str = "main",
+        networks: Optional[list[str]] = None,
     ) -> SandboxHandle:
-        """Claim a sandbox from the warm pool and optionally clone a repo."""
+        """Claim a sandbox from the warm pool and optionally clone a repo.
+
+        ``networks`` is the agent's requested network profile (from
+        coding.networks). It selects the sandbox tier
+        (airgapped/internet/modules) and, when DRUPPIE_SANDBOX_TIERS is on, the
+        per-tier warm pool to claim from. With the flag off the tier is still
+        computed/logged for observability but the plain SANDBOX_WARMPOOL is
+        claimed (pre-feature behaviour preserved).
+        """
         labels = {
             "session-id": session_id[:63],
             "git-scope": git_scope,
         }
+        tier = _tier_from_networks(networks)
+        warmpool = _warmpool_for_tier(tier)
 
         sandbox = await asyncio.wait_for(
             self.client.create_sandbox(
-                warmpool=SANDBOX_WARMPOOL,
+                warmpool=warmpool,
                 namespace=SANDBOX_NAMESPACE,
                 labels=labels,
             ),
             timeout=120,
         )
         sandbox_id = sandbox.sandbox_id
-        logger.info("Sandbox claimed: %s (session=%s, scope=%s)",
-                     sandbox_id, session_id, git_scope)
+        logger.info(
+            "Sandbox claimed: %s (session=%s, scope=%s, tier=%s, warmpool=%s, "
+            "tiers_enabled=%s)",
+            sandbox_id, session_id, git_scope, tier, warmpool,
+            SANDBOX_TIERS_ENABLED,
+        )
 
         # The SDK's readiness wait is neutralised in __init__ (warm-pool
         # adoption race), so gate readiness ourselves BEFORE cloning / git

@@ -1,6 +1,52 @@
 {{- if .Values.agentSandbox.enabled }}
-# Pre-warmed pool of agent-coding sandboxes for instant allocation.
-# At scale (1500 users), this eliminates the ~10s cold-start per sandbox.
+# ============================================================================
+# SandboxWarmPool — pre-warmed pool(s) of agent-coding sandboxes for instant
+# allocation. At scale (1500 users) this eliminates the ~10s cold-start per
+# sandbox.
+#
+# FEATURE FLAG: agentSandbox.gateway.enabled (bool, default false)
+#   false -> render the CURRENT single SandboxWarmPool UNCHANGED (one pool per
+#            instance). This preserves existing behaviour exactly. (hetzner and
+#            every instance that does not opt into per-tier networking stay
+#            here.)
+#   true  -> render three per-tier SandboxWarmPools (airgapped / internet /
+#            modules), each referencing its matching per-tier SandboxTemplate.
+#
+# NAMING CONTRACT (defect 5 — MUST stay in lock-step with k8s_sandbox.py):
+#   The module-coding host claims a warm sandbox with:
+#       create_sandbox(warmpool=SANDBOX_WARMPOOL, namespace=SANDBOX_NAMESPACE)
+#   where the Helm ConfigMap injects (see templates/configmap.yaml):
+#       SANDBOX_WARMPOOL  = "{instance}-warmpool"   <- the BASE
+#       SANDBOX_NAMESPACE = "{instance}-sandbox"
+#   In per-tier mode the code builder appends "-{tier}" to that base, so the
+#   pool it claims is "{instance}-warmpool-{tier}" in namespace
+#   "{instance}-sandbox". This file MUST emit exactly those names/namespace or
+#   the claim targets a non-existent pool. Concretely:
+#       base      = "{{ .Values.global.instance }}-warmpool"   (== SANDBOX_WARMPOOL)
+#       name      = "<base>-<tier>"                              (base + "-" + tier)
+#       namespace = "{{ .Values.global.instance }}-sandbox"     (== SANDBOX_NAMESPACE, unchanged)
+#   sandboxTemplateRef points at the per-tier SandboxTemplate
+#   "agent-coding-template-<tier>" (emitted by the template builder in the SAME
+#   namespace so the namespace-scoped ref resolves).
+# ============================================================================
+{{- if .Values.agentSandbox.gateway.enabled }}
+{{- $base := printf "%s-warmpool" .Values.global.instance }}
+{{- $ns := printf "%s-sandbox" .Values.global.instance }}
+{{- range $tier := (list "airgapped" "internet" "modules") }}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: "{{ $base }}-{{ $tier }}"
+  namespace: "{{ $ns }}"
+spec:
+  replicas: {{ index $.Values.agentSandbox.warmPool $tier | default 1 }}
+  updateStrategy:
+    type: Recreate
+  sandboxTemplateRef:
+    name: "agent-coding-template-{{ $tier }}"
+{{- end }}
+{{- else }}
 # Per-instance: each Druppie instance gets its own WarmPool in its own
 # sandbox namespace (e.g. druppie-sandbox, druppie-colab-dev-sandbox).
 ---
@@ -15,4 +61,5 @@ spec:
     type: Recreate
   sandboxTemplateRef:
     name: "{{ .Values.global.instance }}-agent-coding-template"
+{{- end }}
 {{- end }}

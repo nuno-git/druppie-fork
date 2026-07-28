@@ -123,3 +123,14 @@ highAvailability:
 certManager:
   enabled: true
   email: ""
+
+# Agent sandbox egress gateway. agentSandbox itself is left at its base default
+# (enabled:false) here and is turned on per-environment via the ai/k8s
+# HelmRelease; these keys pre-wire the gateway feature so that WHEN agentSandbox
+# is enabled in prod, the per-tier templates + gateway render. Prod uses
+# EXTERNAL Gitea (aigit.waterschap.org, direct via NO_PROXY), so the gateway
+# only needs to proxy in-cluster module traffic in the druppie namespace.
+agentSandbox:
+  gateway:
+    enabled: true
+    allowHosts: ".druppie.svc.cluster.local"

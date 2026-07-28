@@ -7,6 +7,75 @@
 
 ---
 
+## Kubernetes runtime realization (how this maps to what ships)
+
+> This spec was written in Docker vocabulary (docker networks, `_sync_networks`,
+> `docker network connect/disconnect`). In production the runtime is **gVisor +
+> Kubernetes**, not Docker. The tier model below is the same; only the mechanism
+> differs. This section is the source of truth for the *deployed* shape; the
+> detailed sections that follow describe the design reasoning.
+
+**Feature flag:** `agentSandbox.gateway.enabled` (bool, **default `false`**).
+
+- **`false`** (default; **`hetzner`**, which runs its own in-cluster Gitea):
+  renders EXACTLY the current single `SandboxTemplate` + single
+  `SandboxWarmPool` (`{instance}-warmpool`). No per-tier resources, no gateway.
+  Historic behaviour preserved.
+- **`true`** (**`rijnland`/prod`**): renders 3 per-tier `SandboxTemplate`s and 3
+  `SandboxWarmPool`s plus the gateway DaemonSet.
+
+**Tiers** (selected from the agent's `coding.networks` — the design's Isolated /
+Internet / Modules, named for the runtime):
+
+| Design tier (this spec) | Runtime tier | Selected when | Reach |
+|-------------------------|--------------|---------------|-------|
+| Isolated (`[]`) | **airgapped** | no `networks` / `[]` (default) | egress `[]` — default-deny |
+| Internet (`[internet]`) | **internet** | non-empty `networks` without `"modules"` | external DNS + HTTP/HTTPS (`0.0.0.0/0:443`) |
+| Modules (`[modules]`) | **modules** | `"modules"` in `networks` | internet **direct** (packages/git) + in-cluster hostnames via the gateway proxy |
+
+**Naming (as shipped):**
+
+- `SandboxTemplate`: `agent-coding-template-{tier}` (namespace `sandbox-runtime`).
+- `SandboxWarmPool`: `{base}-{tier}` = `{instance}-warmpool-{tier}`, where
+  `{base}` is the current `SANDBOX_WARMPOOL = "{instance}-warmpool"` scheme. With
+  the flag off, the single pool stays exactly `{instance}-warmpool`.
+
+**The gateway** (replaces the Docker `sandbox-modules` network / `_sync_networks`
+approach): gVisor sandboxes cannot reach in-cluster `ClusterIP` services (their
+netstack bypasses the cluster service LB and they use the node resolver, not
+CoreDNS). The `modules` tier therefore reaches in-cluster module MCP servers
+through an HTTP `CONNECT` proxy:
+
+- A **DaemonSet** in namespace `sandbox-gateway` (PSA `enforce: privileged` —
+  mandatory because it runs `hostNetwork: true`), `dnsPolicy:
+  ClusterFirstWithHostNet`, listening on **`:3128`**, on **all schedulable
+  nodes** (no worker-only `nodeSelector`), with TCP `:3128` readiness + liveness
+  probes.
+- Image: the Harbor sandbox image
+  `{{ .Values.global.imageRegistry }}/druppie-sandbox-k8s:{{ .Values.global.imageTag }}`
+  (override `.Values.agentSandbox.gateway.image`), `imagePullSecrets:
+  [harbor-regcred]`.
+- Allowlist `ALLOW_HOSTS` (from `.Values.agentSandbox.gateway.allowHosts`)
+  contains **only in-cluster hostnames** — it is not an open relay.
+- The `modules` tier sets `HTTPS_PROXY`/`https_proxy` to the node proxy but keeps
+  external hosts in `NO_PROXY` so **packages and git go direct**, not through the
+  proxy: `NO_PROXY = pypi.org, files.pythonhosted.org, github.com,
+  codeload.github.com, aigit.waterschap.org, 10.23.0.101, 127.0.0.1, localhost`.
+
+**Gitea path (k8s):** Gitea is **external** for real instances
+(`aigit.waterschap.org` / `10.23.0.101:443`). The sandbox reaches it as an
+ordinary external `:443` destination via `hostAliases`
+(`aigit.waterschap.org → 10.23.0.101`) + egress to `:443` (in `NO_PROXY`, so
+direct). **Credential invariant (hard):** the sandbox holds NO git credentials;
+push stays host-side via `git bundle`. The network path is for reachability only
+— no token/secret is ever mounted into a sandbox.
+
+This design revives and hardens the reverted `0fe1509c` gateway; the five
+revert-causing defects and their fixes are recorded in
+`docs/specs/sandbox-modules-gateway-proposal.md`.
+
+---
+
 ## Problem
 
 v1 network isolation applies networks only at container creation. Once a container is created with internet access, ALL agents sharing that container (same session + git scope) inherit internet — even agents that should only have module access.
