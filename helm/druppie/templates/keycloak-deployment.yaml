@@ -250,7 +250,7 @@ spec:
               SLEEP_SEC=${SYNC_INTERVAL:-300}
 
               echo "entra-id-sync: waiting for Keycloak to be ready..."
-              until curl -sf http://localhost:8080/health/ready >/dev/null 2>&1; do
+              until exec 3<>/dev/tcp/localhost/8080 && echo -e "GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 && head -1 <&3 2>/dev/null | grep -q "200"; do
                 sleep 5
               done
               echo "entra-id-sync: Keycloak is ready."
