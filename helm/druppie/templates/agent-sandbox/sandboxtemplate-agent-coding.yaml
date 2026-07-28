@@ -100,9 +100,9 @@ spec:
         - name: http_proxy
           value: "http://$(SANDBOX_NODE_IP):3128"
         - name: NO_PROXY
-          value: "pypi.org,files.pythonhosted.org,github.com,codeload.github.com,aigit.waterschap.org,10.23.0.101,127.0.0.1,localhost"
+          value: "pypi.org,files.pythonhosted.org,github.com,codeload.github.com,aigit.waterschap.org,{{ $.Values.gitea.external.ip }},127.0.0.1,localhost"
         - name: no_proxy
-          value: "pypi.org,files.pythonhosted.org,github.com,codeload.github.com,aigit.waterschap.org,10.23.0.101,127.0.0.1,localhost"
+          value: "pypi.org,files.pythonhosted.org,github.com,codeload.github.com,aigit.waterschap.org,{{ $.Values.gitea.external.ip }},127.0.0.1,localhost"
 {{- end }}
       imagePullSecrets:
       - name: harbor-regcred

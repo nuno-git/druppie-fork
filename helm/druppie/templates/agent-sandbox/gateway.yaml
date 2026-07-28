@@ -8,8 +8,14 @@
 # only for in-cluster hostnames (NO_PROXY covers external package/git traffic,
 # which egresses directly).
 #
-# An allowlist (ALLOW_HOSTS, comma-separated host suffixes) prevents it from
-# becoming an open internet relay — only permitted suffixes are tunneled.
+# Two allowlists jointly gate every tunnel (both must pass):
+#   - ALLOW_HOSTS: comma-separated host suffixes (prevents an open internet relay)
+#   - ALLOW_PORTS: comma-separated ports / inclusive ranges (e.g. "8090,9000-9020")
+# The port allowlist is load-bearing for isolation: the host suffix in prod is
+# the whole druppie namespace, which also contains Postgres (5432), Keycloak
+# (8080) and Gitea (3000/2222). Restricting to the module service ports keeps
+# those datastores/auth endpoints unreachable from untrusted sandbox code even
+# though they match the host suffix.
 #
 # NOTE: this namespace is pod-security enforce=privileged because the DaemonSet
 # uses hostNetwork:true, which baseline/restricted forbid.
@@ -43,9 +49,15 @@ data:
     names and reach ClusterIPs — bridging gVisor sandboxes (which can only reach
     pod/internet IPs) to in-cluster services.
 
-    An allowlist of permitted destination host suffixes is enforced (env
-    ALLOW_HOSTS, default ".svc.cluster.local") so the proxy can't become an open
-    internet relay. Allow/deny decisions are logged.
+    Two allowlists are enforced and BOTH must pass for a tunnel to be opened:
+      - ALLOW_HOSTS (default ".svc.cluster.local"): permitted destination host
+        suffixes, so the proxy can't become an open internet relay.
+      - ALLOW_PORTS (default "8090,9000-9020"): permitted destination ports /
+        inclusive ranges. Load-bearing for isolation — the host suffix spans the
+        whole namespace (incl. Postgres:5432, Keycloak:8080, Gitea:3000/2222),
+        so the port allowlist is what keeps those datastores/auth unreachable
+        from untrusted sandbox code. Empty value ("") disables the port check.
+    Allow/deny decisions are logged.
     """
     import asyncio
     import logging
@@ -60,6 +72,26 @@ data:
         return [s.strip().lower().lstrip(".") for s in raw.split(",") if s.strip()]
 
 
+    def _allowed_ports():
+        # Comma-separated single ports ("9001") or inclusive ranges ("9000-9020").
+        # Empty/unset -> no port restriction (host allowlist only).
+        raw = os.environ.get("ALLOW_PORTS", "8090,9000-9020")
+        spec = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                if "-" in part:
+                    lo, hi = part.split("-", 1)
+                    spec.append((int(lo), int(hi)))
+                else:
+                    spec.append((int(part), int(part)))
+            except ValueError:
+                log.warning("ignoring malformed ALLOW_PORTS entry %r", part)
+        return spec
+
+
     def _host_allowed(host, suffixes):
         h = (host or "").lower().rstrip(".")
         for s in suffixes:
@@ -68,6 +100,16 @@ data:
             if h == s or h.endswith("." + s):
                 return True
         return False
+
+
+    def _port_allowed(port, spec):
+        if not spec:
+            return True  # no restriction configured
+        try:
+            p = int(port)
+        except (TypeError, ValueError):
+            return False
+        return any(lo <= p <= hi for lo, hi in spec)
 
 
     async def _pipe(reader, writer):
@@ -90,21 +132,32 @@ data:
     async def handle(client_reader, client_writer):
         peer = client_writer.get_extra_info("peername")
         suffixes = _allowed_suffixes()
+        ports = _allowed_ports()
         try:
             line = await asyncio.wait_for(client_reader.readline(), timeout=30)
             if not line:
                 client_writer.close()
                 return
             parts = line.decode(errors="replace").split()
-            # consume headers
+            # Read request headers. Kept (not discarded) so the plain-HTTP path
+            # can forward the client's method, headers and body faithfully; the
+            # CONNECT path ignores them.
+            header_lines = []
             while True:
                 hl = await client_reader.readline()
                 if hl in (b"\r\n", b"\n", b""):
                     break
+                header_lines.append(hl)
             if parts and parts[0].upper() == "CONNECT":
                 host, port = parts[1].rsplit(":", 1)
                 if not _host_allowed(host, suffixes):
                     log.warning("DENY CONNECT %s:%s from %s (host not allowed)", host, port, peer)
+                    client_writer.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                    await client_writer.drain()
+                    client_writer.close()
+                    return
+                if not _port_allowed(port, ports):
+                    log.warning("DENY CONNECT %s:%s from %s (port not allowed)", host, port, peer)
                     client_writer.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
                     await client_writer.drain()
                     client_writer.close()
@@ -139,6 +192,12 @@ data:
                         await client_writer.drain()
                         client_writer.close()
                         return
+                    if not _port_allowed(port, ports):
+                        log.warning("DENY HTTP-PROXY %s:%s/%s from %s (port not allowed)", host, port, path, peer)
+                        client_writer.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                        await client_writer.drain()
+                        client_writer.close()
+                        return
                     log.info("ALLOW HTTP-PROXY %s:%s/%s from %s", host, port, path, peer)
                     try:
                         up_reader, up_writer = await asyncio.wait_for(
@@ -150,10 +209,25 @@ data:
                         await client_writer.drain()
                         client_writer.close()
                         return
-                    up_writer.write(("GET /%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n" % (path, host)).encode())
+                    # Forward the ORIGINAL request faithfully: preserve the
+                    # client's method (POST for MCP/JSON-RPC), headers and body.
+                    # Rewrite only the request-target to origin-form, drop
+                    # hop-by-hop connection headers, and force Connection: close
+                    # so the upstream signals EOF and both pipes terminate.
+                    method = parts[0]
+                    version = parts[2] if len(parts) > 2 else "HTTP/1.1"
+                    out = [("%s /%s %s\r\n" % (method, path, version)).encode()]
+                    for hl in header_lines:
+                        low = hl.lower()
+                        if low.startswith(b"connection:") or low.startswith(b"proxy-connection:"):
+                            continue
+                        out.append(hl)
+                    out.append(b"Connection: close\r\n\r\n")
+                    up_writer.write(b"".join(out))
                     await up_writer.drain()
-                    await _pipe(up_reader, client_writer)
-                    client_writer.close()
+                    # Bidirectional pipe streams the request body (client->upstream)
+                    # and the response (upstream->client).
+                    await asyncio.gather(_pipe(client_reader, up_writer), _pipe(up_reader, client_writer))
                 else:
                     client_writer.write(b"HTTP/1.1 405 Method Not Allowed\r\n\r\n")
                     await client_writer.drain()
@@ -168,7 +242,11 @@ data:
 
     async def main():
         server = await asyncio.start_server(handle, "0.0.0.0", 3128)
-        log.info("gateway listening on 0.0.0.0:3128 (ALLOW_HOSTS=%r)", os.environ.get("ALLOW_HOSTS", ".svc.cluster.local"))
+        log.info(
+            "gateway listening on 0.0.0.0:3128 (ALLOW_HOSTS=%r ALLOW_PORTS=%r)",
+            os.environ.get("ALLOW_HOSTS", ".svc.cluster.local"),
+            os.environ.get("ALLOW_PORTS", "8090,9000-9020"),
+        )
         async with server:
             await server.serve_forever()
 
@@ -215,6 +293,8 @@ spec:
         env:
         - name: ALLOW_HOSTS
           value: {{ .Values.agentSandbox.gateway.allowHosts | default ".svc.cluster.local" | quote }}
+        - name: ALLOW_PORTS
+          value: {{ .Values.agentSandbox.gateway.allowPorts | default "8090,9000-9020" | quote }}
         ports:
         - name: proxy
           containerPort: 3128

@@ -634,6 +634,14 @@ agentSandbox:
     # Hostname suffix(es) the gateway proxies for in-cluster traffic. External
     # package/git hosts stay DIRECT (NO_PROXY), only these route via :3128.
     allowHosts: ".svc.cluster.local"
+    # Destination port allowlist (comma-separated single ports or inclusive
+    # ranges). SECURITY: the host suffix above spans the whole namespace, which
+    # also holds Postgres (5432), Keycloak (8080) and Gitea (3000/2222). The
+    # port allowlist is what keeps those datastores/auth unreachable from
+    # untrusted sandbox code — it must NOT include them. Default covers the
+    # module MCP services (9001-9015) + layout-service (8090). Set "" to disable
+    # the port check (host allowlist only) — do NOT do this in shared clusters.
+    allowPorts: "8090,9000-9020"
   warmPool:
     # Backward-compat: consumed by warmpool.yaml when gateway.enabled=false
     # (single warmpool). Keep in sync with the airgapped tier below.
