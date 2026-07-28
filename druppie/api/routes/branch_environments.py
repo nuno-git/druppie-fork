@@ -32,6 +32,7 @@ from druppie.domain import (
     BranchEnvironmentDetail,
     BranchEnvironmentListResponse,
     BranchEnvironmentPipeline,
+    PullRequestInfo,
 )
 from druppie.services import BranchEnvironmentService
 
@@ -222,6 +223,43 @@ async def disable_branch_environment_auto_deploy(
     environment stays on its current image until manually redeployed.
     """
     return await service.disable_auto_deploy(
+        env_id=env_id,
+        user_id=UUID(user["sub"]),
+        user_roles=get_user_roles(user),
+    )
+
+
+@router.get(
+    "/branch-environments/{env_id}/pull-request", response_model=PullRequestInfo
+)
+async def get_branch_environment_pull_request(
+    env_id: str,
+    service: BranchEnvironmentService = Depends(get_branch_environment_service),
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
+) -> PullRequestInfo:
+    """Merge-back PR status for a branch environment (id = slug).
+
+    The PR merges the env's branch into the base branch it was created from
+    (colab-dev by default). ``exists=False`` when no PR has been opened yet.
+    """
+    return await service.get_pull_request(env_id)
+
+
+@router.post(
+    "/branch-environments/{env_id}/pull-request", response_model=PullRequestInfo
+)
+async def create_branch_environment_pull_request(
+    env_id: str,
+    service: BranchEnvironmentService = Depends(get_branch_environment_service),
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
+) -> PullRequestInfo:
+    """Open a PR merging the env's branch back into its base branch.
+
+    Owner or admin only. Returns the existing PR if one is already open.
+    """
+    return await service.create_pull_request(
         env_id=env_id,
         user_id=UUID(user["sub"]),
         user_roles=get_user_roles(user),

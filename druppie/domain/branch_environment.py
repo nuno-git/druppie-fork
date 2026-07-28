@@ -115,6 +115,29 @@ class BranchEnvironmentCreate(BaseModel):
     auto_deploy_enabled: bool = True
 
 
+class PullRequestInfo(BaseModel):
+    """Merge-back pull request status for a branch environment.
+
+    Describes the PR that merges the env's feature branch into the base branch
+    it was created from (``BRANCH_ENV_APP_BASE_BRANCH``, default colab-dev).
+    ``exists`` is False when no such PR is open/closed yet — the head/base
+    branch names are still filled in so the UI can label the "open PR" action.
+    """
+
+    exists: bool = False
+    number: int | None = None
+    url: str | None = None
+    title: str | None = None
+    # Gitea PR state: "open" or "closed" (a merged PR is closed + merged=True).
+    state: str | None = None
+    merged: bool = False
+    # Gitea's computed mergeability; None while it is still being calculated.
+    mergeable: bool | None = None
+    head_branch: str | None = None
+    base_branch: str | None = None
+    created_at: datetime | None = None
+
+
 class BranchEnvironmentListResponse(BaseModel):
     """Branch environment list response."""
 

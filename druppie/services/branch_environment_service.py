@@ -58,6 +58,7 @@ from ..domain.branch_environment import (
     BranchEnvironmentStatus,
     PipelineStage,
     PipelineStageStatus,
+    PullRequestInfo,
 )
 
 logger = structlog.get_logger()
@@ -562,6 +563,39 @@ class GiteaGitopsClient:
         self._raise_for(resp, f"listing runs for {repo}")
         runs = resp.json().get("runs") or []
         return runs[0] if runs else None
+
+    async def create_pull_request(
+        self, repo: str, head: str, base: str, title: str, body: str = ""
+    ) -> dict:
+        """Open a PR merging ``head`` into ``base`` in ``repo``; returns the PR.
+
+        Raises ConflictError (409/422) when an open PR for the same head→base
+        already exists — the caller then falls back to ``find_pull_request``.
+        """
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self._base}/api/v1/repos/{repo}/pulls",
+                json={"head": head, "base": base, "title": title, "body": body},
+            )
+        self._raise_for(resp, f"opening pull request {head}→{base} in {repo}")
+        return resp.json()
+
+    async def find_pull_request(
+        self, repo: str, head: str, base: str
+    ) -> dict | None:
+        """Newest PR (open or closed) for ``head``→``base`` in ``repo``, or None."""
+        async with self._client() as client:
+            resp = await client.get(
+                f"{self._base}/api/v1/repos/{repo}/pulls",
+                params={"state": "all", "sort": "recentupdate", "limit": 50},
+            )
+        self._raise_for(resp, f"listing pull requests in {repo}")
+        for pr in resp.json() or []:
+            if (pr.get("head") or {}).get("ref") == head and (
+                pr.get("base") or {}
+            ).get("ref") == base:
+                return pr
+        return None
 
     async def change_files(self, message: str, files: list[dict]) -> None:
         """Single-commit batch create/update/delete via POST /contents.
@@ -1685,6 +1719,74 @@ class BranchEnvironmentService:
             overall = BranchEnvironmentStatus.DEPLOYING
         return BranchEnvironmentPipeline(env_id=slug, status=overall, stages=stages)
 
+    async def get_pull_request(self, env_id: str) -> PullRequestInfo:
+        """Merge-back PR status for an env (head=branch → base=APP_BASE_BRANCH).
+
+        Read-only: returns ``exists=False`` (with head/base filled in) when no
+        such PR has been opened yet.
+        """
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
+        if env is None:
+            raise NotFoundError("branch_environment", slug)
+        branch = env["branch"]
+        pr = await self.gitea.find_pull_request(CHART_REPO, branch, APP_BASE_BRANCH)
+        if pr is None:
+            return PullRequestInfo(
+                exists=False, head_branch=branch, base_branch=APP_BASE_BRANCH
+            )
+        return self._pr_info(pr, branch, APP_BASE_BRANCH)
+
+    async def create_pull_request(
+        self,
+        env_id: str,
+        user_id: UUID,
+        user_roles: list[str],
+    ) -> PullRequestInfo:
+        """Open a PR merging the env's branch back into the base branch.
+
+        The base is the branch the env was created from (``APP_BASE_BRANCH``,
+        default colab-dev). Owner or admin only. If an open PR already exists
+        the existing one is returned instead of failing.
+        """
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
+        if env is None:
+            raise NotFoundError("branch_environment", slug)
+
+        _require_owner_or_admin(env["owner_id"], user_id, user_roles, "open a pull request for")
+
+        branch = env["branch"]
+        if branch == APP_BASE_BRANCH:
+            raise ValidationError(
+                f"branch '{branch}' is the base branch; nothing to merge back",
+                field="env_id",
+            )
+
+        title = f"Merge {branch} into {APP_BASE_BRANCH}"
+        body = (
+            f"Merge-back of branch environment `druppie-{slug}` "
+            f"(branch `{branch}`).\n\n"
+            "Opened from the Druppie branch-environment preview."
+        )
+        try:
+            pr = await self.gitea.create_pull_request(
+                CHART_REPO, branch, APP_BASE_BRANCH, title, body
+            )
+        except ConflictError:
+            # An open PR for this head→base already exists — return it.
+            pr = await self.gitea.find_pull_request(CHART_REPO, branch, APP_BASE_BRANCH)
+            if pr is None:
+                raise
+        logger.info(
+            "branch_env_pull_request",
+            slug=slug,
+            branch=branch,
+            base=APP_BASE_BRANCH,
+            number=pr.get("number"),
+        )
+        return self._pr_info(pr, branch, APP_BASE_BRANCH)
+
     # -------------------------------------------------------------------------
     # Internals
     # -------------------------------------------------------------------------
@@ -1850,3 +1952,28 @@ class BranchEnvironmentService:
             except ValueError:
                 pass
         return datetime.fromtimestamp(0, tz=timezone.utc)
+
+    @staticmethod
+    def _parse_ts_opt(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _pr_info(cls, pr: dict, head: str, base: str) -> PullRequestInfo:
+        """Map a Gitea PR object to the PullRequestInfo domain model."""
+        return PullRequestInfo(
+            exists=True,
+            number=pr.get("number"),
+            url=pr.get("html_url"),
+            title=pr.get("title"),
+            state=pr.get("state"),
+            merged=bool(pr.get("merged")),
+            mergeable=pr.get("mergeable"),
+            head_branch=(pr.get("head") or {}).get("ref") or head,
+            base_branch=(pr.get("base") or {}).get("ref") or base,
+            created_at=cls._parse_ts_opt(pr.get("created_at")),
+        )

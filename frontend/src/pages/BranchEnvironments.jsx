@@ -28,6 +28,7 @@ import {
   Search,
   ToggleLeft,
   ToggleRight,
+  GitPullRequest,
 } from 'lucide-react'
 
 import { branchEnvironmentsApi } from '../services/api'
@@ -91,6 +92,104 @@ const formatDate = (value) => {
   if (!value) return '—'
   const d = new Date(value)
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString()
+}
+
+const PR_STATE_STYLE = {
+  open: { cls: 'bg-green-100 text-green-700', label: 'open' },
+  merged: { cls: 'bg-purple-100 text-purple-700', label: 'merged' },
+  closed: { cls: 'bg-gray-100 text-gray-500', label: 'closed' },
+}
+
+// "Merge terug"-knop: opent (of toont) een pull request die deze branch
+// terugmerget in de basisbranch waar de omgeving vanaf is gestart
+// (colab-dev of main). De PR-status komt live van de Gitea-API.
+const PullRequestSection = ({ env }) => {
+  const qc = useQueryClient()
+  const toast = useToast()
+
+  const { data: pr, isLoading } = useQuery({
+    queryKey: ['branch-env-pr', env.id],
+    queryFn: () => branchEnvironmentsApi.getPullRequest(env.id),
+    // A terminating env is gone from git — its PR endpoint 404s; skip it.
+    enabled: env.status !== 'deleting',
+    refetchInterval: (query) => {
+      const d = query.state.data
+      // Poll while Gitea is still computing mergeability of an open PR.
+      return d?.exists && d.state === 'open' && d.mergeable == null ? POLL_MS : false
+    },
+  })
+
+  const createMut = useMutation({
+    mutationFn: () => branchEnvironmentsApi.createPullRequest(env.id),
+    onSuccess: (info) => {
+      qc.setQueryData(['branch-env-pr', env.id], info)
+      toast.success('Pull request klaar', 'De pull request is aangemaakt (of stond al open).')
+    },
+    onError: (err) => toast.error('Pull request mislukt', err.message),
+  })
+
+  const base = pr?.base_branch
+  const merged = pr?.merged
+  const state = merged ? 'merged' : pr?.state
+  const style = PR_STATE_STYLE[state] || PR_STATE_STYLE.closed
+  // A branch that IS the base branch has nothing to merge back.
+  const nothingToMerge = base && env.branch === base
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <GitPullRequest className="w-4 h-4 text-gray-500 flex-shrink-0" />
+          <span className="text-xs text-gray-600">Merge terug</span>
+          {pr?.exists && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${style.cls}`}>
+              {style.label}
+            </span>
+          )}
+        </div>
+        {pr?.exists ? (
+          <a
+            href={pr.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-white bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            PR #{pr.number}
+          </a>
+        ) : (
+          <button
+            onClick={() => createMut.mutate()}
+            disabled={createMut.isPending || isLoading || nothingToMerge}
+            title={
+              nothingToMerge
+                ? `"${env.branch}" is de basisbranch — niets om terug te mergen`
+                : `Open een pull request naar ${base || 'de basisbranch'}`
+            }
+            className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {createMut.isPending ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <GitPullRequest className="w-3.5 h-3.5" />
+            )}
+            Pull request openen
+          </button>
+        )}
+      </div>
+      <p className="mt-1 text-[10px] text-gray-400">
+        {pr?.exists
+          ? merged
+            ? `Samengevoegd in ${base}.`
+            : pr.mergeable === false
+              ? `Kan nog niet mergen — los eerst conflicten met ${base} op.`
+              : `Open pull request: ${env.branch} → ${base}.`
+          : nothingToMerge
+            ? 'Dit is de basisbranch.'
+            : `Merge ${env.branch} terug in ${base || 'de basisbranch'}.`}
+      </p>
+    </div>
+  )
 }
 
 const WorkspaceSection = ({
@@ -472,6 +571,9 @@ const BranchEnvCard = ({
             : 'Push events will not rebuild this environment.'}
         </p>
       </div>
+
+      {/* Merge terug (pull request) */}
+      <PullRequestSection env={env} />
 
       {/* Workspace */}
       <WorkspaceSection

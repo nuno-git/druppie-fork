@@ -61,6 +61,13 @@ class FakeGitea:
         self.dispatched_workflows: list[tuple[str, str, str]] = []
         # When True, dispatch_workflow raises (for the failure-path test).
         self.dispatch_fails: bool = False
+        # Latest CI run per (repo, branch); None means "no run yet".
+        self.runs: dict[tuple[str, str], dict] = {}
+        # Pull requests: (repo, head, base) -> PR dict.
+        self.pulls: dict[tuple[str, str, str], dict] = {}
+        self._next_pr_number = 1
+        # When True, create_pull_request raises ConflictError (PR already open).
+        self.pr_create_conflicts: bool = False
 
     async def branch_exists(self, repo: str, branch: str) -> bool:
         return branch in self.branches.get(repo, set())
@@ -78,6 +85,32 @@ class FakeGitea:
                 message=f"simulated dispatch failure for {branch}",
             )
         self.dispatched_workflows.append((repo, branch, workflow))
+
+    async def latest_run(self, repo: str, branch: str):
+        return self.runs.get((repo, branch))
+
+    async def create_pull_request(
+        self, repo: str, head: str, base: str, title: str, body: str = ""
+    ) -> dict:
+        if self.pr_create_conflicts:
+            raise ConflictError(f"pull request already exists: {head}->{base}")
+        pr = {
+            "number": self._next_pr_number,
+            "html_url": f"https://aigit.waterschap.org/{repo}/pulls/{self._next_pr_number}",
+            "title": title,
+            "state": "open",
+            "merged": False,
+            "mergeable": True,
+            "head": {"ref": head},
+            "base": {"ref": base},
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+        self._next_pr_number += 1
+        self.pulls[(repo, head, base)] = pr
+        return pr
+
+    async def find_pull_request(self, repo: str, head: str, base: str):
+        return self.pulls.get((repo, head, base))
 
     @staticmethod
     def _sha(content: str) -> str:
@@ -844,3 +877,85 @@ def test_pipeline_unknown_env_404(client, as_owner):
 def test_pipeline_requires_developer_role(client, app):
     app.dependency_overrides[get_current_user] = lambda: _user(OWNER_SUB, developer=False)
     assert client.get(_PIPELINE_URL).status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# pull request (merge back into the base branch)
+# ---------------------------------------------------------------------------
+
+_PR_URL = "/api/branch-environments/feature-foo/pull-request"
+
+
+def test_pull_request_status_none_before_opened(client, as_owner):
+    _deploy(client)
+    r = client.get(_PR_URL)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["exists"] is False
+    assert body["head_branch"] == "feature/foo"
+    # Base is the branch the env was created from (default colab-dev).
+    assert body["base_branch"] == "colab-dev"
+
+
+def test_create_pull_request_owner(client, as_owner, fake_gitea):
+    _deploy(client)
+    r = client.post(_PR_URL)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["exists"] is True
+    assert body["state"] == "open"
+    assert body["head_branch"] == "feature/foo"
+    assert body["base_branch"] == "colab-dev"
+    assert body["url"].endswith("/pulls/1")
+    # The PR was opened against the app repo, not the GitOps repo.
+    assert ("ai/druppie", "feature/foo", "colab-dev") in fake_gitea.pulls
+
+
+def test_create_pull_request_then_status_reports_open(client, as_owner):
+    _deploy(client)
+    assert client.post(_PR_URL).status_code == 200
+    body = client.get(_PR_URL).json()
+    assert body["exists"] is True
+    assert body["number"] == 1
+    assert body["state"] == "open"
+
+
+def test_create_pull_request_existing_is_returned(client, as_owner, fake_gitea):
+    _deploy(client)
+    # Simulate an already-open PR: create raises 409, service falls back to find.
+    fake_gitea.pulls[("ai/druppie", "feature/foo", "colab-dev")] = {
+        "number": 7,
+        "html_url": "https://aigit.waterschap.org/ai/druppie/pulls/7",
+        "title": "existing",
+        "state": "open",
+        "merged": False,
+        "mergeable": True,
+        "head": {"ref": "feature/foo"},
+        "base": {"ref": "colab-dev"},
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    fake_gitea.pr_create_conflicts = True
+    r = client.post(_PR_URL)
+    assert r.status_code == 200, r.text
+    assert r.json()["number"] == 7
+
+
+def test_create_pull_request_non_owner_forbidden(client, as_owner, app):
+    _deploy(client)
+    app.dependency_overrides[get_current_user] = lambda: _user(OTHER_SUB)
+    assert client.post(_PR_URL).status_code == 403
+
+
+def test_create_pull_request_admin_allowed(client, as_owner, app):
+    _deploy(client)
+    app.dependency_overrides[get_current_user] = lambda: _user(ADMIN_SUB, admin=True)
+    assert client.post(_PR_URL).status_code == 200
+
+
+def test_create_pull_request_unknown_env_404(client, as_owner):
+    assert client.post("/api/branch-environments/nope/pull-request").status_code == 404
+
+
+def test_get_pull_request_requires_developer_role(client, app):
+    app.dependency_overrides[get_current_user] = lambda: _user(OWNER_SUB, developer=False)
+    assert client.get(_PR_URL).status_code == 403
