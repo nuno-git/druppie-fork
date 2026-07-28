@@ -1,19 +1,21 @@
 #!/usr/bin/env python
 """
-[DEPRECATED — K8s only] Keycloak Setup Script for Druppie Governance Platform
+Keycloak Setup Script for Druppie Governance Platform
 
-⚠️  THIS SCRIPT IS NOT USED IN THE KUBERNETES DEPLOYMENT.
-    The Helm chart imports the realm directly from helm/druppie/files/realm-export.json
-    via Keycloak's --import-realm flag. See that file for the source of truth.
+This runs in the Kubernetes deployment: the Helm chart executes it from the
+post-install/post-upgrade init Job (helm/druppie/templates/init-job.yaml ->
+scripts/init-entrypoint.sh). Keycloak imports the realm *base* from
+helm/druppie/files/realm-export.json (--import-realm), but this script is the
+source of the runtime realm setup layered on top — most importantly it is the
+ONLY creator of the 'workspace' OAuth client used by the dev-workspace
+oauth2-proxy. It also runs for local Docker-based development.
 
 This script:
 1. Creates the 'druppie' realm
 2. Creates roles (admin, developer, architect, infra-engineer, etc.)
 3. Creates users with appropriate roles
-4. Configures OAuth2 clients
-5. Configures Entra ID identity provider (when ENTRA_CLIENT_ID is set)
-
-Kept for reference / local Docker-based development only.
+4. Configures OAuth2 clients (incl. the 'workspace' oauth2-proxy client)
+5. Configures Entra ID identity provider (when ENTRA_ID_CLIENT_ID is set)
 """
 
 import os
@@ -486,6 +488,13 @@ def load_yaml(file_path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def _entra_env(name: str) -> str:
+    """Read an Entra ID var, preferring the K8s secret key (ENTRA_ID_*, as
+    synced by the sync sidecar / dev-workspace-secrets) and falling back to the
+    legacy local-dev name (ENTRA_*, still used by .env / entra_token.py)."""
+    return os.getenv(f"ENTRA_ID_{name}", "") or os.getenv(f"ENTRA_{name}", "")
+
+
 def main():
     print("=" * 60)
     print("Druppie - Keycloak Setup")
@@ -576,9 +585,9 @@ def main():
         "${GITEA_PORT}": gitea_port,
         "${GITEA_SSH_PORT}": os.getenv("GITEA_SSH_PORT", "2223"),
         "${BACKEND_PORT}": os.getenv("BACKEND_PORT", "8100"),
-        "${ENTRA_TENANT_ID}": os.getenv("ENTRA_TENANT_ID", ""),
-        "${ENTRA_CLIENT_ID}": os.getenv("ENTRA_CLIENT_ID", ""),
-        "${ENTRA_CLIENT_SECRET}": os.getenv("ENTRA_CLIENT_SECRET", ""),
+        "${ENTRA_TENANT_ID}": _entra_env("TENANT_ID"),
+        "${ENTRA_CLIENT_ID}": _entra_env("CLIENT_ID"),
+        "${ENTRA_CLIENT_SECRET}": _entra_env("CLIENT_SECRET"),
     }
 
     def substitute_env(value: str) -> str:
@@ -697,6 +706,17 @@ def main():
             "webOrigins": [ws_origin] if ws_origin else [],
         }
         kc.create_client(REALM_NAME, workspace_client)
+        # Fail loud: WORKSPACE_CLIENT_SECRET is set, so this env expects the
+        # 'workspace' client to exist. If create_client failed and the client
+        # is not present, exiting non-zero makes the Helm init Job fail (and
+        # retry) instead of silently reporting success and leaving developers
+        # with an "invalid redirect_uri" login.
+        if not kc._get_client_uuid(REALM_NAME, "workspace"):
+            print(
+                "[ERROR] 'workspace' OAuth client was not created and does not "
+                "exist — aborting so the init Job fails and retries"
+            )
+            sys.exit(1)
     else:
         print("\n[STEP 4c] WORKSPACE_CLIENT_SECRET unset — skipping dev-workspace client")
 
@@ -708,7 +728,7 @@ def main():
             kc.assign_default_client_scope(REALM_NAME, rc_id, scope_name)
 
     # Configure Entra ID identity provider (optional)
-    entra_client_id = os.getenv("ENTRA_CLIENT_ID", "")
+    entra_client_id = _entra_env("CLIENT_ID")
     if entra_client_id:
         print("\n[STEP 5] Configuring Entra ID identity provider...")
         idp_configs = realm_config.get("identityProviders", [])
@@ -732,7 +752,7 @@ def main():
             REALM_NAME, "druppie-backend", "realm-management", "view-users",
         )
     else:
-        print("\n[SKIP] ENTRA_CLIENT_ID not set — skipping Entra ID identity provider")
+        print("\n[SKIP] ENTRA_ID_CLIENT_ID not set — skipping Entra ID identity provider")
 
     # Set realm frontendUrl so tokens always have the correct HTTPS issuer
     print("\n[STEP 8] Setting realm frontend URL...")
