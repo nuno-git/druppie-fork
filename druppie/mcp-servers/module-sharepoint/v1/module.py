@@ -13,6 +13,8 @@ from .client import SharePointClient
 
 logger = logging.getLogger("sharepoint-mcp")
 
+_MAX_VERIFIED_CACHE = 1000
+
 TEXT_MIME_PREFIXES = (
     "text/",
     "application/json",
@@ -65,6 +67,8 @@ class SharePointModule:
             site = await self._client.get_site(site_id, user_token)
             web_url = site.get("webUrl", "")
             allowed = self._is_site_allowed_by_url(web_url)
+            if len(self._verified_ids) > _MAX_VERIFIED_CACHE:
+                self._verified_ids.clear()
             self._verified_ids[site_id] = allowed
             return allowed
         except Exception:
@@ -82,6 +86,8 @@ class SharePointModule:
                 web_url = site.get("webUrl", "")
                 if not self._is_site_allowed_by_url(web_url):
                     continue
+                if len(self._verified_ids) > _MAX_VERIFIED_CACHE:
+                    self._verified_ids.clear()
                 self._verified_ids[site_id] = True
                 result.append({
                     "id": site_id,
@@ -115,6 +121,8 @@ class SharePointModule:
             web_url = site.get("webUrl", "")
             if not self._is_site_allowed_by_url(web_url):
                 return {"success": False, "error": "Access to this site is not allowed."}
+            if len(self._verified_ids) > _MAX_VERIFIED_CACHE:
+                self._verified_ids.clear()
             self._verified_ids[site_id] = True
             return {
                 "success": True,
@@ -178,11 +186,12 @@ class SharePointModule:
         if not await self._is_site_allowed(site_id, user_token):
             return {"success": False, "error": "Access to this site is not allowed."}
         try:
-            content_bytes, content_type, metadata = (
-                await self._client.download_file(site_id, file_id, user_token)
-            )
+            metadata = await self._client.get_item(site_id, file_id, user_token)
             name = metadata.get("name", "")
             ext = os.path.splitext(name)[1].lower() if name else ""
+            content_type = metadata.get("file", {}).get(
+                "mimeType", "application/octet-stream"
+            )
 
             result = {
                 "success": True,
@@ -200,6 +209,10 @@ class SharePointModule:
             )
 
             if is_text:
+                content_bytes = await self._client._get_bytes(
+                    f"sites/{site_id}/drive/items/{file_id}/content",
+                    user_token,
+                )
                 try:
                     result["content"] = content_bytes.decode("utf-8")
                 except UnicodeDecodeError:

@@ -84,7 +84,7 @@ async def list_files(
     folder_path: str | None = None,
     user_token: str | None = None,
 ) -> dict:
-    """List files and folders on a SharePoint site.
+    """List files and folders on a SharePoint site. Use after orienting with list_all_files to browse a specific folder.
 
     Args:
         site_id: The SharePoint site ID (from list_sites results).
@@ -108,8 +108,10 @@ async def read_file(
     file_id: str,
     user_token: str | None = None,
 ) -> dict:
-    """Read a file from SharePoint. Returns text content for text-based files,
-    or metadata with a web_url link for binary/Office files.
+    """Read a file from SharePoint after locating it via list_files or search_files.
+
+    Returns text content for text-based files, or metadata with a web_url link
+    for binary/Office files.
 
     Args:
         site_id: The SharePoint site ID.

@@ -115,20 +115,15 @@ system_prompt: |
 
   Use these tools to read documents from SharePoint sites the user has access to. All calls use the user's own permissions (OBO authentication).
 
-  - **list_sites**: Discover SharePoint sites the user has access to. Use this first to get a `site_id`.
-  - **resolve_site_url**: Resolve a SharePoint URL to a site ID. Use when you have a URL or when list_sites returns a permission error.
-  - **list_all_files**: Get a folder-level summary of the entire site: every folder with file count, total size, and file type breakdown. Use this first to orient yourself, then drill into specific folders with list_files.
-  - **list_files**: List individual files and subfolders in a specific folder. Use for targeted browsing after orienting with list_all_files.
-  - **search_files**: Search for files by name or content within a SharePoint site. Use when looking for specific files by keyword.
-  - **read_file**: Read file content. Returns text content for text files, or metadata with a `web_url` for Office/binary files.
+  - **list_sites**: Discover SharePoint sites the user has access to.
+  - **resolve_site_url**: Resolve a SharePoint URL to a site ID.
+  - **list_all_files**: Folder-level summary of the entire site.
+  - **list_files**: List files and subfolders in a specific folder.
+  - **search_files**: Search for files by name or content within a site.
+  - **read_file**: Read file content (text files) or get a `web_url` (binary/Office).
   - **get_file_metadata**: Get metadata (size, author, dates) without downloading content.
 
-  **Tool selection** (orient → target → read):
-  1. Orient: `list_all_files` → folder map with counts and sizes (lightweight, one call)
-  2. Target: `list_files(folder_path)` → individual files in a folder, OR `search_files(query)` → find by keyword
-  3. Read: `read_file(file_id)` → get file content
-
-  **Usage pattern**: First try `list_sites` to discover available sites. If it fails with a permission error, ask the user for a SharePoint URL and use `resolve_site_url`. Then call `list_all_files` to get the folder structure, pick the relevant folder(s), and use `list_files` to see individual files. Use `search_files` when you know a keyword. Use `read_file` for content. If the file is a binary format (docx, xlsx, pdf), share the `web_url` so the user can view it directly.
+  If list_sites fails with a permission error, ask the user for a SharePoint URL and use resolve_site_url. For binary files (docx, xlsx, pdf), share the `web_url` so the user can view them directly.
 
   ## Work Item Hierarchy
 
