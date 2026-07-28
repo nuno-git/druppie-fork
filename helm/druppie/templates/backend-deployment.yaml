@@ -128,6 +128,11 @@ spec:
               value: {{ .Values.backend.foundry.apiUrl | quote }}
             - name: ONESHOT_SANDBOX_RUNTIME
               value: {{ .Values.sandbox.runtime | quote }}
+            # DATABASE_URL is constructed here (not stored in Vault) because the
+            # hostname is instance-specific. $(DRUPPIE_DB_PASSWORD) is resolved
+            # by Kubernetes from the envFrom secretRef above.
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.postgresql.druppie.username }}:$(DRUPPIE_DB_PASSWORD)@{{ include "druppie.fullname" . }}-druppie-db:5432/{{ .Values.postgresql.druppie.database }}"
             {{- if .Values.backend.branchEnvDeployer.enabled }}
             {{- with .Values.backend.branchEnvDeployer }}
             # Branch-environments deployer (GitOps): the backend commits env
