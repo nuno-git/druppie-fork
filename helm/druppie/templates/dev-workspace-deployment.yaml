@@ -33,6 +33,9 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: dev-workspace
+        {{- if not .Values.persistence.rwx }}
+        druppie.io/shared-storage: "true"
+        {{- end }}
       annotations:
         reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
