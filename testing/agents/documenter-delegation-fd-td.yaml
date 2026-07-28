@@ -21,7 +21,7 @@ agent-test:
 
   timeout: 1200
   message: "Build me a complaints tracking app for our water authority. Citizens report water quality issues and we need to track, assign, and resolve them. We handle about 50 complaints per week and currently use a shared Excel file which causes data loss."
-  agents: [router, planner, business_analyst, architect]
+  agents: [router, planner, business_analyst, architect, documenter]
   hitl: approving-cooperative-user
 
   judge:

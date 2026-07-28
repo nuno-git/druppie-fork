@@ -269,6 +269,9 @@ class AgentTestDefinition(BaseModel):
     message: str = ""
     agents: list[str] = Field(default_factory=list)
 
+    # Wall-clock timeout in seconds for the bounded orchestrator (default 10 min)
+    timeout: int = 600
+
     # HITL: single profile name, list of names, or inline config
     hitl: str | list[str] | HITLProfile | None = None
 

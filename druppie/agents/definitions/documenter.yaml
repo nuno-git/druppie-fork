@@ -506,7 +506,7 @@ mcps:
 
 llm_profile: standard
 temperature: 0.2
-max_tokens: 8192
+max_tokens: 16384
 max_iterations: 100
 
 compression:
