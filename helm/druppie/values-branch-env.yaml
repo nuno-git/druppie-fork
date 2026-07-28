@@ -59,6 +59,9 @@ modules:
     resources:
       requests:
         cpu: 25m
+    userApps:
+      gitops:
+        caConfigMap: aigit-ca
   filesearch:
     resources:
       requests:
