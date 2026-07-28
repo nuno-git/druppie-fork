@@ -24,7 +24,10 @@ vi.mock('../App', () => ({
   useAuth: vi.fn(() => ({ user: null })),
 }))
 
-import BranchEnvironments, { slugifyBranch } from './BranchEnvironments'
+import BranchEnvironments, {
+  slugifyBranch,
+  mergeabilityRefetchInterval,
+} from './BranchEnvironments'
 import { branchEnvironmentsApi } from '../services/api'
 import { useAuth } from '../App'
 import { ToastProvider } from '../components/Toast'
@@ -54,6 +57,32 @@ describe('slugifyBranch', () => {
   })
   it('preserves existing dashes without duplicating', () => {
     expect(slugifyBranch('feature/my-branch')).toBe('feature-my-branch')
+  })
+})
+
+describe('mergeabilityRefetchInterval', () => {
+  const openUnknown = { exists: true, state: 'open', mergeable: null }
+
+  it('polls while Gitea is still computing mergeability of an open PR', () => {
+    expect(mergeabilityRefetchInterval(openUnknown, 0)).toBe(5000)
+    expect(mergeabilityRefetchInterval(openUnknown, 5)).toBe(5000)
+  })
+
+  it('caps polling once the poll limit is reached (no infinite 5s loop)', () => {
+    // The cap is 12 — at/over it we must stop polling even if mergeable stays null.
+    expect(mergeabilityRefetchInterval(openUnknown, 12)).toBe(false)
+    expect(mergeabilityRefetchInterval(openUnknown, 50)).toBe(false)
+  })
+
+  it('does not poll once mergeability is resolved', () => {
+    expect(mergeabilityRefetchInterval({ exists: true, state: 'open', mergeable: true }, 0)).toBe(false)
+    expect(mergeabilityRefetchInterval({ exists: true, state: 'open', mergeable: false }, 0)).toBe(false)
+  })
+
+  it('does not poll for a non-open or non-existent PR', () => {
+    expect(mergeabilityRefetchInterval({ exists: false }, 0)).toBe(false)
+    expect(mergeabilityRefetchInterval({ exists: true, state: 'merged', mergeable: null }, 0)).toBe(false)
+    expect(mergeabilityRefetchInterval(undefined, 0)).toBe(false)
   })
 })
 
@@ -429,5 +458,48 @@ describe('BranchEnvironments page', () => {
     expect(await screen.findByText(/branch nog niet gepusht/i)).toBeTruthy()
     const btn = screen.getByRole('button', { name: /pull request openen/i })
     expect(btn.disabled).toBe(true)
+  })
+
+  it('does not retry the PR-status query on a 404 (no per-card retry storm)', async () => {
+    useAuth.mockReturnValue({ user: { id: 'owner-123', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [runningEnv()], total: 1 })
+    branchEnvironmentsApi.getPullRequest.mockRejectedValue(
+      Object.assign(new Error('not found'), { status: 404 })
+    )
+
+    // Use a client whose defaults WOULD retry (3x, immediately) — the query's own
+    // retry opt-out must win so an expected 404 settles after a single call.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: 3, retryDelay: 0 } },
+    })
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider>
+          <MemoryRouter>
+            <BranchEnvironments />
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText(/branch nog niet gepusht/i)).toBeTruthy()
+    // A single call — no 3× exponential-backoff retry storm on the expected 404.
+    expect(branchEnvironmentsApi.getPullRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the "Pull request openen" button for a deleting environment', async () => {
+    useAuth.mockReturnValue({ user: { id: 'owner-123', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({
+      items: [runningEnv({ status: 'deleting' })],
+      total: 1,
+    })
+
+    renderPage()
+
+    await screen.findByText('feature/pr')
+    const btn = screen.getByRole('button', { name: /pull request openen/i })
+    expect(btn.disabled).toBe(true)
+    // The PR endpoint 404s for a terminating env, so we never even query it.
+    expect(branchEnvironmentsApi.getPullRequest).not.toHaveBeenCalled()
   })
 })

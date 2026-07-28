@@ -574,13 +574,23 @@ class GiteaGitopsClient:
     ) -> dict:
         """Open a PR merging ``head`` into ``base`` in ``repo``; returns the PR.
 
-        Raises ConflictError (409/422) when an open PR for the same head→base
+        Raises ConflictError (409 only) when an open PR for the same head→base
         already exists — the caller then falls back to ``find_pull_request``.
+        A 422 from Gitea is a genuine validation failure (no commits between
+        head/base, head branch deleted, …) and is surfaced as a ValidationError
+        rather than being mistaken for an existing PR.
         """
         async with self._client() as client:
             resp = await client.post(
                 f"{self._base}/api/v1/repos/{repo}/pulls",
                 json={"head": head, "base": base, "title": title, "body": body},
+            )
+        # 422 is NOT "already exists": it means Gitea rejected the PR (e.g. no
+        # diff between head/base, or the head branch is gone). Surface it as a
+        # 422 validation error instead of conflating it with the 409 fall-back.
+        if resp.status_code == 422:
+            raise ValidationError(
+                f"cannot open pull request {head}→{base} in {repo}: {resp.text[:300]}"
             )
         self._raise_for(resp, f"opening pull request {head}→{base} in {repo}")
         return resp.json()
@@ -588,12 +598,29 @@ class GiteaGitopsClient:
     async def find_pull_request(
         self, repo: str, head: str, base: str
     ) -> dict | None:
-        """Newest PR (open or closed) for ``head``→``base`` in ``repo``, or None.
+        """Best matching PR for ``head``→``base`` in ``repo``, or None.
 
-        Pages through the results (newest first) instead of only inspecting the
-        first page, so an older matching PR is not missed once enough newer PRs
-        exist to push it past the page boundary.
+        Prefers an *open* PR over a closed/merged one: an open PR is queried
+        first, and only when none exists does it fall back to the newest match
+        across all states. Without this, sorting by ``recentupdate`` could
+        surface a recently-touched closed PR ahead of the open one the caller
+        actually wants.
+
+        Each state is paged through (newest first) instead of only inspecting
+        the first page, so an older matching PR is not missed once enough newer
+        PRs exist to push it past the page boundary.
         """
+        # Prefer open, then fall back to any state (which includes closed/merged).
+        for state in ("open", "all"):
+            pr = await self._find_pull_request_in_state(repo, head, base, state)
+            if pr is not None:
+                return pr
+        return None
+
+    async def _find_pull_request_in_state(
+        self, repo: str, head: str, base: str, state: str
+    ) -> dict | None:
+        """Paginated head→base lookup restricted to a single PR ``state``."""
         limit = 50
         page = 1
         async with self._client() as client:
@@ -601,7 +628,7 @@ class GiteaGitopsClient:
                 resp = await client.get(
                     f"{self._base}/api/v1/repos/{repo}/pulls",
                     params={
-                        "state": "all",
+                        "state": state,
                         "sort": "recentupdate",
                         "limit": limit,
                         "page": page,
@@ -1570,7 +1597,24 @@ class BranchEnvironmentService:
             if e.get("type") == "dir" and e["name"].startswith("druppie-")
         ]
 
-        envs = [e for e in await asyncio.gather(*(self._read_env(s) for s in slugs)) if e]
+        # Read each env independently: a single bad env (corrupt YAML, a UTF-8
+        # decode error, or a transient HTTP error) must degrade to one FAILED
+        # row instead of 500-ing the whole overview. return_exceptions=True
+        # keeps the healthy envs even when a sibling read blows up.
+        raw = await asyncio.gather(
+            *(self._read_env(s) for s in slugs), return_exceptions=True
+        )
+        envs: list[dict] = []
+        degraded: list[dict] = []
+        for slug, result in zip(slugs, raw):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "branch_env_read_failed", slug=slug, exc_info=result
+                )
+                degraded.append(self._degraded_env(slug))
+            elif result:
+                envs.append(result)
+
         details: list[BranchEnvironmentDetail] = []
         statuses, ws_statuses = await asyncio.gather(
             asyncio.gather(*(self._live_status(env["namespace"]) for env in envs)),
@@ -1583,6 +1627,13 @@ class BranchEnvironmentService:
                 self._detail_from_env(
                     env, status=status, message=message, workspace_status=ws_status
                 )
+            )
+
+        # Envs whose read blew up: one FAILED row each (read_error forces the
+        # status in _detail_from_env), so the overview still renders.
+        for env in degraded:
+            details.append(
+                self._detail_from_env(env, status="", message=None)
             )
 
         # Envs deleted from git but whose namespace is still terminating.
@@ -1761,6 +1812,17 @@ class BranchEnvironmentService:
         env = await self._read_env(slug)
         if env is None:
             raise NotFoundError("branch_environment", slug)
+        # A corrupt manifest makes ``branch`` fall back to the slug (e.g.
+        # ``feature-foo`` instead of ``feature/foo``), which would target the
+        # wrong branch. Refuse rather than act on unreliable data.
+        if env.get("read_error"):
+            raise ExternalServiceError(
+                service="gitops-repo",
+                message=(
+                    f"environment '{slug}' manifest is corrupt; "
+                    "cannot determine the branch for a merge-back pull request"
+                ),
+            )
         branch = env["branch"]
         base = env["base_branch"]
         pr = await self.gitea.find_pull_request(CHART_REPO, branch, base)
@@ -1787,6 +1849,16 @@ class BranchEnvironmentService:
         env = await self._read_env(slug)
         if env is None:
             raise NotFoundError("branch_environment", slug)
+        # A corrupt manifest makes ``branch`` fall back to the slug, which would
+        # open a PR against the wrong branch. Refuse rather than act on it.
+        if env.get("read_error"):
+            raise ExternalServiceError(
+                service="gitops-repo",
+                message=(
+                    f"environment '{slug}' manifest is corrupt; "
+                    "cannot determine the branch for a merge-back pull request"
+                ),
+            )
 
         _require_owner_or_admin(env["owner_id"], user_id, user_roles, "open a pull request for")
 
@@ -1830,6 +1902,33 @@ class BranchEnvironmentService:
     def _env_path(slug: str, filename: str | None = None) -> str:
         base = f"{GITOPS_PATH}/druppie-{slug}"
         return f"{base}/{filename}" if filename else base
+
+    @staticmethod
+    def _degraded_env(slug: str) -> dict:
+        """A minimal ``read_error`` env dict for a slug whose read failed.
+
+        Only the slug is trustworthy; everything else falls back to a safe
+        default so ``_detail_from_env`` can render a single FAILED row.
+        """
+        return {
+            "slug": slug,
+            "branch": slug,
+            "base_branch": APP_BASE_BRANCH,
+            "namespace": f"druppie-{slug}",
+            "host": f"druppie-{slug}.{DOMAIN_SUFFIX}",
+            "owner_id": None,
+            "created_at": None,
+            "updated_at": None,
+            "image_tag": None,
+            "helmrelease_sha": None,
+            "secrets_source": None,
+            "workspace_enabled": False,
+            "developer": "",
+            "stack_mode": "real",
+            "recovery_mode": False,
+            "auto_deploy_enabled": True,
+            "read_error": True,
+        }
 
     async def _read_env(self, slug: str) -> dict | None:
         """Read an env's metadata from its committed manifests. None if absent."""

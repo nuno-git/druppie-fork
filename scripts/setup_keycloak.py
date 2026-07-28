@@ -214,6 +214,46 @@ class KeycloakAdmin:
                     return client["id"]
         return None
 
+    def client_presence(self, realm: str, client_id: str, retries: int = 3) -> str:
+        """Determine whether a client exists, distinguishing a genuine absence
+        from a transient API error.
+
+        Unlike _get_client_uuid (which collapses both "not found" and "request
+        failed" into None), this returns one of:
+          - "present": the list endpoint returned 200 and the client was found
+          - "absent":  the list endpoint returned 200 but the client was not
+                       present (a definitive "does not exist")
+          - "unknown": every attempt hit a transient error (non-200 status or a
+                       request exception, e.g. 503, or a 401 from an admin token
+                       that expired mid-run)
+
+        Retries a few times with a short backoff so a single blip does not read
+        as "absent". Callers can then fail loudly only on a definitive "absent".
+        """
+        url = f"{self.base_url}/admin/realms/{realm}/clients"
+        for attempt in range(retries):
+            try:
+                response = requests.get(
+                    url, params={"clientId": client_id}, headers=self._headers(), timeout=10
+                )
+                if response.status_code == 200:
+                    for client in response.json():
+                        if client.get("clientId") == client_id:
+                            return "present"
+                    return "absent"
+                print(
+                    f"  [WARN] Listing clients returned {response.status_code} "
+                    f"while checking '{client_id}' (attempt {attempt + 1}/{retries})"
+                )
+            except Exception as e:
+                print(
+                    f"  [WARN] Error listing clients while checking '{client_id}' "
+                    f"(attempt {attempt + 1}/{retries}): {e}"
+                )
+            if attempt < retries - 1:
+                time.sleep(2)
+        return "unknown"
+
     def create_identity_provider(self, realm: str, idp_config: dict):
         """Create or update an identity provider."""
         url = f"{self.base_url}/admin/realms/{realm}/identity-provider/instances"
@@ -711,12 +751,28 @@ def main():
         # is not present, exiting non-zero makes the Helm init Job fail (and
         # retry) instead of silently reporting success and leaving developers
         # with an "invalid redirect_uri" login.
-        if not kc._get_client_uuid(REALM_NAME, "workspace"):
+        #
+        # But only abort on a *definitive* absence. A plain
+        # `_get_client_uuid(...) is None` check also fires on a transient
+        # list-clients error (503, or a 401 from an admin token that expired
+        # mid-run), which would spuriously fail the Job even though
+        # create_client just succeeded. client_presence retries and tells us
+        # whether the client is genuinely absent vs the check itself failed.
+        presence = kc.client_presence(REALM_NAME, "workspace")
+        if presence == "absent":
             print(
                 "[ERROR] 'workspace' OAuth client was not created and does not "
                 "exist — aborting so the init Job fails and retries"
             )
             sys.exit(1)
+        elif presence == "unknown":
+            print(
+                "[WARN] Could not confirm the 'workspace' OAuth client after "
+                "creation due to a transient Keycloak API error; create_client "
+                "reported no failure, so continuing without failing the Job"
+            )
+        else:
+            print("  [OK] Verified 'workspace' OAuth client exists")
     else:
         print("\n[STEP 4c] WORKSPACE_CLIENT_SECRET unset — skipping dev-workspace client")
 

@@ -68,6 +68,11 @@ class FakeGitea:
         self._next_pr_number = 1
         # When True, create_pull_request raises ConflictError (PR already open).
         self.pr_create_conflicts: bool = False
+        # When True, create_pull_request raises ValidationError (Gitea 422:
+        # no commits between head/base, head branch deleted, ...).
+        self.pr_create_validation_error: bool = False
+        # Paths whose get_file raises a (non-YAML) transient read failure.
+        self.read_errors: set[str] = set()
 
     async def branch_exists(self, repo: str, branch: str) -> bool:
         return branch in self.branches.get(repo, set())
@@ -92,6 +97,10 @@ class FakeGitea:
     async def create_pull_request(
         self, repo: str, head: str, base: str, title: str, body: str = ""
     ) -> dict:
+        if self.pr_create_validation_error:
+            raise ValidationError(
+                f"cannot open pull request {head}->{base}: no commits between them"
+            )
         if self.pr_create_conflicts:
             raise ConflictError(f"pull request already exists: {head}->{base}")
         pr = {
@@ -132,6 +141,10 @@ class FakeGitea:
         return [{"name": n, "path": f"{prefix}{n}", **meta} for n, meta in names.items()]
 
     async def get_file(self, path: str):
+        if path in self.read_errors:
+            raise ExternalServiceError(
+                service="gitops-repo", message=f"simulated read failure: {path}"
+            )
         if path not in self.files:
             return None
         return self.files[path], self._sha(self.files[path])
@@ -499,6 +512,16 @@ def test_list_includes_terminating_namespace(client, as_owner, fake_cluster):
 def test_list_requires_role(app, client):
     app.dependency_overrides[get_current_user] = lambda: _user(OTHER_SUB, developer=False)
     assert client.get("/api/branch-environments").status_code == 403
+
+
+def test_list_includes_owner_id(client, as_owner, fake_gitea):
+    """owner_id must survive list serialization (it lives on the Summary, not
+    only the Detail) so the frontend owner gate does not collapse to admin-only."""
+    _deploy(client)
+    body = client.get("/api/branch-environments").json()
+    items = {i["id"]: i for i in body["items"]}
+    assert "owner_id" in items["feature-foo"]
+    assert items["feature-foo"]["owner_id"] == OWNER_SUB
 
 
 # ---------------------------------------------------------------------------
@@ -933,6 +956,26 @@ def test_create_pull_request_existing_is_returned(client, as_owner, fake_gitea):
     assert r.json()["number"] == 7
 
 
+def test_create_pull_request_422_not_swallowed(client, as_owner, fake_gitea):
+    """A genuine Gitea 422 (no commits between head/base, head deleted) must
+    surface as 422 — not be mistaken for an existing PR and re-raised as 409."""
+    _deploy(client)
+    fake_gitea.pr_create_validation_error = True
+    # No existing PR to fall back to.
+    r = client.post(_PR_URL)
+    assert r.status_code == 422, r.text
+
+
+def test_pull_request_rejects_corrupt_manifest(client, as_owner, fake_gitea):
+    """A corrupt manifest makes branch fall back to the slug (feature-foo vs
+    feature/foo); PR endpoints must refuse rather than target the wrong branch."""
+    _deploy(client)
+    # Corrupt the namespace manifest -> _read_env sets read_error=True.
+    fake_gitea.files[f"{_env_dir('feature-foo')}/namespace.yaml"] = "foo: [bar"
+    assert client.get(_PR_URL).status_code == 502
+    assert client.post(_PR_URL).status_code == 502
+
+
 def test_create_pull_request_non_owner_forbidden(client, as_owner, app):
     _deploy(client)
     app.dependency_overrides[get_current_user] = lambda: _user(OTHER_SUB)
@@ -1001,6 +1044,56 @@ def test_list_survives_corrupt_manifest(client, as_owner, fake_gitea):
     # Corrupt env degrades to failed with the slug still shown.
     assert "broken" in items
     assert items["broken"]["status"] == "failed"
+
+
+def test_list_survives_transient_read_error(client, as_owner, fake_gitea):
+    """A non-YAML read failure (transient HTTP / UTF-8 decode) on one env must
+    also degrade to a single FAILED row, not 500 the whole overview — the YAML
+    guard alone doesn't cover this, the return_exceptions gather in list_all does."""
+    _deploy(client)  # healthy env "feature-foo"
+    bad_dir = _env_dir("flaky")
+    # Valid files so the dir is discovered by list_dir, but reading one raises.
+    fake_gitea.files[f"{bad_dir}/namespace.yaml"] = "kind: Namespace\n"
+    fake_gitea.files[f"{bad_dir}/helmrelease.yaml"] = "kind: HelmRelease\n"
+    fake_gitea.read_errors.add(f"{bad_dir}/namespace.yaml")
+
+    r = client.get("/api/branch-environments")
+    assert r.status_code == 200, r.text
+    items = {i["id"]: i for i in r.json()["items"]}
+    assert items["feature-foo"]["status"] == "deploying"
+    assert "flaky" in items
+    assert items["flaky"]["status"] == "failed"
+
+
+@pytest.mark.anyio
+async def test_find_pull_request_prefers_open_over_closed():
+    """An open PR must win over a more-recently-updated closed PR for the same
+    head->base (the 'open' state is queried before falling back to 'all')."""
+    import httpx
+
+    from druppie.services.branch_environment_service import GiteaGitopsClient
+
+    open_pr = {"head": {"ref": "feature/foo"}, "base": {"ref": "colab-dev"},
+               "number": 7, "state": "open"}
+    closed_pr = {"head": {"ref": "feature/foo"}, "base": {"ref": "colab-dev"},
+                 "number": 9, "state": "closed"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state = request.url.params.get("state")
+        if state == "open":
+            return httpx.Response(200, json=[open_pr])
+        # state == "all": closed sorts first by recentupdate.
+        return httpx.Response(200, json=[closed_pr, open_pr])
+
+    gitea = GiteaGitopsClient(
+        base_url="https://git.test", repo="ai/druppie", branch="main", token="", ca_path=""
+    )
+    transport = httpx.MockTransport(handler)
+    gitea._client = lambda: httpx.AsyncClient(transport=transport)  # type: ignore[method-assign]
+
+    pr = await gitea.find_pull_request("ai/druppie", "feature/foo", "colab-dev")
+    assert pr is not None
+    assert pr["number"] == 7
 
 
 @pytest.mark.anyio

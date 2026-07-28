@@ -78,6 +78,10 @@ class BranchEnvironmentSummary(BaseModel):
     status: BranchEnvironmentStatus
     status_message: str | None = None
     created_at: datetime
+    # None when the owner annotation is missing/unreadable (then admin-only).
+    # Lives on the summary (not just the detail) so the list endpoint keeps it:
+    # the frontend gate ``env.owner_id === user.id`` needs it on every list row.
+    owner_id: UUID | None = None
     # Where the env's Vault-sourced app secrets come from: "colab-dev" (borrowed
     # defaults) or "developer" (the deployer's own druppie/developers/<user> map).
     secrets_source: str | None = None
@@ -95,8 +99,6 @@ class BranchEnvironmentSummary(BaseModel):
 class BranchEnvironmentDetail(BranchEnvironmentSummary):
     """Full branch environment. Inherits from BranchEnvironmentSummary."""
 
-    # None when the owner annotation is missing/unreadable (then admin-only).
-    owner_id: UUID | None = None
     updated_at: datetime | None = None
 
 

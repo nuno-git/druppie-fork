@@ -41,6 +41,18 @@ import { SkeletonProjectCard } from '../components/shared/Skeleton'
 
 const POLL_MS = 5000
 
+// Cap how many times a card polls Gitea for a PR whose mergeability never
+// resolves — otherwise a stuck `mergeable == null` polls every 5s forever.
+const MAX_MERGEABILITY_POLLS = 12
+
+// Decide the PR-status refetch interval: poll every POLL_MS while Gitea is still
+// computing mergeability of an open PR, but stop once we hit the poll cap so a
+// never-resolving `mergeable` can't loop forever. Exported for unit testing.
+export const mergeabilityRefetchInterval = (data, dataUpdateCount = 0) => {
+  const stillComputing = data?.exists && data.state === 'open' && data.mergeable == null
+  return stillComputing && dataUpdateCount < MAX_MERGEABILITY_POLLS ? POLL_MS : false
+}
+
 const TRANSITIONAL = new Set(['deploying', 'deleting'])
 
 const STATUS_STYLE = {
@@ -112,11 +124,14 @@ const PullRequestSection = ({ env, canMerge }) => {
     queryFn: () => branchEnvironmentsApi.getPullRequest(env.id),
     // A terminating env is gone from git — its PR endpoint 404s; skip it.
     enabled: env.status !== 'deleting',
-    refetchInterval: (query) => {
-      const d = query.state.data
-      // Poll while Gitea is still computing mergeability of an open PR.
-      return d?.exists && d.state === 'open' && d.mergeable == null ? POLL_MS : false
+    // A "branch not pushed" env is an EXPECTED 404 (and a forbidden env a 403),
+    // so opt those out of the default 3× backoff to avoid a per-card retry storm.
+    retry: (failureCount, error) => {
+      if (error?.status === 403 || error?.status === 404) return false
+      return failureCount < 2
     },
+    refetchInterval: (query) =>
+      mergeabilityRefetchInterval(query.state.data, query.state.dataUpdateCount),
   })
 
   // A 404 means the branch was never pushed to Gitea (so there is no PR to
@@ -165,7 +180,13 @@ const PullRequestSection = ({ env, canMerge }) => {
         ) : canMerge ? (
           <button
             onClick={() => createMut.mutate()}
-            disabled={createMut.isPending || isLoading || nothingToMerge || isError}
+            disabled={
+              createMut.isPending ||
+              isLoading ||
+              nothingToMerge ||
+              isError ||
+              env.status === 'deleting'
+            }
             title={
               nothingToMerge
                 ? `"${env.branch}" is de basisbranch — niets om terug te mergen`
