@@ -115,12 +115,6 @@ class BranchEnvironmentCreate(BaseModel):
     auto_deploy_enabled: bool = True
 
 
-class BranchEnvironmentUpdateSecretsSource(BaseModel):
-    """Request body for changing the secrets source of a branch environment."""
-
-    secrets_source: str = "colab-dev"
-
-
 class BranchEnvironmentListResponse(BaseModel):
     """Branch environment list response."""
 
