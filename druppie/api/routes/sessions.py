@@ -332,7 +332,7 @@ async def _run_retry_background(
                     db.close()
 
             tasks = [
-                _run_in_own_db(agent_run_id, agent_run.agent_id, target_prompt, False)
+                _run_in_own_db(new_run_id, agent_run.agent_id, target_prompt, False)
             ] + [
                 _run_in_own_db(s.id, s.agent_id, None, True)
                 for s in paused_siblings

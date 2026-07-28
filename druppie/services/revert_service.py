@@ -286,7 +286,10 @@ class RevertService:
 
         all_children = (
             db.query(AgentRunModel)
-            .filter(AgentRunModel.parent_run_id == target.parent_run_id)
+            .filter(
+                AgentRunModel.parent_run_id == target.parent_run_id,
+                AgentRunModel.superseded_at.is_(None),
+            )
             .all()
         )
 
@@ -368,7 +371,10 @@ class RevertService:
 
         children = (
             self.execution_repo.db.query(AgentRun)
-            .filter(AgentRun.parent_run_id == run_id)
+            .filter(
+                AgentRun.parent_run_id == run_id,
+                AgentRun.superseded_at.is_(None),
+            )
             .all()
         )
         result: list[UUID] = []

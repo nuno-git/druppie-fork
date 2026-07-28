@@ -1038,7 +1038,7 @@ class ExecutionRepository(BaseRepository):
             Approval.status == "pending",
         ).update({"status": "cancelled"}, synchronize_session="fetch")
 
-        # Also supersede any spawned child runs (recursive)
+        # Also supersede any spawned child runs (recursive via both link types)
         tc_ids = [
             tc.id
             for tc in self.db.query(ToolCall.id)
@@ -1046,6 +1046,10 @@ class ExecutionRepository(BaseRepository):
             .all()
         ]
         self._collect_and_mark_spawned_runs_superseded(tc_ids)
+
+        # Also supersede children linked via parent_run_id (covers cases
+        # where spawning_tool_call_id is absent or points elsewhere).
+        self._collect_and_mark_child_runs_superseded(agent_run_ids, now)
 
         self.db.flush()
         logger.info(
@@ -1097,6 +1101,51 @@ class ExecutionRepository(BaseRepository):
             "spawned_runs_superseded",
             count=len(spawned_run_ids),
             spawned_by_tool_calls=len(tc_ids),
+        )
+
+    def _collect_and_mark_child_runs_superseded(
+        self, parent_run_ids: list[UUID], now: datetime
+    ) -> None:
+        if not parent_run_ids:
+            return
+
+        child_runs = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.parent_run_id.in_(parent_run_ids),
+                AgentRun.superseded_at.is_(None),
+            )
+            .all()
+        )
+
+        if not child_runs:
+            return
+
+        child_run_ids = [r.id for r in child_runs]
+
+        for run in child_runs:
+            run.superseded_at = now
+
+        self.db.query(Message).filter(
+            Message.agent_run_id.in_(child_run_ids)
+        ).update({"superseded_at": now}, synchronize_session="fetch")
+
+        self.db.query(Question).filter(
+            Question.agent_run_id.in_(child_run_ids),
+            Question.status == "pending",
+        ).update({"status": "cancelled"}, synchronize_session="fetch")
+
+        self.db.query(Approval).filter(
+            Approval.agent_run_id.in_(child_run_ids),
+            Approval.status == "pending",
+        ).update({"status": "cancelled"}, synchronize_session="fetch")
+
+        self._collect_and_mark_child_runs_superseded(child_run_ids, now)
+
+        logger.info(
+            "child_runs_superseded",
+            count=len(child_run_ids),
+            parent_count=len(parent_run_ids),
         )
 
     def mark_orphan_messages_superseded(

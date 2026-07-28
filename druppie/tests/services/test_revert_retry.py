@@ -391,3 +391,45 @@ class TestTreeBasedSiblingDetection:
             result = await svc.retry_nested_subagent_run(session_id, target.id)
 
         assert "paused_sibling_ids" not in result
+
+    @pytest.mark.asyncio
+    async def test_subtree_descendants_are_superseded(self):
+        """Retrying B should supersede its children C, D, F, G."""
+        parent_run_id = uuid4()
+        session_id = uuid4()
+        tc_id = uuid4()
+
+        child_c = uuid4()
+        child_d = uuid4()
+        child_f = uuid4()
+        child_g = uuid4()
+
+        target = _make_run(
+            parent_run_id=parent_run_id, agent_id="builder",
+            spawning_tool_call_id=tc_id,
+        )
+        tc_obj = _make_tc(tc_id=tc_id)
+
+        repo = MagicMock()
+        repo.get_by_id_for_session.return_value = target
+        repo._to_summary.side_effect = lambda r: r
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.return_value = [target]
+        db.query.return_value.filter.return_value.first.return_value = tc_obj
+        repo.db = db
+
+        svc = _make_revert_service(execution_repo=repo)
+
+        with patch.object(
+            svc, "_collect_descendants",
+            return_value=[child_c, child_d, child_f, child_g],
+        ), _patch_no_parent_chain(svc):
+            await svc.retry_nested_subagent_run(session_id, target.id)
+
+        superseded = _collect_superseded_ids(repo)
+        assert child_c in superseded
+        assert child_d in superseded
+        assert child_f in superseded
+        assert child_g in superseded
+        assert target.id in superseded
