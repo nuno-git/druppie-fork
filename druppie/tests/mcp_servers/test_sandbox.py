@@ -180,14 +180,86 @@ class TestContainerLifecycle:
             "repo_name": "repo",
             "repo_owner": "org",
         }
+        # Container is running AND the liveness probe (echo ok) succeeds first
+        # try, so the existing container is reused (no recreate).
         with patch.object(
             tools, "_is_container_running", AsyncMock(return_value=True)
+        ), patch.object(
+            tools, "_exec_in_container", AsyncMock(return_value=(0, "ok", ""))
         ):
             result = await tools._resolve_container(
                 session_id="sess123",
                 git_scope="current_project",
             )
         assert result == "druppie-sess123-current_project"
+
+    @pytest.mark.asyncio
+    async def test_resolve_reuses_after_transient_probe_blip(self):
+        # Fix #4: a single failed liveness probe is often a transient setns /
+        # port-forward blip. Recreating on it triggers a fresh clone and throws
+        # away the agent's uncommitted work, so we re-probe up to 3x. A probe
+        # that fails once then succeeds must REUSE the container, not recreate.
+        tools.sandbox_containers["sess123::current_project"] = {
+            "container_name": "druppie-sess123-current_project",
+            "container_id": "abc123def456",
+            "git_scope": "current_project",
+            "session_id": "sess123",
+            "branch": "main",
+            "created_at": 0.0,
+            "repo_name": "repo",
+            "repo_owner": "org",
+        }
+        # First probe fails (rc=1), second succeeds (rc=0).
+        probe = AsyncMock(side_effect=[(1, "", "setns blip"), (0, "ok", "")])
+        mock_create = AsyncMock(return_value="druppie-should-not-be-called")
+        with patch.object(
+            tools, "_is_container_running", AsyncMock(return_value=True)
+        ), patch.object(tools, "_exec_in_container", probe), patch.object(
+            tools, "_create_sandbox_container", mock_create
+        ), patch.object(tools.asyncio, "sleep", AsyncMock()):
+            result = await tools._resolve_container(
+                session_id="sess123",
+                git_scope="current_project",
+            )
+        assert result == "druppie-sess123-current_project"
+        assert probe.call_count == 2  # re-probed after the blip
+        mock_create.assert_not_called()  # container was NOT recreated
+
+    @pytest.mark.asyncio
+    async def test_resolve_recreates_after_persistent_probe_failure(self):
+        # Fix #4: only after the probe fails all 3 times do we conclude the
+        # sandbox is wedged and recreate it (destroying the old claim first).
+        tools.sandbox_containers["sess123::current_project"] = {
+            "container_name": "druppie-sess123-current_project",
+            "container_id": "abc123def456",
+            "git_scope": "current_project",
+            "session_id": "sess123",
+            "branch": "main",
+            "created_at": 0.0,
+            "repo_name": "repo",
+            "repo_owner": "org",
+        }
+        probe = AsyncMock(return_value=(1, "", "setns: no such process"))
+        mock_create = AsyncMock(return_value="druppie-sess123-new")
+
+        async def _fake_destroy(sid, scope):
+            tools.sandbox_containers.pop(f"{sid}::{scope}", None)
+
+        with patch.object(
+            tools, "_is_container_running", AsyncMock(return_value=True)
+        ), patch.object(tools, "_exec_in_container", probe), patch.object(
+            tools, "_destroy_container", AsyncMock(side_effect=_fake_destroy)
+        ), patch.object(
+            tools, "_create_sandbox_container", mock_create
+        ), patch.object(tools.asyncio, "sleep", AsyncMock()):
+            result = await tools._resolve_container(
+                session_id="sess123",
+                git_scope="current_project",
+            )
+        assert result == "druppie-sess123-new"
+        assert probe.call_count == 3  # exhausted all retries before recreating
+        assert "sess123::current_project" not in tools.sandbox_containers
+        mock_create.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_resolve_recreates_dead_container(self):
@@ -202,8 +274,16 @@ class TestContainerLifecycle:
             "repo_owner": "org",
         }
         mock_create = AsyncMock(return_value="druppie-sess123-new")
+
+        async def _fake_destroy(sid, scope):
+            tools.sandbox_containers.pop(f"{sid}::{scope}", None)
+
         with patch.object(
             tools, "_is_container_running", AsyncMock(return_value=False)
+        ), patch.object(
+            tools, "_get_container_death_reason", AsyncMock(return_value="exited")
+        ), patch.object(
+            tools, "_destroy_container", AsyncMock(side_effect=_fake_destroy)
         ), patch.object(tools, "_create_sandbox_container", mock_create):
             result = await tools._resolve_container(
                 session_id="sess123",
@@ -279,3 +359,34 @@ class TestCommandBlocklist:
 
     def test_blocklist_allows_docker_commands(self):
         assert not self._is_blocked("docker ps")
+
+
+# ---------------------------------------------------------------------------
+# Test: push base-branch handling (fix #5)
+#
+# The git bundle must be thinned against the branch the repo was cloned from
+# (recorded as ``base_branch``), NOT a hardcoded "main": update_core clones
+# colab-dev, so ``^origin/main`` would bundle the wrong commit range (and the
+# host-side prerequisite fetch would pull the wrong branch). push_changes is a
+# FastMCP @mcp.tool wrapper (awkward to invoke directly), so we pin the fix at
+# the source level — the same approach used for the cluster-only wipe command.
+# ---------------------------------------------------------------------------
+
+
+class TestPushBaseBranch:
+    def _source(self):
+        return _TOOLS_FILE.read_text(encoding="utf-8")
+
+    def test_entry_records_base_branch(self):
+        # Both the docker and k8s creation paths must persist base_branch so
+        # push_changes can recover it. Two entry dicts -> two occurrences.
+        assert self._source().count('"base_branch": branch') >= 2
+
+    def test_push_reads_recorded_base_branch(self):
+        assert 'base_branch = entry.get("base_branch") or "main"' in self._source()
+
+    def test_bundle_thinned_against_base_branch(self):
+        src = self._source()
+        assert 'f"^origin/{base_branch}"' in src
+        # The old hardcoded form must not linger in the bundle construction.
+        assert '"^origin/main"' not in src
