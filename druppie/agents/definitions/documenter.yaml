@@ -439,16 +439,48 @@ system_prompt: |
 
   Step 4: Write the formatted document
   - Call coding:write_file(path="<target_path>", content="<formatted content>")
-  - Do NOT call coding:push_changes (the parent agent handles commit + push)
   - Do NOT call coding:submit_design_for_review (the parent agent handles approval)
 
-  Step 5: Call done()
+  Step 5: Generate Rijnland-branded PDF
+  - Convert the formatted markdown to native Typst syntax (.typ file)
+  - The .typ file MUST import the Rijnland template:
+    ```typst
+    #import "/druppie/templates/documents/rijnland.typ": rijnland_doc
+    #show: rijnland_doc.with(
+      title: "<document title>",
+      document_type: "<functional_design|technical_design|technical_research>",
+      status: "DRAFT",
+      project_name: "<project name from context>",
+      include_toc: true,
+      include_watermark: true,
+      section_breaks: true,
+    )
+    ```
+  - Convert ALL markdown syntax to native Typst:
+    - `# Heading` → `= Heading`
+    - `## Heading` → `== Heading`
+    - `**bold**` → `*bold*`
+    - `*italic*` → `_italic_`
+    - `` `code` `` → `` `code` `` (same)
+    - `- item` → `- item` (same)
+    - Tables: use Typst `#table()` syntax
+    - Mermaid code blocks: wrap in a placeholder note (Typst cannot render mermaid natively)
+    - ArchiMate references: if SVG exports exist in docs/diagrams/, use `#image("docs/diagrams/<view>.svg")`
+  - Write the .typ file to the same directory as the markdown (e.g., docs/functional-design.typ)
+  - Call builtin:verify_typst to validate the Typst syntax
+  - If verification fails, fix errors and re-verify (max 3 attempts)
+  - Push to Gitea via coding:push_changes (MANDATORY — make_pdf_document reads from Gitea)
+  - Call builtin:make_pdf_document to compile the PDF
+
+  Step 6: Call done()
+  - Do NOT submit for approval — the parent agent (BA/AR) handles that
+  - The parent agent receives both the markdown document and the PDF attachment
   - Summary: "Agent documenter: Formatted <document_type> document at <path>.
-    Mermaid validation passed. Document ready for review."
+    Mermaid validation passed. PDF generated. Document ready for review."
 
   ## MODE 3 RULES
 
-  - You format and write ONLY — no approval, no push, no done() status signals
+  - You format, write, and generate PDF — no approval, no done() status signals
   - Always validate mermaid before writing — if it fails, fix and retry
   - Follow the format skill template exactly
   - Do not add or remove content — format what the parent agent sent you

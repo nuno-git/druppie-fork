@@ -437,8 +437,22 @@ class ToolExecutor:
                 )
                 return None
 
-            # Validate arguments - this tries original first, then normalized if needed
-            is_valid, error_msg, validated_params, normalized_args = tool_def.validate_arguments(tool_call.arguments)
+            # Strip hidden (injected) params from the schema before validation,
+            # since the LLM never sees them — they're added in _apply_injection_rules.
+            hidden = self.mcp_config.get_hidden_params_for_full_name(full_name)
+            if hidden:
+                import copy
+                stripped_schema = copy.deepcopy(tool_def.json_schema)
+                props = stripped_schema.get("properties", {})
+                req = stripped_schema.get("required", [])
+                for param in hidden:
+                    props.pop(param, None)
+                stripped_schema["required"] = [r for r in req if r not in hidden]
+                is_valid, error_msg, validated_params, normalized_args = tool_def.validate_arguments(
+                    tool_call.arguments, schema_override=stripped_schema,
+                )
+            else:
+                is_valid, error_msg, validated_params, normalized_args = tool_def.validate_arguments(tool_call.arguments)
             if not is_valid:
                 return (
                     f"Invalid arguments for tool '{full_name}': {error_msg}. "
