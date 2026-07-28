@@ -236,14 +236,12 @@ const BranchEnvCard = ({
   onDisableWorkspace,
   onEnableAutoDeploy,
   onDisableAutoDeploy,
-  onChangeSecretsSource,
   isRedeploying,
   isDeleting,
   isEnablingWorkspace,
   isDisablingWorkspace,
   isEnablingAutoDeploy,
   isDisablingAutoDeploy,
-  isChangingSecretsSource,
 }) => {
   const isTransitional = TRANSITIONAL.has(env.status)
   const canOpen = env.status === 'running' && env.url
@@ -313,32 +311,6 @@ const BranchEnvCard = ({
         <div className="truncate">
           <span className="text-gray-400">image</span>{' '}
           <span className="font-mono">{env.image_tag || 'default'}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-gray-400">secrets</span>{' '}
-          <span className="font-mono text-xs">{env.secrets_source || 'colab-dev'}</span>
-          <button
-            onClick={() => {
-              const newSource = window.prompt(
-                `Change secrets source for "${env.branch}"?\n\n` +
-                'Enter a Vault path name (e.g. "colab-dev", "robbe", "nuno", or a custom name).\n' +
-                'Maps to druppie/<name>/* or druppie/developers/<name>/*.',
-                env.secrets_source || 'colab-dev'
-              )
-              if (newSource && newSource.trim() && newSource.trim() !== (env.secrets_source || 'colab-dev')) {
-                onChangeSecretsSource(env.id, newSource.trim())
-              }
-            }}
-            disabled={isChangingSecretsSource}
-            className="text-[10px] px-1.5 py-0.5 rounded text-gray-500 bg-gray-50 hover:bg-gray-100 hover:text-gray-700 transition-colors disabled:opacity-50"
-            title="Change secrets source"
-          >
-            {isChangingSecretsSource ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
-            ) : (
-              'change'
-            )}
-          </button>
         </div>
         {env.recovery_mode && (
           <div>
@@ -939,15 +911,6 @@ const BranchEnvironments = () => {
     onError: (err) => toast.error('Could not disable auto-deploy', err.message),
   })
 
-  const changeSecretsSourceMut = useMutation({
-    mutationFn: ({ id, secretsSource }) => branchEnvironmentsApi.changeSecretsSource(id, secretsSource),
-    onSuccess: (data) => {
-      toast.success('Secrets source changed', `Now using "${data.secrets_source}" secrets.`)
-      invalidate()
-    },
-    onError: (err) => toast.error('Could not change secrets source', err.message),
-  })
-
   return (
     <div className="space-y-4">
       <PageHeader
@@ -1029,14 +992,12 @@ const BranchEnvironments = () => {
               onDisableWorkspace={(id) => disableWorkspaceMut.mutate(id)}
               onEnableAutoDeploy={(id) => enableAutoDeployMut.mutate(id)}
               onDisableAutoDeploy={(id) => disableAutoDeployMut.mutate(id)}
-              onChangeSecretsSource={(id, src) => changeSecretsSourceMut.mutate({ id, secretsSource: src })}
               isRedeploying={redeployMut.isPending && redeployMut.variables === env.id}
               isDeleting={deleteMut.isPending && deleteMut.variables === env.id}
               isEnablingWorkspace={enableWorkspaceMut.isPending && enableWorkspaceMut.variables === env.id}
               isDisablingWorkspace={disableWorkspaceMut.isPending && disableWorkspaceMut.variables === env.id}
               isEnablingAutoDeploy={enableAutoDeployMut.isPending && enableAutoDeployMut.variables === env.id}
               isDisablingAutoDeploy={disableAutoDeployMut.isPending && disableAutoDeployMut.variables === env.id}
-              isChangingSecretsSource={changeSecretsSourceMut.isPending && changeSecretsSourceMut.variables?.id === env.id}
             />
           ))}
         </div>
