@@ -249,19 +249,63 @@ Project isolation is enforced in two independent layers:
    at another project even if the credential were over-scoped.
 
 Read tools: `list_backlog_items`, `get_work_item`, `search_work_items`,
-`get_current_sprint`, `get_sprint_summary`, `get_work_item_comments` (all
-`requires_approval: false`). Write tools: `create_work_item`, `update_work_item`,
+`get_current_sprint`, `get_sprint_summary`, `get_work_item_comments`, `resolve_user`
+(all `requires_approval: false`). Write tools: `create_work_item`, `update_work_item`,
 `add_work_item_comment` (`requires_approval: true`, `required_role: session_owner`).
 Consumed by the **Product Owner** agent. Isolation is pinned by
 `druppie/tests/test_azuredevops_isolation.py`.
 
+**@mention resolution:** `add_work_item_comment`, `create_work_item`, and
+`update_work_item` automatically resolve `@Display Name` patterns to Azure DevOps
+identity GUIDs via the Identity Picker API (`vssps.dev.azure.com`). Resolved mentions
+are replaced with `<a href="#" data-vss-mention="version:2.0,{GUID}">@Name</a>` HTML
+so that tagged users receive notifications. Resolution results are cached in-memory
+with a 1-hour TTL. Unresolved mentions are left as plain text (graceful degradation).
+The `resolve_user` tool exposes identity lookup directly so agents can verify names
+before mentioning.
+
 ### 2.6 Document Formatter Service
 
-PDF compilation from native **Typst** source files authored by agents. The Documenter agent writes `.typ` files using the Rijnland corporate identity template, pushes them to Gitea, and calls `builtin:make_pdf_document` to generate PDFs.
+PDF compilation from native **Typst** source files authored by agents. The Documenter agent writes `.typ` files using the project's corporate-identity template, pushes them to Gitea, and calls `builtin:make_pdf_document` to generate PDFs.
 
 **Flow:** Agent writes `.typ` file → pushes to Gitea → calls `builtin:make_pdf_document` → `PdfRenderService.get_or_create_pdf()` fetches source from Gitea → checks render cache (`pdf_renders` table keyed by Git blob SHA) → cache hit returns instantly; cache miss compiles via `DocumentFormatterService.compile_typ()` → stores PDF → creates `MessageAttachment` record → user downloads via `/api/attachments/{id}`.
 
-**Template library:** `druppie/templates/documents/rijnland.typ` — exposes a `rijnland_doc(body, ...)` function with parameters for document type (FO, TO, technical_research, core_documentation), title, status, TOC, watermark, section breaks, and author. Agents import it with `#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`. `base.typ` remains as a backward-compat alias but the Markdown conversion pipeline is gone.
+**Template library:** Each house style is one Typst module that exports a single show-rule function with an identical signature — parameters for document type (FO, TO, technical_research, core_documentation), title, status, TOC, watermark, section breaks, and author:
+
+- `druppie/templates/documents/rijnland.typ` → `rijnland_doc(body, ...)`
+- `druppie/templates/documents/hhsk.typ` → `hhsk_doc(body, ...)`
+
+Because the signatures match, only the `#import` line and the function name differ between styles — the parameter block an agent writes is otherwise byte-identical. The Markdown conversion pipeline is gone.
+
+#### 2.6.1 House styles
+
+Druppie ships two corporate identities, selectable per project:
+
+- **Rijnland** — Hoogheemraadschap van Rijnland (default).
+- **HHSK** — Hoogheemraadschap van Schieland en de Krimpenerwaard.
+
+**Single source of truth — the `DocumentHouseStyle` enum** (`druppie/domain/document_formatter.py`) maps a style to its Typst template and export function. It is a `str` enum (`rijnland` | `hhsk`) with three derived helpers so nothing else in the codebase has to hard-code paths:
+
+- `template_path` → `/druppie/templates/documents/<style>.typ` (the `--root`-relative import path)
+- `template_function` → `<style>_doc` (the show-rule function the module exports)
+- `import_line` → the exact `#import "<template_path>": <template_function>` line an agent must write
+
+`DEFAULT_HOUSE_STYLE = DocumentHouseStyle.RIJNLAND`.
+
+**Style-selection data flow:**
+
+1. `project.house_style` (`druppie/db/models/project.py`) — a constrained SQLAlchemy `Enum` column (`document_house_style`), `nullable=False`, defaulting to Rijnland. It is a real enum column, **not JSON and not free text**, so the database enforces the valid set. Changed via `PUT /api/projects/{id}/house-style` (`SetHouseStyleRequest` → `ProjectService.set_house_style`). Per project policy there is no migration — the column is added to the model and the DB is reset with `reset-db`.
+2. `Orchestrator.build_project_context()` reads `project.house_style.value` and injects it into the agent context as `document_house_style`.
+3. `PromptBuilder` renders that value into the agent's CONTEXT block.
+4. `documenter.yaml` maps the value to the correct import line and show rule (a two-row table keyed on `document_house_style`), falling back to `rijnland` if the value is absent.
+
+**Shared vs. per-style code:** `druppie/templates/documents/_shared.typ` holds only house-style-**agnostic** helpers — Dutch date/month formatting, `document-type-label` / `status-label`, the breakable-table-type set, and the standard disclaimer/notice strings. Everything visual (palette, fonts, gradients, grid, layout, logo placement) lives in the per-style file. The two styles are deliberately **not** forced onto one shared base template: the brands have materially different layout systems (HHSK uses an 8-part page grid, gradient headings, and a normative contrast matrix; Rijnland uses a conventional report layout with a full-bleed footer shape), and a common base would only accumulate conditionals.
+
+**Fonts:** the HHSK house font **Ruda** (family name `Ruda`, weights 400–900, no italic — emphasis maps to a heavier weight rather than a synthesised oblique) lives in `assets/fonts/ruda/`. Fonts are discovered recursively from `assets/fonts/`, so it auto-registers via Typst's `--font-path`; **no Dockerfile change was needed** to add it.
+
+**Asset layout:** the Dockerfile does `COPY druppie/ /app/druppie/`, so everything under `templates/documents/` ships in the image. Runtime assets referenced by a `.typ` (`assets/hhsk/logo.png`, `logo_white.png`, `Beeldmerk.svg`, and the fonts) stay under `assets/`. Reference-only material — the Huisstijlhandboek PDF and the `Vormelementen-2024.ai` shape library — is **not kept in the repository**: no `.typ` loads it, so it would only bloat the image. The same applies to the Red Hat Display font that arrived in HHSK's asset pack: the handbook never mentions it, no template uses it, and it is not shipped.
+
+**Cache correctness (note for future maintainers):** the `PdfRenderService` cache key is `(project_id, typ_path, git_blob_sha)`. The house style is encoded *inside* the `.typ` source (the import line and show rule), so changing a project's style changes the file contents and therefore the Git blob SHA — the cache invalidates naturally. **Do not add a house-style component to the cache key**; it would be redundant. This is stated explicitly so nobody "fixes" a non-problem.
 
 **Rijnland corporate identity applied by the template:**
 
@@ -278,9 +322,11 @@ PDF compilation from native **Typst** source files authored by agents. The Docum
 - Footer: Full-bleed dijk-en-sloot shape (`dijkEnSloot.png`) above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page / total". Excluded from title page.
 - Diagram rendering: Mermaid diagrams are rendered inline by the `@preview/mmdr:0.2.2` Typst package (pure Typst, no Chromium/Node.js). ArchiMate diagrams export to SVG via the `archimate:save_model` MCP tool (`module-archimate/v1/svg_export.py`, pure Python) and are embedded via `#image()` in the Typst source.
 
-**Font path resolution:** The Dockerfile installs Typst CLI and sets `TYPST_FONT_PATHS` to `/app/druppie/templates/documents/assets/fonts`. Custom TTF/OTF files are referenced by their internal family name (verify with `typst fonts --font-path <dir>`). The Google Fonts Lato files register as family **"Lato"** — weight is controlled via Typst's `weight` parameter. Neusa Next Pro files register as family **"Neusa Next Pro"**.
+**Font path resolution:** The Dockerfile installs Typst CLI and sets `TYPST_FONT_PATHS` to `/app/druppie/templates/documents/assets/fonts`; `DocumentFormatterService` additionally passes `<template_dir>/assets/fonts` as `--font-path`. Scanning is recursive, so a new family only needs its own subdirectory — no config change. Custom TTF/OTF files are referenced by their internal family name (verify with `typst fonts --font-path <dir>`). Lato registers as family **"Lato"** (weight controlled via Typst's `weight` parameter), Neusa Next Pro as **"Neusa Next Pro"**, and Ruda as **"Ruda"**.
 
-**Test fixtures:** `druppie/templates/documents/test-inputs/` contains FO and TO `.typ` source files for pytest.
+**Test fixtures:** `druppie/templates/documents/test-inputs/` contains FO and TO `.typ` source files for pytest, including an HHSK-styled variant (`hhsk-functional-design.typ`).
+
+**Notes:** while adding HHSK a pre-existing Rijnland zebra-striping bug was fixed — striped table rows were driven by `show table.cell.where(y: <predicate>)`, but `.where()` only matches literal field values, so a function predicate produced a selector that silently never matched. Row fills now use the `table` `fill: (x, y) => …` callback (the supported mechanism), which both styles use.
 
 ---
 

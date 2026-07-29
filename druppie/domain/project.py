@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .common import TokenUsage, DeploymentStatus
+from .document_formatter import DocumentHouseStyle
 
 if TYPE_CHECKING:
     from .session import SessionSummary
@@ -49,6 +50,7 @@ class ProjectSummary(BaseModel):
 class ProjectDetail(ProjectSummary):
     """Full project with stats. Inherits from ProjectSummary."""
     owner_id: UUID
+    house_style: DocumentHouseStyle
     token_usage: TokenUsage
     session_count: int
     deployment: DeploymentInfo | None

@@ -473,7 +473,7 @@ mcps:
       user_token:
         from: user.entra_token
         hidden: true
-        tools: [list_backlog_items, get_work_item, search_work_items, get_current_sprint, get_sprint_summary, get_work_item_comments, add_work_item_comment, create_work_item, update_work_item]
+        tools: [list_backlog_items, get_work_item, search_work_items, get_current_sprint, get_sprint_summary, get_work_item_comments, add_work_item_comment, create_work_item, update_work_item, resolve_user]
     tools:
       - name: list_backlog_items
         requires_approval: false
@@ -490,6 +490,8 @@ mcps:
       - name: add_work_item_comment
         requires_approval: true
         required_role: session_owner
+      - name: resolve_user
+        requires_approval: false
       - name: create_work_item
         requires_approval: true
         required_role: session_owner

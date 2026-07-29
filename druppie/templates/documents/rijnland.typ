@@ -20,6 +20,11 @@
 // ============================================================================
 
 // ============================================================================
+// IMPORTS
+// ============================================================================
+#import "_shared.typ": dutch-month-name, ai-generated-notice, ai-trajectory-disclaimer
+
+// ============================================================================
 // COLOR PALETTE
 // ============================================================================
 
@@ -41,14 +46,6 @@
 // ============================================================================
 // UTILITIES
 // ============================================================================
-
-#let dutch-month-name(m) = {
-  let names = (
-    "januari", "februari", "maart", "april", "mei", "juni",
-    "juli", "augustus", "september", "oktober", "november", "december"
-  )
-  names.at(m - 1)
-}
 
 // ============================================================================
 // DOCUMENT TEMPLATE
@@ -186,7 +183,7 @@
       #v(0.4cm)
 
       #text(size: 8pt, grijs-licht)[
-        Dit document is gegenereerd met behulp van AI.
+        #ai-generated-notice
       ]
 
       #if show-watermark {
@@ -204,8 +201,7 @@
       #v(0.6cm)
 
       #text(size: 9pt, grijs-licht)[
-        Dit traject dient om het AI-platform te leren en verbeteren.
-        Geen garantie op een volledige oplossing, vaste planning of maatwerkontwikkeling.
+        #ai-trajectory-disclaimer
       ]
     ]
 
@@ -296,15 +292,25 @@
     )
   }
 
-  show table.header: set table.cell(
-    fill: rijnland-blauw,
+  // Row fills are driven by table's `fill` callback, NOT by
+  // `show table.cell.where(y: <predicate>)`. `.where()` only matches literal
+  // field values — handing it a function produces a selector that silently
+  // never matches, so a predicate-based striping rule compiles fine and then
+  // does nothing. The callback is the supported mechanism.
+  set table(
     inset: 6pt,
+    // y == 0 is the header row (whether declared via table.header or just
+    // written as the first row); odd rows below it get the subtle stripe.
+    fill: (x, y) => {
+      if y == 0 { rijnland-blauw } else if calc.rem(y, 2) == 1 { rijnland-blauw-10 }
+    },
   )
+
   show table.header: set text(weight: "bold", fill: white, size: 9pt)
   show table.cell: set text(size: 9pt)
-
-  // Striped rows — every odd row (excluding header at y=0)
-  show table.cell.where(y: y => calc.rem(y, 2) == 1): set table.cell(fill: rijnland-blauw-10)
+  // Header row: white on rijnland-blauw, also when written as a plain first
+  // row rather than an explicit table.header.
+  show table.cell.where(y: 0): set text(weight: "bold", fill: white, size: 9pt)
 
   // ---- Code blocks ---------------------------------------------------------
   show raw.where(block: true): it => {

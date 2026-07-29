@@ -24,7 +24,7 @@ from druppie.core.gitea import GiteaClient
 from druppie.db.database import get_db
 from druppie.db.models import Session as SessionModel
 from druppie.services import ProjectService
-from druppie.domain import ProjectSummary, ProjectDetail
+from druppie.domain import DocumentHouseStyle, ProjectSummary, ProjectDetail
 
 logger = structlog.get_logger()
 
@@ -137,6 +137,29 @@ async def get_project(
     user_roles = get_user_roles(user)
 
     return service.get_detail(project_id, user_id, user_roles)
+
+
+class SetHouseStyleRequest(BaseModel):
+    """Body for changing a project's document house style."""
+    house_style: DocumentHouseStyle
+
+
+@router.put("/projects/{project_id}/house-style", response_model=ProjectDetail)
+async def set_project_house_style(
+    project_id: UUID,
+    body: SetHouseStyleRequest,
+    service: ProjectService = Depends(get_project_service),
+    user: dict = Depends(get_current_user),
+) -> ProjectDetail:
+    """Set the corporate identity used to render this project's documents.
+
+    The documenter agent receives this value as context and imports the
+    matching Typst template when exporting a PDF.
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+
+    return service.set_house_style(project_id, body.house_style, user_id, user_roles)
 
 
 class DeleteProjectsRequest(BaseModel):

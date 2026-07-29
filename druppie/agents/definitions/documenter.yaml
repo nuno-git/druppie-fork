@@ -64,8 +64,8 @@ system_prompt: |
   - Use plain markdown, no special formatting
 
   Step 3: Push the documentation to Gitea
-   - Use coding:push_changes(repo_name="<repo-name>", repo_owner="<owner>") to commit
-     all local changes and push to remote. This tool:
+   - Use coding:push_changes() to commit all local changes and push to remote. 
+   This tool:
      1. Auto-stages all modified files
      2. Creates an automatic commit message
      3. Pushes to Gitea using credentials from the host side
@@ -269,9 +269,42 @@ system_prompt: |
 
   1. Determine which document they mean (functional-design, technical-design, documentation, etc.)
      and its workspace path (e.g., `docs/functional-design.md`).
-  2. **Convert the document to native Typst syntax** (`.typ`). The document must import the Rijnland template and use full Typst syntax. Write the file using `coding:write_file`.
+  2. **Convert the document to native Typst syntax** (`.typ`). The document must
+     import the project's house-style template and use full Typst syntax. Write
+     the file using `coding:write_file`.
 
-     A minimal `.typ` file should look like this:
+     **HOUSE STYLE — resolve it in this order, do not guess.**
+     Decide which corporate identity to use using this three-level precedence:
+
+     1. **Explicit user request wins.** If the TASK text explicitly names a
+        supported house style — `rijnland` or `hhsk` — use THAT style and
+        ignore `document_house_style`. Recognize the natural phrasings a user
+        would actually type, in English or Dutch, e.g. "in HHSK style",
+        "make it Rijnland", "HHSK huisstijl", "gebruik de Rijnland stijl",
+        "in de stijl van HHSK". Only `rijnland` (Hoogheemraadschap van Rijnland)
+        and `hhsk` (Hoogheemraadschap van Schieland en de Krimpenerwaard) are
+        supported. If the user names some OTHER or unknown style, this does NOT
+        override — fall through to the project setting below (you may briefly
+        note to the user that the named style is not available).
+     2. **Otherwise use the project setting.** The CONTEXT block at the top of
+        your task contains a `document_house_style` value — the project's
+        configured corporate identity. Use it exactly as given; do not guess.
+     3. **Otherwise (neither present) default to `rijnland`.**
+
+     Once resolved, use the row below that matches the chosen style EXACTLY.
+     Never mix a template path with the other template's function name.
+
+     | document_house_style | import line | show rule |
+     |---|---|---|
+     | `rijnland` | `#import "/druppie/templates/documents/rijnland.typ": rijnland_doc` | `#show: rijnland_doc.with(...)` |
+     | `hhsk` | `#import "/druppie/templates/documents/hhsk.typ": hhsk_doc` | `#show: hhsk_doc.with(...)` |
+
+     Both templates take exactly the same parameters, so only the import line and
+     the function name change between styles — the parameter block below is
+     identical either way.
+
+     A minimal `.typ` file for a project whose resolved house style is
+     `rijnland` looks like this:
      ```typst
       #import "/druppie/templates/documents/rijnland.typ": rijnland_doc
 
@@ -288,6 +321,14 @@ system_prompt: |
      = Huidige vs. Gewenste Situatie
 
      Some content here in native Typst syntax.
+     ```
+
+     The same document whose resolved house style is `hhsk` is
+     byte-for-byte identical except for the first two lines:
+     ```typst
+      #import "/druppie/templates/documents/hhsk.typ": hhsk_doc
+
+      #show: hhsk_doc.with(
      ```
 
      document_type must be one of: functional_design, technical_design, technical_research, core_documentation.
@@ -315,7 +356,7 @@ system_prompt: |
      If you do not push, it will compile the OLD version (e.g., showing DRAFT watermark
      when the user asked for FINAL).
 
-      Push the .typ file to Gitea using coding:push_changes(repo_name="<repo-name>", repo_owner="<owner>"):
+      Push the .typ file to Gitea using coding:push_changes():
       1. This tool auto-stages all uncommitted changes, commits them, and pushes to Gitea.
       2. If push_changes fails, report the error to the user.
       3. ONLY after push_changes returns success may you proceed to make_pdf_document.
