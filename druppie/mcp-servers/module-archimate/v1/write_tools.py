@@ -12,7 +12,6 @@ buffer in memory; ``save_model`` writes to disk.
 import logging
 from typing import Any
 
-from .svg_export import export_all_views
 from .writer import (
     ELEMENT_TYPE_LAYER,
     RIJNLAND_CONCEPTS,
@@ -65,7 +64,10 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def create_element(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         element_type: str,
         name: str,
         documentation: str = "",
@@ -73,7 +75,7 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name)
             ident = doc.create_element(
                 element_type=element_type,
                 name=name,
@@ -93,14 +95,17 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def update_element(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         element_id: str,
         name: str = "",
         documentation: str = "",
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path, create_if_missing=False)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name, create_if_missing=False)
             kwargs: dict[str, Any] = {}
             if name:
                 kwargs["name"] = name
@@ -127,12 +132,15 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def delete_element(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         element_id: str,
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path, create_if_missing=False)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name, create_if_missing=False)
             cascade = doc.delete_element(element_id)
             return _result({"element_id": element_id, **cascade})
         except ArchiMateWriteError as e:
@@ -152,7 +160,10 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def create_relationship(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         relationship_type: str,
         source_id: str,
         target_id: str,
@@ -161,7 +172,7 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name)
             ident = doc.create_relationship(
                 relationship_type=relationship_type,
                 source_id=source_id,
@@ -179,14 +190,17 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def update_relationship(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         relationship_id: str,
         name: str = "",
         access_type: str = "",
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path, create_if_missing=False)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name, create_if_missing=False)
             kwargs: dict[str, Any] = {}
             if name:
                 kwargs["name"] = name
@@ -208,12 +222,15 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def delete_relationship(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         relationship_id: str,
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path, create_if_missing=False)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name, create_if_missing=False)
             doc.delete_relationship(relationship_id)
             return _result({"relationship_id": relationship_id})
         except ArchiMateWriteError as e:
@@ -236,7 +253,10 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def add_to_view(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         view_id: str,
         element_id: str,
         x: int = -1,
@@ -246,7 +266,7 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name)
             node_id = doc.add_to_view(
                 view_id,
                 element_id,
@@ -268,13 +288,16 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def add_connection_to_view(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         view_id: str,
         relationship_id: str,
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name)
             conn_id = doc.add_connection_to_view(view_id, relationship_id)
             return _result({"connection_id": conn_id, "view_id": view_id, "relationship_id": relationship_id})
         except ArchiMateWriteError as e:
@@ -286,13 +309,16 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def remove_from_view(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         view_id: str,
         element_id: str,
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path, create_if_missing=False)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name, create_if_missing=False)
             doc.remove_from_view(view_id, element_id)
             return _result({"view_id": view_id, "element_id": element_id})
         except ArchiMateWriteError as e:
@@ -311,13 +337,16 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def get_or_create_wilma_reference(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         wilma_element_id: str,
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
             registry = _registry()
-            doc = registry.get(session_id, model_path)
+            doc = await registry.get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name)
             wilma = registry.wilma()
             ident = doc.copy_element_from(wilma, wilma_element_id)
             return _result({"element_id": ident, "wilma_source": True})
@@ -329,33 +358,32 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
     @mcp.tool(
         name="save_model",
         description=(
-            "Persist all buffered changes to disk. Approval-gated. "
-            "Returns the absolute path of the written file. After save, "
-            "use coding.run_git to commit + push to Gitea."
+            "Persist the buffered model to the project repository on Gitea. "
+            "Commits docs/architecture.archimate plus one rendered SVG per "
+            "positioned view under docs/diagrams/ (so Gitea previews the plate "
+            "and the TD viewer renders it). Approval-gated. Idempotent when "
+            "there are no changes to save."
         ),
         meta=meta,
     )
     async def save_model(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path)
-            if not doc.dirty:
-                return _result({"path": str(doc.path), "written": False, "reason": "no_changes"})
-            path = doc.save()
-            # Also export an SVG per positioned view to docs/diagrams/
-            # so the plates are visible directly in Gitea's file preview
-            # (Gitea renders SVG inline, ArchiMate XML it doesn't).
-            diagrams_dir = path.parent / "diagrams"
-            svg_paths: list[str] = []
-            try:
-                svg_paths = [str(p) for p in export_all_views(doc.root, diagrams_dir)]
-            except Exception as exc:  # noqa: BLE001 — never block save on SVG export
-                logger.warning("SVG export failed for %s: %s", path, exc)
-            return _result(
-                {"path": str(path), "written": True, "svg_exports": svg_paths}
+            registry = _registry()
+            # Ensure the model is buffered (returns the in-session buffer if a
+            # prior tool call built the plate; otherwise fetches from Gitea).
+            await registry.get(
+                session_id, model_path, repo_owner=repo_owner, repo_name=repo_name
             )
+            result = await registry.persist(
+                session_id, model_path, repo_owner=repo_owner, repo_name=repo_name
+            )
+            return _result(result)
         except ArchiMateWriteError as e:
             return _error(str(e))
 
@@ -369,12 +397,15 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def request_full_relayout(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         view_id: str,
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path, create_if_missing=False)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name, create_if_missing=False)
             view = doc.find_view(view_id)
             if view is None:
                 return _error(f"View '{view_id}' not found")
@@ -415,7 +446,10 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def add_layered_view(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         name: str,
         business: list[dict] | None = None,
         application: list[dict] | None = None,
@@ -427,6 +461,8 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
     ) -> dict:
         return await _build_composite_view(
             session_id=session_id,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
             view_name=name,
             view_documentation=documentation,
             groups={
@@ -455,7 +491,10 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def add_cooperation_view(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         name: str,
         peers: list[dict] | None = None,
         shared_services: list[dict] | None = None,
@@ -465,6 +504,8 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
     ) -> dict:
         return await _build_composite_view(
             session_id=session_id,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
             view_name=f"{name} — Application Cooperation",
             view_documentation=documentation,
             groups={
@@ -493,12 +534,15 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def validate_view(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         view_id: str,
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path, create_if_missing=False)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name, create_if_missing=False)
             view = doc.find_view(view_id)
             if view is None:
                 return _error(f"View '{view_id}' not found")
@@ -523,12 +567,15 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         meta=meta,
     )
     async def assess_layout(
-        session_id: str,
+        *,
+        session_id: str = "",
+        repo_name: str = "",
+        repo_owner: str = "",
         view_id: str,
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
-            doc = _registry().get(session_id, model_path, create_if_missing=False)
+            doc = await _registry().get(session_id, model_path, repo_owner=repo_owner, repo_name=repo_name, create_if_missing=False)
             view = doc.find_view(view_id)
             if view is None:
                 return _error(f"View '{view_id}' not found")
@@ -570,6 +617,8 @@ def _ns() -> dict[str, str]:
 async def _build_composite_view(
     *,
     session_id: str,
+    repo_owner: str,
+    repo_name: str,
     view_name: str,
     view_documentation: str,
     groups: dict[str, list[dict]],
@@ -585,7 +634,9 @@ async def _build_composite_view(
     """
     try:
         registry = _registry()
-        doc = registry.get(session_id, model_path)
+        doc = await registry.get(
+            session_id, model_path, repo_owner=repo_owner, repo_name=repo_name
+        )
 
         # Pre-flight: normalise relationship direction/type against the
         # ArchiMate metamodel BEFORE writing anything. Reversed Serving /

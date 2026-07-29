@@ -429,15 +429,17 @@ class GiteaClient:
         path: str,
         branch: str = "main",
         limit: int = 2,
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """List the most recent commits that touched ``path``.
 
         Returns ``result["commits"]`` as a list of
         ``{sha, message, author, timestamp}`` dicts, newest first.
         """
+        repo_owner = owner or self.org
         result = await self._request(
             "GET",
-            f"/repos/{self.org}/{repo}/commits",
+            f"/repos/{repo_owner}/{repo}/commits",
             params={"sha": branch, "path": path, "limit": limit},
         )
 

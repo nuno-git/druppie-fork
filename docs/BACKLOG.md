@@ -1,3 +1,10 @@
+> **⚠️ SUPERSEDED** — The architectural decisions from this backlog have been
+> migrated to proposed ADRs:
+> - **ADRs 015-017** (`docs/adrs/`) — database-domain alignment, context window management, observability strategy
+>
+> Remaining items (bugs, tech debt, minor feature ideas) should be tracked as
+> GitHub Issues, not in this file. This file is retained for historical reference.
+
 # Backlog
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
@@ -240,7 +247,7 @@ Last updated: 2026-07-15
 
 ### ~~Language Matching~~ ✅ DONE
 
-- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a dedicated DeepInfra/Qwen service. See [docs/TRANSLATION.md](TRANSLATION.md) for details.
+- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a configurable translation model (legacy default Gemma 3 27B). See [ADR 006](adrs/006-translation-subsystem.md) for the decision and wiring detail.
 
 ### File Upload: Context Window Guardrails for Large Attachments
 
@@ -364,7 +371,7 @@ Last updated: 2026-07-15
 
 ### Kubernetes — Production Hardening (TLS, External Secrets, HPA)
 
-- **Current state:** The Helm chart is designed for local Kind clusters. Production requires TLS, external secret management, autoscaling, and a real container registry. See `docs/kubernetes.md` section 9 and `docs/KUBERNETES-STRATEGY.md` for the full production roadmap.
+- **Current state:** The Helm chart is designed for local Kind clusters. Production requires TLS, external secret management, autoscaling, and a real container registry. See `docs/guides/kubernetes-deployment.md` section 9 and `docs/research/006-kubernetes-strategy.md` for the full production roadmap.
 - **Desired improvement:**
   - cert-manager integration for automatic TLS certificates
   - External Secrets Operator or Sealed Secrets support
@@ -417,7 +424,7 @@ Last updated: 2026-07-15
   - Use DuckDB/Polars to run SQL-style aggregation directly over CSV/Parquet with column projection (no full in-memory materialization).
   - Cache the read/aggregation within a session so follow-up charts don't re-scan.
   - Chunked/streaming aggregation for files too large to hold in memory.
-- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/MCP/data-access.md`.
+- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/adrs/020-data-access-mcp.md`.
 
 ### Visualization — Smarter Graphing
 
@@ -617,3 +624,30 @@ Security review findings from the Entra ID broker implementation. These are know
 - Frontend "Download PDF" button in chat timeline or project page.
 
 **Priority:** Medium — agent-driven PDF generation works; REST API purely adds convenience.
+
+#### HHSK house style — follow-ups
+
+The HHSK corporate identity (`druppie/templates/documents/hhsk.typ`) is live alongside Rijnland, selectable per project via `PUT /api/projects/{id}/house-style`. Known gaps, recorded honestly:
+
+- **No frontend UI to set house style** — the style is API-only for now. A project setting / dropdown is needed.
+- **Title-page shape is a placeholder** — the graphic shape element on the cover is a plain bleeding rounded rect. The real vector shapes exist in HHSK's `Vormelementen-2024.ai` shape library, which is not in this repo (re-request it from HHSK), and are not yet wired as SVG. The user has been asked to supply SVG shape assets.
+- **White logo and beeldmerk are wired but unplaced** — `logo_white.png` (diapositief) and `Beeldmerk.svg` are registered as available assets but not used in the default report layout. The only coloured surface (the title-page shape) is a light 40% tint, on which white/colour marks fail the accessibility contrast matrix. They become usable once a compliant coloured surface (e.g. a donkerblauw chapter divider or cover photo) is designed.
+- **Unsigned-off type scale / layout values** — several point sizes, leading, table padding, gradient angle, etc. are `// CHOICE:` decisions in `hhsk.typ` that the Huisstijlhandboek does not specify. Pending brand sign-off before treating them as brand-approved.
+- **Two brand-source ambiguities flagged to HHSK** (mediateam@hhsk.nl): (1) the handbook contradicts itself on logo placement between pages 2 and 3 — resolved to top-left per p2 plus p3's own artwork; (2) the handbook's printed hex for the two 40% tints differs from the vector source — the `.ai` values were used. Both need confirmation.
+- **Ruda has no italic** — emphasis maps to a heavier weight (SemiBold/Bold) rather than a synthesised oblique, which would be off-brand.
+
+**Unrelated baseline note:** roughly ~50 test-suite failures exist at baseline, independent of the HHSK work. Recorded here so the HHSK feature is not blamed for pre-existing red.
+---
+
+## Coding Agent Quality (salvaged from sprint docs)
+
+> Salvaged from the archived coding-agent stories (now removed; their content was fully superseded by the ADRs/PRDs above). The as-built runtime is documented in `docs/TECHNICAL.md` §11.
+
+| Item | Source | Description |
+|------|--------|-------------|
+| **Core agent self-test in sandbox** | supplement C1–C3 | Coding agents must be able to install Druppie core dependencies and run the core test suite (unit + Playwright) inside their sandbox, so an agent can verify its own changes build and pass tests. |
+| **Better planner — smarter task decomposition** | supplement P1–P4 | `builder_planner` should investigate the codebase (patterns, dependencies, data model) before planning, produce at least 2 proposals with pros/cons/impact/effort, ask developer approval before executing, and emit code conventions, test strategy, and file-level change approach. Detect cross-file dependencies. |
+| **Error recovery — retry & fallback** | supplement F1–F3 | Auto-recreate the sandbox container on crash while the agent keeps running; cap build/test failures at 3 retries with a failure report back to the parent; eliminate silent crashes so every error surfaces in events. |
+| **E2E test — vergunningzoeker build** | supplement E1–E5 | End-to-end proof that the coding agent builds the full vergunningzoeker application: `docker compose build` succeeds, app reachable on HTTP port, functional endpoints work as specified, at least one test passes, and the agent does not stop/crash mid-execution. |
+| **Network isolation E2E at agent-pipeline layer** | sprint-overview item 6 | The infrastructure layer is tested (6/6 ✅), but the full chain YAML config → context injection → container networks through a real agent run is not yet exercised end-to-end. |
+| **Sandbox `modules` network use case** | sprint-overview item 7 | `test_executor` has `networks: [modules]` but the practical use case is undefined. Clarify whether the sandbox can call the data-access MCP directly (e.g. `bash curl` to its HTTP endpoint) or whether an MCP client inside the sandbox is required. |

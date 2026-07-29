@@ -1,7 +1,8 @@
 """Document Formatter Service.
 
-Compiles native Typst source files into professionally formatted PDFs
-using the Rijnland corporate identity template.
+Compiles native Typst source files into professionally formatted PDFs.
+The corporate identity is chosen by the .typ source itself, which imports
+one of the house-style templates in druppie/templates/documents/.
 """
 
 import os
@@ -33,7 +34,7 @@ class DocumentFormatterService:
         """Initialize with path to Typst templates.
 
         Args:
-            template_dir: Directory containing rijnland.typ and assets/.
+            template_dir: Directory containing the house-style templates and assets/.
                 Defaults to druppie/templates/documents/.
         """
         if template_dir is None:

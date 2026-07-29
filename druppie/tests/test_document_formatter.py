@@ -7,6 +7,7 @@ if typst is installed) to verify the document pipeline.
 from __future__ import annotations
 
 import io
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from unittest.mock import patch
 import pypdf
 import pytest
 
+from druppie.domain import DocumentHouseStyle
 from druppie.services.document_formatter_service import (
     DocumentFormatterError,
     DocumentFormatterService,
@@ -139,6 +141,100 @@ class TestDocumentFormatterFunctional:
         )
         pdf_bytes = svc.compile_typ(tmp)
         assert len(pdf_bytes) > 100
+
+    def test_hhsk_functioneel_ontwerp_compiles(self):
+        """The HHSK house-style fixture compiles to a real PDF."""
+        svc = DocumentFormatterService()
+        typ_path = _test_input("hhsk-functional-design")
+
+        pdf_bytes = svc.compile_typ(typ_path)
+
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        assert len(reader.pages) >= 1
+
+    @pytest.mark.parametrize("style", list(DocumentHouseStyle))
+    def test_every_house_style_template_compiles(self, style):
+        """Each DocumentHouseStyle maps to a template that actually compiles.
+
+        Guards the enum -> template mapping: if a style's template_path or
+        template_function is wrong, the import fails and this test catches it.
+        Both templates take an identical parameter list, so the same body
+        works for every style.
+        """
+        svc = DocumentFormatterService()
+        tmp = Path("/app") / "tmp" / f"test-style-{style.value}.typ"
+        tmp.write_text(
+            f'{style.import_line}\n\n'
+            f'#show: {style.template_function}.with(\n'
+            f'  title: "House Style Test",\n'
+            f'  document_type: "functional_design",\n'
+            f'  status: "DRAFT",\n'
+            f'  project_name: "Test",\n'
+            f'  include_toc: false,\n'
+            f'  include_watermark: false,\n'
+            f'  section_breaks: false,\n'
+            f')\n\n'
+            f'= Section\n\nSome content.\n',
+            encoding="utf-8",
+        )
+
+        pdf_bytes = svc.compile_typ(tmp)
+        assert len(pdf_bytes) > 100
+
+    @pytest.mark.parametrize(
+        "style,stripe_rgb",
+        [
+            # Colours are the ones each template defines for odd body rows.
+            (DocumentHouseStyle.RIJNLAND, (0xE9, 0xEF, 0xFA)),  # rijnland-blauw-10
+            (DocumentHouseStyle.HHSK, (0xD2, 0xEE, 0xF0)),      # lichtblauw-40
+        ],
+    )
+    def test_table_zebra_striping_renders(self, style, stripe_rgb):
+        """Odd table rows are actually filled with the stripe colour.
+
+        Regression test: both templates previously risked using
+        `show table.cell.where(y: <predicate>)`, which silently matches
+        nothing because `.where()` compares literal field values rather than
+        calling a predicate. Striping must come from table's `fill` callback.
+        We assert on the PDF content stream so a non-rendering rule fails.
+        """
+        svc = DocumentFormatterService()
+        tmp = Path("/app") / "tmp" / f"test-zebra-{style.value}.typ"
+        tmp.write_text(
+            f'{style.import_line}\n\n'
+            f'#show: {style.template_function}.with(\n'
+            f'  title: "Zebra",\n'
+            f'  document_type: "technical_design",\n'
+            f'  status: "FINAL",\n'
+            f'  project_name: "Test",\n'
+            f'  include_toc: false,\n'
+            f'  include_watermark: false,\n'
+            f'  section_breaks: false,\n'
+            f')\n\n'
+            f'= Table\n\n'
+            f'#table(columns: 2, [H1],[H2], [a1],[a2], [b1],[b2], [c1],[c2])\n',
+            encoding="utf-8",
+        )
+
+        pdf_bytes = svc.compile_typ(tmp)
+
+        expected = " ".join(f"{channel / 255:.4f}".rstrip("0") for channel in stripe_rgb)
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        fills: set[str] = set()
+        for page in reader.pages:
+            stream = page["/Contents"].get_data().decode("latin-1")
+            fills.update(re.findall(r"([0-9.]+ [0-9.]+ [0-9.]+) scn", stream))
+
+        # Compare rounded triples so float formatting differences don't matter.
+        found = {
+            tuple(round(float(component), 3) for component in fill.split())
+            for fill in fills
+        }
+        target = tuple(round(channel / 255, 3) for channel in stripe_rgb)
+        assert target in found, (
+            f"stripe colour {expected} not present in rendered table; "
+            f"found fills: {sorted(found)}"
+        )
 
     def test_verify_typ_reports_syntax_ok(self):
         """verify_typ returns True for a clean .typ file."""

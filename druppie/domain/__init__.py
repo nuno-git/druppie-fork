@@ -54,10 +54,10 @@ from .evaluation import (
 )
 
 # Documentation models
-from .documentation import DocumentationEntry
+from .documentation import DocumentationEntry, PlatformDocEntry
 
 # Document formatter models
-from .document_formatter import DocumentMetadata
+from .document_formatter import DEFAULT_HOUSE_STYLE, DocumentHouseStyle, DocumentMetadata
 
 # Common models
 from .common import (
@@ -167,7 +167,10 @@ __all__ = [
     "UserInfo",
     # Documentation
     "DocumentationEntry",
+    "PlatformDocEntry",
     # Document formatter
+    "DEFAULT_HOUSE_STYLE",
+    "DocumentHouseStyle",
     "DocumentMetadata",
     # Agent definition
     "AgentDefinition",

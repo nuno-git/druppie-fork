@@ -259,7 +259,7 @@ archetype and skip the rest.
 
 The full menu of TR-RAG-XX requirements with per-archetype defaults
 lives in
-[rag-patterns research → Default-NFR-tabel](../../../docs/RAG/rag-patterns.md#default-nfr-tabel).
+[rag-patterns research → Default-NFR-tabel](../../../docs/research/001-rag-patterns.md#default-nfr-tabel).
 Cite from it as needed — do not paste the entire table into every TD.
 
 ## How to land this in a TD
@@ -320,9 +320,9 @@ In the Technical Design of a RAG project:
 ## References
 
 - Research foundation with full comparison + trade-off tables:
-  [`docs/RAG/rag-patterns.md`](../../../docs/RAG/rag-patterns.md)
+  [`docs/research/001-rag-patterns.md`](../../../docs/research/001-rag-patterns.md)
 - Module-rag orchestrator spec (Story B):
-  [`docs/RAG/module-rag-spec.md`](../../../docs/RAG/module-rag-spec.md)
+  [`docs/prds/001-module-rag.md`](../../../docs/prds/001-module-rag.md)
 - Module-vectorstore primitive (v1, code):
   [`druppie/mcp-servers/app-local pgvector (`rag.py`)/`](../../mcp-servers/app-local pgvector (`rag.py`)/)
 - Platform standards RAG section (defaults seeded into every project):

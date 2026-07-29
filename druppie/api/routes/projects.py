@@ -24,7 +24,7 @@ from druppie.core.gitea import GiteaClient
 from druppie.db.database import get_db
 from druppie.db.models import Session as SessionModel
 from druppie.services import ProjectService
-from druppie.domain import ProjectSummary, ProjectDetail
+from druppie.domain import DocumentHouseStyle, ProjectSummary, ProjectDetail
 
 logger = structlog.get_logger()
 
@@ -139,6 +139,29 @@ async def get_project(
     return service.get_detail(project_id, user_id, user_roles)
 
 
+class SetHouseStyleRequest(BaseModel):
+    """Body for changing a project's document house style."""
+    house_style: DocumentHouseStyle
+
+
+@router.put("/projects/{project_id}/house-style", response_model=ProjectDetail)
+async def set_project_house_style(
+    project_id: UUID,
+    body: SetHouseStyleRequest,
+    service: ProjectService = Depends(get_project_service),
+    user: dict = Depends(get_current_user),
+) -> ProjectDetail:
+    """Set the corporate identity used to render this project's documents.
+
+    The documenter agent receives this value as context and imports the
+    matching Typst template when exporting a PDF.
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+
+    return service.set_house_style(project_id, body.house_style, user_id, user_roles)
+
+
 class DeleteProjectsRequest(BaseModel):
     """Body for project deletion."""
     project_ids: list[UUID] | None = None
@@ -193,13 +216,15 @@ async def get_project_file(
 
     client = GiteaClient()
     try:
-        result = await client.get_file(project.repo_name, path, branch=branch or "main")
+        result = await client.get_file(
+            project.repo_name, path, branch=branch or "main", owner=project.repo_owner
+        )
     finally:
         await client.close()
 
     if not result.get("success"):
         error = result.get("error") or "Gitea fetch failed"
-        if "not found" in str(error).lower() or result.get("status") == 404:
+        if "not found" in str(error).lower() or result.get("status_code") == 404:
             raise NotFoundError("file", path)
         raise ValidationError(f"Failed to read file: {error}", field="path")
 
@@ -296,6 +321,7 @@ async def get_project_file_changes(
     try:
         commits_result = await client.list_commits_for_path(
             project.repo_name, path, branch=branch or "main", limit=2,
+            owner=project.repo_owner,
         )
         commits = commits_result.get("commits") if commits_result.get("success") else []
         if not commits:
@@ -306,7 +332,7 @@ async def get_project_file_changes(
 
         # Read at the latest commit
         latest = commits[0]
-        current = await client.get_file(project.repo_name, path, branch=latest["sha"])
+        current = await client.get_file(project.repo_name, path, branch=latest["sha"], owner=project.repo_owner)
         if not current.get("success") or not current.get("content"):
             return ProjectFileChangesResponse(
                 path=path, branch=branch or "main",
@@ -320,7 +346,7 @@ async def get_project_file_changes(
         previous_sha: str | None = None
         if len(commits) > 1:
             previous_sha = commits[1]["sha"]
-            previous = await client.get_file(project.repo_name, path, branch=previous_sha)
+            previous = await client.get_file(project.repo_name, path, branch=previous_sha, owner=project.repo_owner)
             if previous.get("success"):
                 previous_content = previous.get("content")
     finally:

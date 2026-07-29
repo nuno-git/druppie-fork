@@ -94,7 +94,7 @@ citation-backed Q&A, large-document retrieval) the platform defaults are:
 | Embeddings | `module-llm` `embed` tool via the Druppie SDK (stateless, shared). Research recommends `multilingual-e5-large-instruct` (MIT, multilingual, CPU-feasible); `module-llm` config pins the active default. |
 | Retrieval | Semantic (cosine similarity) via `rag.py` `search()`. Hybrid (BM25 + dense) with RRF k=60 is a future upgrade — application-layer BM25 fusion until then. |
 | BM25 analyzer | Language-specific (`to_tsvector('<corpus-language>', ...)`) per field — application-layer |
-| Chunking | Recursive splitter, default `chunk_size=2048` / `chunk_overlap=256` characters (≈ 512 tokens, per the 2026 benchmarks in `docs/RAG/rag-patterns.md`) |
+| Chunking | Recursive splitter, default `chunk_size=2048` / `chunk_overlap=256` characters (≈ 512 tokens, per the 2026 benchmarks in `docs/research/001-rag-patterns.md`) |
 | Re-ranking | BGE-reranker-v2-m3 self-hosted — application layer |
 | Citation metadata | `source_name` + `source_page` + `source_section` + `chunk_id` returned by every search result |
 | Citation format | Footnote style in formal Markdown output + anchor tags for interactive UI |

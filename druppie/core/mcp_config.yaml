@@ -262,6 +262,17 @@ mcps:
           - validate_view
           - add_layered_view
           - add_cooperation_view
+      # Project repo coordinates — the write tools read/write the model file
+      # (docs/architecture.archimate) directly against Gitea, so they need to
+      # know which repo. Same source as the coding MCP.
+      repo_name:
+        from: project.repo_name
+        hidden: true
+        tools: [create_element, update_element, delete_element, create_relationship, update_relationship, delete_relationship, add_to_view, add_connection_to_view, remove_from_view, get_or_create_wilma_reference, save_model, request_full_relayout, assess_layout, validate_view, add_layered_view, add_cooperation_view]
+      repo_owner:
+        from: project.repo_owner
+        hidden: true
+        tools: [create_element, update_element, delete_element, create_relationship, update_relationship, delete_relationship, add_to_view, add_connection_to_view, remove_from_view, get_or_create_wilma_reference, save_model, request_full_relayout, assess_layout, validate_view, add_layered_view, add_cooperation_view]
     tools:
       # --- Read-only WILMA reference tools ---
       - name: list_models
@@ -462,7 +473,7 @@ mcps:
       user_token:
         from: user.entra_token
         hidden: true
-        tools: [list_backlog_items, get_work_item, search_work_items, get_current_sprint, get_sprint_summary, get_work_item_comments, add_work_item_comment, create_work_item, update_work_item]
+        tools: [list_backlog_items, get_work_item, search_work_items, get_current_sprint, get_sprint_summary, get_work_item_comments, add_work_item_comment, create_work_item, update_work_item, resolve_user]
     tools:
       - name: list_backlog_items
         requires_approval: false
@@ -479,6 +490,8 @@ mcps:
       - name: add_work_item_comment
         requires_approval: true
         required_role: session_owner
+      - name: resolve_user
+        requires_approval: false
       - name: create_work_item
         requires_approval: true
         required_role: session_owner
