@@ -10,6 +10,7 @@ from .base import BaseRepository
 from ..db.models import Project, Session as SessionModel
 from ..db.models.user import User as UserModel
 from ..domain import (
+    DocumentHouseStyle,
     ProjectDetail,
     ProjectSummary,
     SessionStatus,
@@ -127,6 +128,7 @@ class ProjectRepository(BaseRepository):
             created_at=project.created_at,
             # ProjectDetail specific
             owner_id=project.owner_id,
+            house_style=project.house_style,
             token_usage=TokenUsage(
                 prompt_tokens=stats.prompt_tokens,
                 completion_tokens=stats.completion_tokens,
@@ -152,6 +154,10 @@ class ProjectRepository(BaseRepository):
         if repo_owner:
             updates["repo_owner"] = repo_owner
         self.db.query(Project).filter_by(id=project_id).update(updates)
+
+    def set_house_style(self, project_id: UUID, house_style: DocumentHouseStyle) -> None:
+        """Update the corporate identity used for this project's documents."""
+        self.db.query(Project).filter_by(id=project_id).update({"house_style": house_style})
 
     def delete(self, project_id: UUID) -> None:
         """Delete project."""
