@@ -936,6 +936,51 @@ class Orchestrator:
                 # Backstop counter must never crash agent execution
                 logger.exception("fd_rejection_counter_error", session_id=str(session_id))
 
+        # --- Escalation override: force planner to re-escalate after BA ---
+        if agent_id == "business_analyst":
+            try:
+                from druppie.db.models import Session as DBSession
+                from druppie.db.models.agent_run import AgentRun
+                from druppie.agents.definition_loader import AgentDefinitionLoader
+
+                db = self.execution_repo.db
+                session_obj = db.query(DBSession).filter(DBSession.id == session_id).first()
+                arch_def = AgentDefinitionLoader.load("architect")
+                threshold = arch_def.escalation_threshold if arch_def else None
+
+                if session_obj and threshold and (session_obj.fd_rejection_count or 0) >= threshold:
+                    pending_planner = (
+                        db.query(AgentRun)
+                        .filter(
+                            AgentRun.session_id == session_id,
+                            AgentRun.agent_id == "planner",
+                            AgentRun.status == "pending",
+                        )
+                        .order_by(AgentRun.sequence_number)
+                        .first()
+                    )
+                    if pending_planner:
+                        count = session_obj.fd_rejection_count
+                        pending_planner.planned_prompt = (
+                            f"ESCALATION OVERRIDE (fd_rejection_count={count}, threshold={threshold}): "
+                            "The BA has completed a revision of the functional design. "
+                            "The escalation threshold has been reached. "
+                            "You MUST call ask_expert_multiple_choice_question with "
+                            'expert_role="business_analyst" and the standard 4 escalation choices '
+                            "(Iterate, Ready, Escalate, Terminate). "
+                            "Do NOT call make_plan. Do NOT route to the architect or any other agent. "
+                            "Your ONLY action is to call ask_expert_multiple_choice_question."
+                        )
+                        db.flush()
+                        logger.info(
+                            "escalation_override_applied",
+                            session_id=str(session_id),
+                            planner_run_id=str(pending_planner.id),
+                            fd_rejection_count=count,
+                        )
+            except Exception:
+                logger.exception("escalation_override_error", session_id=str(session_id))
+
         # --- Fire-and-forget live evaluation if configured -----------------
         try:
             from druppie.testing.eval_config import get_evaluation_config

@@ -201,20 +201,35 @@ system_prompt: |
   Call make_plan with 1 step:
   - agent_id="summarizer", prompt="Summarize that the request could not proceed. Reason: [paste the DESIGN_REJECTED reason]."
 
-  If NO_FD_CHANGE (technical fix pass-through, only in update_project):
+  If NO_FD_CHANGE (technical fix that only needs validation, not a full FD — update_project only):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="TECHNICAL FIX REVIEW: The BA determined this is a technical change (no FD update). Validate that the following fix aligns with architecture guidelines: [paste the full fix description from BA summary]. If it aligns, signal DESIGN_APPROVED with the fix description. Do NOT write or update docs/technical-design.md."
-  - Step 2: agent_id="planner", prompt="Architect completed technical fix review. Evaluate output and decide next step."
+  - Step 1: agent_id="architect", prompt="TECHNICAL FIX REVIEW: No FD change. Validate technical alignment only — do NOT write a full TD. Signal DESIGN_APPROVED with appropriate BUILD_PATH if acceptable."
+  - Step 2: agent_id="planner", prompt="Technical fix review completed. Evaluate output."
 
-  If DESIGN_APPROVED (first time — no prior architect feedback in the conversation):
-  Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read docs/functional-design.md. Create docs/technical-research.md first, then docs/technical-design.md grounded in the research. Classify BUILD_PATH=CORE_UPDATE or PROJECT (Step 2b) and signal DESIGN_APPROVED with the matching next_agent (ultimate_dev_core or dev_orchestrator)."
-  - Step 2: agent_id="planner", prompt="Architect completed. Evaluate output and decide next step."
+  If DESIGN_APPROVED:
+  BEFORE doing anything else, count how many DESIGN_FEEDBACK signals appear in the
+  conversation history (from architect PREVIOUS AGENT SUMMARY sections).
+  If there are 3 or more DESIGN_FEEDBACK occurrences, ESCALATION IS ACTIVE.
 
-  If DESIGN_APPROVED (after BA revision — i.e., the architect previously sent DESIGN_FEEDBACK):
-  Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="RE-REVIEW: The BA has revised docs/functional-design.md based on your previous feedback. Read the updated docs/functional-design.md and check whether your feedback items were addressed. If all items resolved, write docs/technical-design.md and signal DESIGN_APPROVED. If items remain unresolved, signal DESIGN_FEEDBACK with the remaining items only."
-  - Step 2: agent_id="planner", prompt="Architect completed re-review. Evaluate output and decide next step."
+  WHEN ESCALATION IS ACTIVE (3+ DESIGN_FEEDBACK in history):
+    Do NOT route to the architect. Do NOT call make_plan with agent_id="architect".
+    The human BA expert is the decision-maker now.
+    IMMEDIATELY call ask_expert_multiple_choice_question with:
+      expert_role="business_analyst"
+      question="The BA has completed a revision of the functional design. The architect previously rejected it {N} times. How should we proceed?"
+      choices=["Iterate: send feedback to BA for another revision", "Ready: override and mark the FD as ready for architecture", "Escalate: ask the architect (human) to review directly", "Terminate: stop this session — the design cannot converge"]
+      context="Design review cycle #{N}. The BA's latest revision addresses: [summarize what changed]."
+
+  WHEN ESCALATION IS NOT ACTIVE (fewer than 3 DESIGN_FEEDBACK):
+    If this is the first DESIGN_APPROVED (no prior architect feedback):
+      Call make_plan with 2 steps:
+      - Step 1: agent_id="architect", prompt="Review the functional design: read docs/functional-design.md, create docs/technical-research.md then docs/technical-design.md, classify BUILD_PATH, and signal DESIGN_APPROVED with next_agent."
+      - Step 2: agent_id="planner", prompt="Architect review completed. Evaluate output and decide next step."
+
+    If this is a re-submission after architect DESIGN_FEEDBACK:
+      Call make_plan with 2 steps:
+      - Step 1: agent_id="architect", prompt="RE-REVIEW: The BA has revised docs/functional-design.md. Check whether your previous feedback items were addressed. Read the FD, then signal DESIGN_APPROVED or DESIGN_FEEDBACK."
+      - Step 2: agent_id="planner", prompt="Architect re-review completed. Evaluate output and decide next step."
 
   ### After ARCHITECT completed design work (look for DESIGN_* signals):
 
@@ -248,20 +263,26 @@ system_prompt: |
       context="This is design review cycle #{N}. Previous feedback rounds were: {brief summary of prior feedback}"
 
     After the expert answers, handle the chosen option:
-    - If "Iterate": Call make_plan with 2 steps as in the normal DESIGN_FEEDBACK path above.
+    - If "Iterate": Call make_plan with 2 steps:
+      - Step 1: agent_id="business_analyst", prompt="REVISION: Refine docs/functional-design.md. The BA expert's instructions: [paste the expert's comment/answer from the escalation response]. Also address the latest architect feedback: [paste feedback items]. Follow the expert's guidance as the primary directive."
+      - Step 2: agent_id="planner", prompt="BA revision completed after escalation iterate. Call ask_expert_multiple_choice_question again with expert_role=business_analyst — do NOT route to the architect. The human BA is the decision-maker now."
     - If "Ready": Call make_plan with 2 steps:
-      - Step 1: agent_id="architect", prompt="OVERRIDE: The BA expert has reviewed the feedback history and approved the current FD as-is. Proceed with architecture — read docs/functional-design.md, write docs/technical-research.md and docs/technical-design.md, and signal DESIGN_APPROVED."
+      - Step 1: agent_id="architect", prompt="OVERRIDE: The BA expert has reviewed the feedback history and approved the current FD as-is. Expert's comment: [paste the expert's comment/answer from the escalation response]. Proceed with architecture — read docs/functional-design.md, write docs/technical-research.md and docs/technical-design.md, and signal DESIGN_APPROVED."
       - Step 2: agent_id="planner", prompt="Architect completed after BA override. Evaluate output and decide next step."
     - If "Escalate": Call ask_expert_multiple_choice_question with:
         expert_role="architect"
-        question="The BA and architect agents have gone through {N} design review cycles without converging. Please review docs/functional-design.md and the feedback history. What should happen?"
+        question="The BA and architect agents have gone through {N} design review cycles without converging. The BA expert commented: [paste the expert's comment/answer]. Please review docs/functional-design.md and the feedback history. What should happen?"
         choices=["Approve the FD as-is and proceed to architecture", "Send specific feedback to the BA for one more revision", "Terminate this session — the design cannot converge"]
         context="{paste the latest FD content summary and feedback history}"
       Then handle the architect expert's answer:
-        - If "Approve": same as "Ready" above.
-        - If "Send feedback": Call make_plan with 2 steps as in the normal DESIGN_FEEDBACK path, using the architect expert's feedback.
-        - If "Terminate": Call terminate_session with reason="Design review terminated by architect expert after {N} failed review cycles."
-    - If "Terminate": Call terminate_session with reason="Design review terminated by BA expert after {N} failed review cycles."
+        - If "Approve": Call make_plan with 2 steps:
+          - Step 1: agent_id="architect", prompt="OVERRIDE: The architect expert has reviewed the FD and approved it. Expert's comment: [paste the architect expert's comment/answer from the escalation response]. Proceed with architecture — read docs/functional-design.md, write docs/technical-research.md and docs/technical-design.md, and signal DESIGN_APPROVED."
+          - Step 2: agent_id="planner", prompt="Architect completed after architect expert override. Evaluate output and decide next step."
+        - If "Send feedback": Call make_plan with 2 steps:
+          - Step 1: agent_id="business_analyst", prompt="REVISION: Refine docs/functional-design.md. The architect expert's instructions: [paste the architect expert's comment/answer from the escalation response]. Follow the expert's guidance as the primary directive."
+          - Step 2: agent_id="planner", prompt="BA revision completed after architect expert feedback. Call ask_expert_multiple_choice_question again with expert_role=business_analyst — do NOT route to the architect. The human BA is the decision-maker now."
+        - If "Terminate": Call terminate_session with reason="Design review terminated by architect expert after {N} failed review cycles. Expert's reason: [paste the architect expert's comment/answer from the escalation response]."
+    - If "Terminate": Call terminate_session with reason="Design review terminated by BA expert after {N} failed review cycles. Expert's reason: [paste the expert's comment/answer from the escalation response]."
 
     IMPORTANT: Once the escalation threshold is reached, ALL subsequent DESIGN_FEEDBACK
     signals must go through the expert escalation path above. Never revert to the
