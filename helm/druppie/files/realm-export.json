@@ -1117,7 +1117,8 @@
         "acr",
         "roles",
         "profile",
-        "email"
+        "email",
+        "identity-provider"
       ],
       "optionalClientScopes": [
         "address",
@@ -1318,6 +1319,30 @@
     }
   ],
   "clientScopes": [
+    {
+      "id": "identity-provider-scope",
+      "name": "identity-provider",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "identity-provider-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "identity_provider",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "identity_provider",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
     {
       "id": "2e37441b-a8f0-48f8-981f-30963099f537",
       "name": "offline_access",
@@ -1892,8 +1917,46 @@
   "enabledEventTypes": [],
   "adminEventsEnabled": false,
   "adminEventsDetailsEnabled": false,
-  "identityProviders": [],
-  "identityProviderMappers": [],
+  "identityProviders": [
+    {
+      "alias": "entra-id",
+      "displayName": "Microsoft (Entra ID)",
+      "providerId": "oidc",
+      "enabled": true,
+      "storeToken": true,
+      "trustEmail": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {
+        "clientId": "",
+        "clientSecret": "",
+        "tenantId": "",
+        "authorizationUrl": "https://login.microsoftonline.com//oauth2/v2.0/authorize",
+        "tokenUrl": "https://login.microsoftonline.com//oauth2/v2.0/token",
+        "userInfoUrl": "https://graph.microsoft.com/oidc/userinfo",
+        "logoutUrl": "https://login.microsoftonline.com//oauth2/v2.0/logout",
+        "defaultScope": "openid profile email User.Read offline_access",
+        "validateSignature": "true",
+        "useJwksUrl": "true",
+        "jwksUrl": "https://login.microsoftonline.com//discovery/v2.0/keys",
+        "prompt": "select_account",
+        "acceptsPromptNoneForwardFromClient": "true",
+        "disableUserInfo": "",
+        "syncMode": "IMPORT"
+      }
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "entra-id-developer-role",
+      "identityProviderAlias": "entra-id",
+      "identityProviderMapper": "oidc-hardcoded-role-idp-mapper",
+      "config": {
+        "syncMode": "INHERIT",
+        "role": "developer"
+      }
+    }
+  ],
   "components": {
     "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy": [
       {

@@ -57,6 +57,7 @@ spec:
                 name: {{ include "druppie.fullname" . }}-config
             - secretRef:
                 name: {{ include "druppie.fullname" . }}-secrets
+                optional: true
             {{- if .Values.global.extraEnvFromSecret }}
             - secretRef:
                 name: {{ .Values.global.extraEnvFromSecret }}

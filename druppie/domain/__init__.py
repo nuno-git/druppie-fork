@@ -85,6 +85,7 @@ from .branch_environment import (
     BranchEnvironmentSummary,
     PipelineStage,
     PipelineStageStatus,
+    PullRequestInfo,
 )
 
 # Question models
@@ -188,6 +189,7 @@ __all__ = [
     "BranchEnvironmentPipeline",
     "PipelineStage",
     "PipelineStageStatus",
+    "PullRequestInfo",
     # User
     "UserInfo",
     # Documentation

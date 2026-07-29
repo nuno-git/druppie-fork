@@ -1,4 +1,10 @@
-# Druppie Governance Platform - Keycloak Realm Configuration
+# [DEPRECATED — K8s only] Druppie Governance Platform - Keycloak Realm Configuration
+#
+# ⚠️  THIS FILE IS NOT USED IN THE KUBERNETES DEPLOYMENT.
+#     The Helm chart imports the realm directly from helm/druppie/files/realm-export.json
+#     via Keycloak's --import-realm flag. See that file for the source of truth.
+#
+# Kept for reference / local Docker-based development only.
 
 realm: druppie
 displayName: Druppie Governance Platform

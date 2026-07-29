@@ -147,25 +147,72 @@ seed_workspace() {
 hash_of()    { [ -f "${REPO_DIR}/$1" ] && sha256sum "${REPO_DIR}/$1" | awk '{print $1}' || printf ''; }
 store_hash() { hash_of "$1" > "$2"; }
 
+# Resolve TLS options for git over HTTPS to aigit. Prefer the corporate CA
+# bundle so certificate verification stays ON; only fall back to disabling
+# verification when no CA bundle is present AND GIT_SSL_NO_VERIFY=1. The CA
+# bundle is mounted at /etc/aigit-ca/chain.pem when devWorkspace.caConfigMap is
+# set and also exported as CURL_CA_BUNDLE / SSL_CERT_FILE.
+git_tls_opts() {
+    local ca=""
+    if [ -r /etc/aigit-ca/chain.pem ]; then
+        ca="/etc/aigit-ca/chain.pem"
+    elif [ -n "${CURL_CA_BUNDLE:-}" ] && [ -r "${CURL_CA_BUNDLE}" ]; then
+        ca="${CURL_CA_BUNDLE}"
+    elif [ -n "${SSL_CERT_FILE:-}" ] && [ -r "${SSL_CERT_FILE}" ]; then
+        ca="${SSL_CERT_FILE}"
+    fi
+    if [ -n "${ca}" ]; then
+        printf -- '-c http.sslCAInfo=%s' "${ca}"
+    elif [ "${GIT_SSL_NO_VERIFY:-}" = "1" ]; then
+        printf -- '-c http.sslVerify=false'
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 2. Verify a git token is present up front, and say so LOUDLY if not.
+# ---------------------------------------------------------------------------
+# Without a token the branch fetch, side-repo clones and every push fail. The
+# workspace can still boot offline against the baked snapshot, so this is a
+# prominent early warning rather than a fatal error: `exit 1` here would only
+# crash-loop the pod under k8s and destroy the offline/degraded fallback that
+# checkout_branch and clone_side_repos already implement. GIT_TOKEN_STATE
+# records the decision for anyone reading the log.
+GIT_TOKEN_STATE="present"
+check_git_token() {
+    if [ -n "${DRUPPIE_GIT_TOKEN:-${EXTERNAL_GITEA_TOKEN:-}}" ]; then
+        return 0
+    fi
+    GIT_TOKEN_STATE="missing"
+    warn "=================================================================="
+    warn "NO GIT TOKEN AVAILABLE — DRUPPIE_GIT_TOKEN and EXTERNAL_GITEA_TOKEN"
+    warn "are both unset (the token secret was not mounted/synced yet)."
+    warn "Consequences for this workspace:"
+    warn "  * branch fetch falls back to the baked-image snapshot only"
+    warn "  * side repos (ai/k8s, systeembeheer/rancher-gitops) are NOT cloned"
+    warn "  * git push from the terminal WILL FAIL (no credentials)"
+    warn "Booting in OFFLINE/DEGRADED git mode. Fix the token secret and"
+    warn "restart the pod to enable git operations."
+    warn "=================================================================="
+}
+
 # ---------------------------------------------------------------------------
 # 2. Fetch + checkout the requested branch (tolerate offline).
 # ---------------------------------------------------------------------------
 checkout_branch() {
     local branch="${DRUPPIE_GIT_BRANCH}"
-    local git_opts=""
-    [ "${GIT_SSL_NO_VERIFY:-}" = "1" ] && git_opts="-c http.sslVerify=false"
+    local git_opts; git_opts=$(git_tls_opts)
 
-    # Build an authenticated fetch URL without persisting the token in the
-    # stored remote (origin keeps the clean URL for the code-server UI).
-    local git_token="${DRUPPIE_GIT_TOKEN:-${EXTERNAL_GITEA_TOKEN:-}}"
+    # Fetch over the CLEAN remote URL (no token embedded). Credentials come
+    # from ~/.git-credentials (credential.helper store, written by
+    # configure_git, which runs before this). This keeps the token out of the
+    # stored remote AND out of ${LOGS}/git.log on error. GIT_TERMINAL_PROMPT=0
+    # makes an unauthenticated/offline fetch fail fast instead of blocking on a
+    # username prompt.
     local fetch_url="${DRUPPIE_REPO_URL}"
-    if [ -n "${git_token}" ]; then
-        fetch_url=$(printf '%s' "${DRUPPIE_REPO_URL}" | sed "s#https://#https://oauth2:${git_token}@#")
-    fi
 
     log "fetching branch '${branch}' from origin"
     # shellcheck disable=SC2086
-    if git -C "${REPO_DIR}" ${git_opts} fetch --depth=1 "${fetch_url}" "${branch}" 2>>"${LOGS}/git.log"; then
+    if GIT_TERMINAL_PROMPT=0 git -C "${REPO_DIR}" ${git_opts} fetch --depth=1 "${fetch_url}" "${branch}" 2>>"${LOGS}/git.log"; then
         local local_head remote_head
         local_head=$(git -C "${REPO_DIR}" rev-parse HEAD 2>/dev/null || echo "")
         remote_head=$(git -C "${REPO_DIR}" rev-parse FETCH_HEAD 2>/dev/null || echo "")
@@ -219,19 +266,23 @@ clone_side_repos() {
         "systeembeheer/rancher-gitops"
     )
 
-    local git_opts=""
-    [ "${GIT_SSL_NO_VERIFY:-}" = "1" ] && git_opts="-c http.sslVerify=false"
+    local git_opts; git_opts=$(git_tls_opts)
 
+    # Clone/pull with a CLEAN remote URL (no token embedded). Auth comes from
+    # ~/.git-credentials (credential.helper store, written by configure_git,
+    # which runs before this). This keeps the token out of each side repo's
+    # persisted .git/config on the PVC AND out of ${LOGS}/git.log on error.
+    # GIT_TERMINAL_PROMPT=0 fails fast instead of blocking on a prompt.
     for repo in "${side_repos[@]}"; do
         local dir="${WORKSPACE}/${repo//\//-}"
         if [ -d "${dir}/.git" ]; then
             log "side repo ${repo} already cloned — pulling latest"
-            git -C "${dir}" ${git_opts} pull --ff-only origin main >>"${LOGS}/git.log" 2>&1 || \
+            GIT_TERMINAL_PROMPT=0 git -C "${dir}" ${git_opts} pull --ff-only origin main >>"${LOGS}/git.log" 2>&1 || \
                 warn "could not update ${repo} — stale checkout"
         else
             log "cloning side repo ${repo} → ${dir}"
-            git -C "${WORKSPACE}" ${git_opts} clone --depth=1 \
-                "https://oauth2:${git_token}@aigit.waterschap.org/${repo}.git" \
+            GIT_TERMINAL_PROMPT=0 git -C "${WORKSPACE}" ${git_opts} clone --depth=1 \
+                "https://aigit.waterschap.org/${repo}.git" \
                 "${dir}" >>"${LOGS}/git.log" 2>&1 || \
                 warn "could not clone ${repo}"
         fi
@@ -720,9 +771,28 @@ seed_workspace
 printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.venvs/\n.data/\n.claude/\n' \
     > "${REPO_DIR}/.git/info/exclude"
 
-checkout_branch
+# Surface a missing token loudly and early (before the first fetch), then
+# configure git (writes ~/.git-credentials + credential.helper store) BEFORE
+# the fetch/clones so those can authenticate via a clean, token-free URL.
+check_git_token
 configure_git
+checkout_branch
 clone_side_repos
+
+# ---------------------------------------------------------------------------
+# 2d. Copy AGENTS.md and CLAUDE.md from the druppie repo to /workspace/ so
+#     they are visible at the top level alongside all repo checkouts.
+# ---------------------------------------------------------------------------
+copy_repo_docs() {
+    for f in AGENTS.md CLAUDE.md; do
+        if [ -f "${REPO_DIR}/${f}" ]; then
+            cp "${REPO_DIR}/${f}" "${WORKSPACE}/${f}"
+            log "copied ${f} to ${WORKSPACE}"
+        fi
+    done
+}
+copy_repo_docs
+
 if [ "${RECOVERY_MODE:-}" != "true" ]; then
     ensure_frontend_deps
     ensure_backend_deps

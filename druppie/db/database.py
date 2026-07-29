@@ -59,6 +59,10 @@ def init_db() -> None:
     # and SET NULL on DELETE. This prevents FK violations during user UUID
     # drift correction (e.g. after Keycloak DB reset).
     # Runs idempotently — safe to call on every startup.
+    # Postgres-only: the query reads information_schema (absent on sqlite, used
+    # by local/test runs), and sqlite can't ALTER a constraint anyway.
+    if _is_sqlite:
+        return
     with engine.connect() as conn:
         # Check if the constraint already has the correct rules
         result = conn.execute(

@@ -33,6 +33,9 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: dev-workspace
+        {{- if not .Values.persistence.rwx }}
+        druppie.io/shared-storage: "true"
+        {{- end }}
       annotations:
         reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
@@ -140,6 +143,7 @@ spec:
                 name: {{ include "druppie.fullname" . }}-config
             - secretRef:
                 name: {{ include "druppie.fullname" . }}-secrets
+                optional: true
             {{- if .Values.global.extraEnvFromSecret }}
             - secretRef:
                 name: {{ .Values.global.extraEnvFromSecret }}
@@ -202,16 +206,21 @@ spec:
             - --cookie-secure=true
             - --skip-provider-button=true
           env:
+            # optional: true so the sidecar starts during the ESO sync window
+            # (secret not yet synced from Vault); Stakater Reloader restarts the
+            # pod once <instance>-secrets lands. Matches the envFrom fix.
             - name: OAUTH2_PROXY_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: client-secret
+                  optional: true
             - name: OAUTH2_PROXY_COOKIE_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: cookie-secret
+                  optional: true
           ports:
             - { name: proxy, containerPort: 4180 }
           resources:
@@ -230,6 +239,7 @@ spec:
         - name: aigit-ca
           configMap:
             name: {{ .Values.devWorkspace.caConfigMap }}
+            optional: true
         {{- end }}
         
       {{- with .Values.devWorkspace.nodeSelector }}

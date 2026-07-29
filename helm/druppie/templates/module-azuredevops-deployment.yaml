@@ -55,6 +55,7 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "druppie.fullname" . }}-secrets
+                optional: true
           ports:
             - name: http
               containerPort: {{ .Values.modules.azuredevops.port }}

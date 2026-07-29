@@ -218,3 +218,5 @@ interpreting the inner {{ }} as Helm expressions.
 {{- define "druppie.eso-dockerconfigjson" -}}
 {"auths":{"{{ "{{" }} .registry {{ "}}" }}":{"username":"{{ "{{" }} .username {{ "}}" }}","password":"{{ "{{" }} .password {{ "}}" }}","auth":"{{ "{{" }} printf "%s:%s" .username .password | b64enc {{ "}}" }}"}}}
 {{- end -}}
+
+

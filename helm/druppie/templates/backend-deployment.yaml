@@ -107,6 +107,7 @@ spec:
                 name: {{ include "druppie.fullname" . }}-config
             - secretRef:
                 name: {{ include "druppie.fullname" . }}-secrets
+                optional: true
             {{- if .Values.global.extraEnvFromSecret }}
             # Branch environments: Vault-sourced overrides (ESO-managed). Listed
             # last so its keys win; optional so pods start while it syncs.
@@ -127,6 +128,11 @@ spec:
               value: {{ .Values.backend.foundry.apiUrl | quote }}
             - name: ONESHOT_SANDBOX_RUNTIME
               value: {{ .Values.sandbox.runtime | quote }}
+            # DATABASE_URL is constructed here (not stored in Vault) because the
+            # hostname is instance-specific. $(DRUPPIE_DB_PASSWORD) is resolved
+            # by Kubernetes from the envFrom secretRef above.
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.postgresql.druppie.username }}:$(DRUPPIE_DB_PASSWORD)@{{ include "druppie.fullname" . }}-druppie-db:5432/{{ .Values.postgresql.druppie.database }}"
             {{- if .Values.backend.branchEnvDeployer.enabled }}
             {{- with .Values.backend.branchEnvDeployer }}
             # Branch-environments deployer (GitOps): the backend commits env
@@ -158,6 +164,13 @@ spec:
               value: {{ .domainSuffix | quote }}
             {{- end }}
             {{- end }}
+            # Entra ID allowed-emails allowlist (from Vault via ExternalSecret)
+            - name: ENTRA_ALLOWED_EMAILS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: ENTRA_ALLOWED_EMAILS
+                  optional: true
           ports:
             - name: http
               containerPort: {{ .Values.backend.port }}
@@ -206,5 +219,6 @@ spec:
         - name: gitops-ca
           configMap:
             name: {{ .Values.backend.branchEnvDeployer.gitops.caConfigMap }}
+            optional: true
         {{- end }}
 {{- end }}
