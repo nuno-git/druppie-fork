@@ -12,6 +12,9 @@ data:
       level: info
     runner:
       capacity: {{ .Values.internalRunner.capacity }}
+      # Per-job cap. module-deploy's build poller (USERAPPS_BUILD_TIMEOUT,
+      # default 65m) MUST stay greater than this so it never gives up before
+      # the runner does. If you raise this, raise that too.
       timeout: 1h
       fetch_timeout: 10s
       labels:
