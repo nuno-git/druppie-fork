@@ -247,6 +247,16 @@ class Orchestrator:
             self.attachment_repo.link_to_message(
                 attachment_ids, user_message.id, current_session_id,
             )
+        # Commit the user message + links BEFORE awaiting extraction: this makes
+        # them visible in the timeline during a long OCR (so the UI can show a
+        # 'reading this scanned PDF may take a few minutes' notice) and releases
+        # the row lock so the background extraction commit cannot deadlock.
+        self.execution_repo.commit()
+        if self.attachment_repo:
+            self.attachment_repo.commit()
+        if attachment_ids and self.attachment_repo:
+            from druppie.services import attachment_service
+            await attachment_service.await_extractions(attachment_ids)
             attachments = self.attachment_repo.get_by_ids(attachment_ids)
             attachment_context = self._build_attachment_context(attachments)
 
@@ -415,7 +425,7 @@ class Orchestrator:
 
             # Rebuild context before each agent so it reflects changes
             # from previous agents (e.g., set_intent creates project/repo)
-            context = self.build_project_context(session_id)
+            context = await self.build_project_context(session_id)
 
             # Planner needs the accumulated summary from all completed agents
             # so it knows what has been done. Build it fresh from the DB.
@@ -558,7 +568,7 @@ class Orchestrator:
         )
         return f"PREVIOUS AGENT SUMMARY:\n{accumulated}\n\n---\n\n{prompt}"
 
-    def build_project_context(self, session_id: UUID) -> dict | None:
+    async def build_project_context(self, session_id: UUID) -> dict | None:
         """Build project context for agents.
 
         Retrieves project info (repo_name, repo_owner, etc.) from the session
@@ -636,6 +646,10 @@ class Orchestrator:
 
         # Include session-level attachment context so ALL agents see uploaded files
         if self.attachment_repo:
+            attachments = self.attachment_repo.get_for_session(session_id)
+            from druppie.services import attachment_service
+            await attachment_service.await_extractions([a.id for a in attachments])
+            # Re-fetch so extracted_text populated by background tasks is loaded.
             attachments = self.attachment_repo.get_for_session(session_id)
             att_ctx = self._build_attachment_context(attachments)
             if att_ctx:
@@ -987,7 +1001,7 @@ class Orchestrator:
         self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
         self.execution_repo.commit()
 
-        context = self.build_project_context(session_id)
+        context = await self.build_project_context(session_id)
         db = self.execution_repo.db
         agent = Agent(agent_id, db=db, session_id=str(session_id))
 
@@ -1107,7 +1121,7 @@ class Orchestrator:
         )
 
         # Step 5: Build fresh context and continue the agent
-        context = self.build_project_context(session_id)
+        context = await self.build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
         result = await agent.continue_run(
             session_id=session_id,
@@ -1445,7 +1459,7 @@ class Orchestrator:
             self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
             self.execution_repo.commit()
 
-            context = self.build_project_context(session_id)
+            context = await self.build_project_context(session_id)
             agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
             try:
                 result = await agent.continue_run(
@@ -1577,7 +1591,7 @@ class Orchestrator:
             self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
             self.execution_repo.commit()
 
-            parent_context = self.build_project_context(session_id)
+            parent_context = await self.build_project_context(session_id)
 
             parent_agent = Agent(parent_run.agent_id, db=db)
             parent_result = await parent_agent.continue_run(
@@ -1660,7 +1674,7 @@ class Orchestrator:
 
                 # Already RUNNING — just continue it
                 db = self.execution_repo.db
-                context = self.build_project_context(session_id)
+                context = await self.build_project_context(session_id)
                 agent = Agent(orphan_run.agent_id, db=db, session_id=str(session_id))
                 try:
                     result = await agent.continue_run(
@@ -1792,7 +1806,7 @@ class Orchestrator:
         )
 
         db = self.execution_repo.db
-        context = self.build_project_context(session_id)
+        context = await self.build_project_context(session_id)
         if user_context and context is not None:
             context["user_context"] = user_context
             from druppie.db.models.llm_call import LlmCall

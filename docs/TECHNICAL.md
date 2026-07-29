@@ -127,6 +127,7 @@ druppie/
     deployment_service.py
     revert_service.py
     avatar_service.py    # Entra ID profile photo fetch + disk cache
+    attachment_service.py  # Text extraction (pdfplumber + OCR), background extraction scheduling
     document_formatter_service.py
   repositories/
     session_repository.py
@@ -1118,6 +1119,20 @@ All methods reconstruct agent state from the database (LLM call history, tool ca
 **Cooperative pause/cancellation:** The orchestrator checks the session status (via DB poll) before each agent run and after each agent completes. If the status is `paused` or `cancelled`, it stops executing further runs. The agent loop also checks the session status between LLM iterations. This means stopping is cooperative -- it happens at the next check point, not mid-LLM-call. See section 8.9 for the full stop and resume architecture.
 
 **Retry from agent run:** The `POST /api/sessions/{id}/retry-from/{run_id}` endpoint spawns a background task that uses `RevertService` to revert the target run and all subsequent runs, then calls `execute_pending_runs()` to re-execute them. `RevertService` handles git revert (via `revert_to_commit` MCP tool), PR cleanup, and DB record management.
+
+**Background PDF extraction (`attachment_service.py`):**
+
+Scanned-PDF OCR can take minutes, so text extraction runs as a fire-and-forget background task instead of blocking the upload request.
+
+1. **`schedule_extraction(att_id, file_path, content_type)`** -- Called by the upload route after committing the attachment row. Creates an `asyncio.Task` that calls `extract_text()`, writes the result to `attachment.extracted_text` in a fresh DB session, and removes itself from the in-memory registry on completion (success or failure). The upload HTTP response returns immediately.
+
+2. **`_pending_extractions: dict[UUID, asyncio.Task]`** -- In-process registry mapping attachment IDs to their running extraction tasks. Safe because the backend runs a single uvicorn worker, so upload requests and the orchestrator share one event loop. Tasks self-clean on completion via a `finally` block.
+
+3. **`await_extractions(att_ids)`** -- Called by the orchestrator in two places: (a) after linking attachments to a user message (so the first agent sees the text), and (b) inside `build_project_context()` before building session-level attachment context (so agents on retry/resume also see it). Gathers all in-flight tasks for the given IDs and awaits them. Never raises -- failed extractions leave `extracted_text` as `None`. Tolerates unknown IDs, empty lists, and already-done tasks.
+
+4. **Orchestrator integration** -- `build_project_context()` is now `async`. Before building attachment context it calls `await_extractions()` for all session attachments, then re-fetches attachment rows so the `extracted_text` populated by the background task is loaded. The user message and attachment links are committed to the DB *before* awaiting extraction, so the timeline is visible in the UI during a long OCR (enabling the frontend "reading notice"), and the row lock is released so the background extraction commit cannot deadlock.
+
+5. **`text_ready` domain field** -- `Attachment` (in `domain/common.py`) exposes `text_ready: bool`, derived from `bool(extracted_text)` at serialization time in the session repository. No DB column -- purely a computed presentation field consumed by the frontend to toggle the scanned-PDF reading notice.
 
 ### 8.9 Pause and Resume
 
