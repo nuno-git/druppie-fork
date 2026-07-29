@@ -49,7 +49,8 @@ class FakeGitops:
     async def change_files(self, message: str, files: list[dict]) -> None:
         self.committed.append({"message": message, "files": files})
 
-    async def dispatch_workflow(self, repo: str, workflow: str, ref: str) -> None:
+    async def dispatch_workflow(self, repo: str, workflow: str, ref: str,
+                                repo_owner: str | None = None) -> None:
         self.dispatched.append((repo, workflow, ref))
 
     async def latest_run(self, repo: str, branch: str):
@@ -181,6 +182,115 @@ class TestStubs(unittest.TestCase):
     def test_volumes_not_supported(self):
         r = asyncio.run(kd.k8s_list_volumes())
         self.assertFalse(r["success"])
+
+
+class FakeCluster:
+    """In-memory stand-in for ClusterClient (no network)."""
+
+    def __init__(self, services: dict | None = None, available: bool = True) -> None:
+        self._services = services
+        self.available = available
+        self.calls: list[tuple[str, str]] = []
+
+    async def list_services(self, namespace: str, label_selector: str):
+        self.calls.append((namespace, label_selector))
+        return self._services
+
+
+class _FakeResp:
+    def __init__(self, status: int) -> None:
+        self.status_code = status
+
+
+class _FakeAsyncClient:
+    """Records GET targets; returns 200 only for URLs in `ok`."""
+
+    def __init__(self, ok: set[str]) -> None:
+        self.ok = ok
+        self.gets: list[str] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url: str, *a, **k):
+        self.gets.append(url)
+        return _FakeResp(200 if url in self.ok else 503)
+
+
+def _svc(cluster_ip: str, port: int, port_name: str = "http") -> dict:
+    return {
+        "items": [{
+            "spec": {"clusterIP": cluster_ip, "ports": [{"name": port_name, "port": port}]},
+        }]
+    }
+
+
+class TestInclusterHealthUrl(unittest.TestCase):
+    def test_resolves_clusterip_and_http_port(self):
+        cc = FakeCluster(services=_svc("10.43.0.9", 8080))
+        url = asyncio.run(kd._incluster_health_url(cc, "todo"))
+        self.assertEqual(url, "http://10.43.0.9:8080")
+        # Selector targets the app Service specifically (not the db Service).
+        self.assertEqual(cc.calls[0][0], "todo")
+        self.assertIn("app.kubernetes.io/component=app", cc.calls[0][1])
+
+    def test_falls_back_to_first_port_when_no_http_named(self):
+        cc = FakeCluster(services=_svc("10.43.0.9", 5000, port_name="web"))
+        self.assertEqual(asyncio.run(kd._incluster_health_url(cc, "todo")), "http://10.43.0.9:5000")
+
+    def test_skips_headless_service(self):
+        svc = {"items": [{"spec": {"clusterIP": "None", "ports": [{"name": "http", "port": 80}]}}]}
+        cc = FakeCluster(services=svc)
+        self.assertIsNone(asyncio.run(kd._incluster_health_url(cc, "todo")))
+
+    def test_none_when_cluster_unavailable(self):
+        cc = FakeCluster(available=False)
+        self.assertIsNone(asyncio.run(kd._incluster_health_url(cc, "todo")))
+
+    def test_none_on_list_error(self):
+        cc = FakeCluster()
+        cc.list_services = AsyncMock(side_effect=RuntimeError("boom"))
+        self.assertIsNone(asyncio.run(kd._incluster_health_url(cc, "todo")))
+
+
+class TestHealthGate(unittest.TestCase):
+    def test_prefers_incluster_target(self):
+        client = _FakeAsyncClient(ok={"http://10.43.0.9:8080/health"})
+        with patch.object(kd, "_incluster_health_url",
+                          new=AsyncMock(return_value="http://10.43.0.9:8080")), \
+             patch.object(kd, "_cluster_client", return_value=object()), \
+             patch.object(kd.httpx, "AsyncClient", return_value=client):
+            ok = asyncio.run(
+                kd._health_gate("https://todo-apps.rijnland.dev", 5, "/health", slug="todo")
+            )
+        self.assertTrue(ok)
+        # In-cluster ClusterIP was hit; public FQDN never needed.
+        self.assertEqual(client.gets, ["http://10.43.0.9:8080/health"])
+
+    def test_falls_back_to_public_url(self):
+        client = _FakeAsyncClient(ok={"https://todo-apps.rijnland.dev/health"})
+        with patch.object(kd, "_incluster_health_url", new=AsyncMock(return_value=None)), \
+             patch.object(kd, "_cluster_client", return_value=object()), \
+             patch.object(kd.httpx, "AsyncClient", return_value=client):
+            ok = asyncio.run(
+                kd._health_gate("https://todo-apps.rijnland.dev", 5, "/health", slug="todo")
+            )
+        self.assertTrue(ok)
+        self.assertIn("https://todo-apps.rijnland.dev/health", client.gets)
+
+    def test_timeout_returns_false(self):
+        client = _FakeAsyncClient(ok=set())  # nothing ever answers 200
+        with patch.object(kd, "_incluster_health_url", new=AsyncMock(return_value=None)), \
+             patch.object(kd, "_cluster_client", return_value=object()), \
+             patch.object(kd.httpx, "AsyncClient", return_value=client), \
+             patch.object(kd.asyncio, "sleep", new=AsyncMock(return_value=None)):
+            ok = asyncio.run(
+                kd._health_gate("https://todo-apps.rijnland.dev", 0.05, "/health", slug="todo")
+            )
+        self.assertFalse(ok)
 
 
 if __name__ == "__main__":

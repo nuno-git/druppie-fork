@@ -265,6 +265,11 @@ class ClusterClient:
             f"/api/v1/namespaces/{namespace}/pods?labelSelector={label_selector}"
         )
 
+    async def list_services(self, namespace: str, label_selector: str) -> dict | None:
+        return await self.get(
+            f"/api/v1/namespaces/{namespace}/services?labelSelector={label_selector}"
+        )
+
     async def pod_log(self, namespace: str, pod: str, container: str, tail: int) -> str:
         if not self.available:
             return ""
@@ -430,18 +435,68 @@ async def _wait_helmrelease_ready(namespace: str, name: str) -> bool:
     return False
 
 
-async def _health_gate(url: str, timeout: int, path: str = "/health") -> bool:
-    """Poll the ingress URL until it answers 200 (or timeout)."""
+async def _incluster_health_url(cc: "ClusterClient", slug: str) -> str | None:
+    """Resolve the app Service's in-cluster ClusterIP:port health target.
+
+    k8s-native: prefer the Service ClusterIP over the public FQDN so the health
+    gate does not depend on the public DNS name resolving *and* hairpinning back
+    into the ingress from inside the cluster. On split-horizon / no-hairpin
+    setups that round-trip fails, making a perfectly healthy app look like a
+    timeout. Talking straight to the ClusterIP proves the app is serving.
+
+    Returns None if the cluster is unreachable or no usable Service exists yet.
+    """
+    if not cc.available:
+        return None
+    try:
+        svcs = await cc.list_services(
+            slug,
+            f"app.kubernetes.io/instance={slug},app.kubernetes.io/component=app",
+        )
+    except Exception:
+        return None
+    for s in (svcs or {}).get("items") or []:
+        spec = s.get("spec") or {}
+        cip = spec.get("clusterIP")
+        if not cip or cip == "None":  # skip headless Services (no ClusterIP)
+            continue
+        ports = spec.get("ports") or []
+        port = next((p.get("port") for p in ports if p.get("name") == "http"), None)
+        if port is None and ports:
+            port = ports[0].get("port")
+        if port:
+            return f"http://{cip}:{port}"
+    return None
+
+
+async def _health_gate(
+    url: str, timeout: int, path: str = "/health", slug: str | None = None
+) -> bool:
+    """Poll the app until it answers 200 on `path` (or timeout).
+
+    k8s-native: probe the in-cluster Service (ClusterIP) first so the gate
+    proves the app is actually serving without relying on the public FQDN
+    resolving + hairpinning back into the cluster. The public ingress URL is
+    still probed as a fallback (and confirms external reachability where the
+    cluster does allow hairpin).
+    """
     deadline = asyncio.get_event_loop().time() + timeout
-    target = url.rstrip("/") + path
+    public_target = url.rstrip("/") + path
+    cc = _cluster_client()
     async with httpx.AsyncClient(verify=False, timeout=10.0) as c:
         while asyncio.get_event_loop().time() < deadline:
-            try:
-                r = await c.get(target)
-                if r.status_code == 200:
-                    return True
-            except Exception:
-                pass
+            incluster = await _incluster_health_url(cc, slug) if slug else None
+            targets = []
+            if incluster:
+                targets.append(incluster.rstrip("/") + path)
+            targets.append(public_target)
+            for target in targets:
+                try:
+                    r = await c.get(target)
+                    if r.status_code == 200:
+                        return True
+                except Exception:
+                    pass
             await asyncio.sleep(3)
     return False
 
@@ -552,8 +607,8 @@ async def k8s_deploy(
 
     # 3. Wait for Flux to roll the new tag out.
     rolled = await _wait_helmrelease_ready(slug, slug)
-    # 4. Health-gate the ingress URL.
-    healthy = await _health_gate(f"https://{host}", health_timeout, health_path)
+    # 4. Health-gate: in-cluster Service (ClusterIP) first, public URL as fallback.
+    healthy = await _health_gate(f"https://{host}", health_timeout, health_path, slug=slug)
 
     return {
         "success": healthy,
