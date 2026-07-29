@@ -97,10 +97,30 @@ class GitopsClient:
         self._runs_api_base = f"{app_base}/api/v1/repos"
         self._branch = GITOPS_BRANCH
         self._headers = {"Authorization": f"token {GITOPS_TOKEN}"} if GITOPS_TOKEN else {}
+        # Internal Gitea (app repos) may use a different token than the external GitOps Gitea.
+        # In branch envs, GITEA_TOKEN is often a stale SHA1 hash from setup_gitea.py
+        # that doesn't work for auth. Prefer basic auth (GITEA_USER + GITEA_PASSWORD)
+        # which is always fresh, then dedicated internal token, then stale GITEA_TOKEN.
+        _gitea_user = os.getenv("GITEA_USER", "")
+        _gitea_pass = os.getenv("GITEA_PASSWORD", "")
+        _internal_token = os.getenv("INTERNAL_GITEA_TOKEN", "")
+        if _gitea_user and _gitea_pass:
+            import base64 as _b64
+            _creds = _b64.b64encode(f"{_gitea_user}:{_gitea_pass}".encode()).decode()
+            self._internal_headers = {"Authorization": f"basic {_creds}"}
+        elif _internal_token:
+            self._internal_headers = {"Authorization": f"token {_internal_token}"}
+        else:
+            # Last resort: use the branch-env GITEA_TOKEN (may be stale SHA1).
+            _fallback_token = os.getenv("GITEA_TOKEN", "")
+            self._internal_headers = {"Authorization": f"token {_fallback_token}"} if _fallback_token else self._headers
         self._verify: Any = GITOPS_CA if GITOPS_CA else True
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(headers=self._headers, verify=self._verify, timeout=HTTP_TIMEOUT)
+    def _client(self, internal: bool = False) -> httpx.AsyncClient:
+        headers = self._internal_headers if internal else self._headers
+        # Internal Gitea is HTTP, no CA verification needed.
+        verify = False if internal else self._verify
+        return httpx.AsyncClient(headers=headers, verify=verify, timeout=HTTP_TIMEOUT)
 
     @staticmethod
     def _raise_for(resp: httpx.Response, what: str) -> None:
@@ -150,7 +170,7 @@ class GitopsClient:
         self, repo: str, workflow: str, ref: str, repo_owner: str | None = None
     ) -> None:
         owner = repo_owner or APP_REPO_ORG
-        async with self._client() as c:
+        async with self._client(internal=True) as c:
             resp = await c.post(
                 f"{self._runs_api_base}/{owner}/{repo}/actions/workflows/{workflow}/dispatches",
                 json={"ref": ref},
@@ -159,7 +179,7 @@ class GitopsClient:
 
     async def latest_run(self, repo: str, branch: str, repo_owner: str | None = None) -> dict | None:
         owner = repo_owner or APP_REPO_ORG
-        async with self._client() as c:
+        async with self._client(internal=True) as c:
             resp = await c.get(
                 f"{self._runs_api_base}/{owner}/{repo}/actions/runs",
                 params={"branch": branch, "per_page": 1, "sort": "updated", "state": ""},

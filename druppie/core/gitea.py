@@ -275,6 +275,7 @@ class GiteaClient:
                 "description": description,
                 "private": private,
                 "auto_init": auto_init,
+                "has_actions": True,
             },
         )
 

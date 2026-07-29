@@ -22,6 +22,15 @@ spec:
           rules:
             dns:
               - matchPattern: "*"
+    # Internal Gitea (for Actions registration + workflow dispatch)
+    - toEndpoints:
+        - matchLabels:
+            {{- include "druppie.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: gitea
+      toPorts:
+        - ports:
+            - port: {{ .Values.gitea.httpPort | quote }}
+              protocol: TCP
     - toFQDNs:
         - matchPattern: "{{ .Values.gitea.external.url | replace "https://" "" | replace "http://" "" }}"
         - matchPattern: "{{ .Values.modules.docker.userApps.harbor.registry }}"

@@ -81,7 +81,7 @@ keycloak:
     enabled: true
   dbPersistent: true
 gitea:
-  image: gitea/gitea:1.21
+  image: gitea/gitea:1.27
   adminUser: gitea_admin
   adminPassword: ""
   adminEmail: admin@druppie.local
@@ -108,7 +108,7 @@ gitea:
       memory: 1Gi
       cpu: 1000m
 internalRunner:
-  enabled: false
+  enabled: true
   image: gitea/act_runner:latest
   replicas: 2
   capacity: 1
