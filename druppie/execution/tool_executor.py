@@ -1179,6 +1179,10 @@ class ToolExecutor:
         """
         from druppie.core.entra_token import check_entra_linked, is_entra_configured
 
+        # Capture the id up front: the commits below expire the ORM object
+        # (expire_on_commit), so the post-commit logger reads must not touch it.
+        tc_id = tool_call.id
+
         if not is_entra_configured():
             self.execution_repo.update_tool_call(
                 tool_call.id,
@@ -1205,7 +1209,7 @@ class ToolExecutor:
         if not is_linked:
             logger.info(
                 "entra_token_missing_not_linked_proceeding",
-                tool_call_id=str(tool_call.id),
+                tool_call_id=str(tc_id),
                 user_id=user_id,
             )
             return None
@@ -1219,7 +1223,7 @@ class ToolExecutor:
 
         logger.info(
             "entra_token_missing_waiting_auth",
-            tool_call_id=str(tool_call.id),
+            tool_call_id=str(tc_id),
             user_id=user_id,
         )
         return ToolCallStatus.WAITING_ENTRA_AUTH
@@ -1446,6 +1450,13 @@ class ToolExecutor:
 
         args = tool_call.arguments or {}
 
+        # Capture immutable identifiers up front. The commits below expire the
+        # ORM object (expire_on_commit); in the approval/replay path the row can
+        # already be gone, so a post-commit tool_call.<attr> read would raise
+        # ObjectDeletedError. Use these locals for logging/updates instead.
+        tc_id = tool_call.id
+        tc_name = tool_call.tool_name
+
         try:
             # Mark as executing
             self.execution_repo.update_tool_call(
@@ -1475,7 +1486,7 @@ class ToolExecutor:
                 self._active_db.commit()
                 logger.info(
                     "builtin_tool_waiting_sandbox",
-                    tool_call_id=str(tool_call.id),
+                    tool_call_id=str(tc_id),
                 )
                 return ToolCallStatus.WAITING_SANDBOX
 
@@ -1496,8 +1507,8 @@ class ToolExecutor:
 
             logger.info(
                 "builtin_tool_completed",
-                tool_call_id=str(tool_call.id),
-                tool_name=tool_call.tool_name,
+                tool_call_id=str(tc_id),
+                tool_name=tc_name,
                 result_status=result.get("status"),
                 success=is_success,
             )
@@ -1507,13 +1518,13 @@ class ToolExecutor:
         except Exception as e:
             logger.error(
                 "builtin_tool_error",
-                tool_call_id=str(tool_call.id),
-                tool_name=tool_call.tool_name,
+                tool_call_id=str(tc_id),
+                tool_name=tc_name,
                 error=str(e),
             )
             # Mark as failed with error
             self.execution_repo.update_tool_call(
-                tool_call.id,
+                tc_id,
                 status=ToolCallStatus.FAILED,
                 error=str(e),
             )
@@ -1533,6 +1544,16 @@ class ToolExecutor:
         Returns:
             ToolCallStatus.COMPLETED or ToolCallStatus.FAILED
         """
+        # Capture immutable identifiers up front. The commits below expire the
+        # ORM object (expire_on_commit); in the replay/approval path its row can
+        # already be gone, so a later tool_call.<attr> access would raise
+        # ObjectDeletedError. Use these locals for logging/updates instead.
+        tc_id = tool_call.id
+        tc_server = tool_call.mcp_server
+        tc_name = tool_call.tool_name
+        tc_session_id = tool_call.session_id
+        tc_agent_run_id = tool_call.agent_run_id
+
         # Copy to avoid mutating the ORM model's JSON dict in-place
         args = dict(tool_call.arguments or {})
 
@@ -1542,10 +1563,10 @@ class ToolExecutor:
 
         logger.info(
             "mcp_tool_pre_injection",
-            tool_call_id=str(tool_call.id),
-            mcp_server=tool_call.mcp_server,
-            tool_name=tool_call.tool_name,
-            session_id=str(tool_call.session_id) if tool_call.session_id else None,
+            tool_call_id=str(tc_id),
+            mcp_server=tc_server,
+            tool_name=tc_name,
+            session_id=str(tc_session_id) if tc_session_id else None,
             original_args=list(args.keys()),
         )
 
@@ -1553,11 +1574,11 @@ class ToolExecutor:
         # This replaces all the hardcoded injection logic
         try:
             args = self._apply_injection_rules(
-                server=tool_call.mcp_server,
-                tool_name=tool_call.tool_name,
+                server=tc_server,
+                tool_name=tc_name,
                 args=args,
-                session_id=tool_call.session_id,
-                agent_run_id=tool_call.agent_run_id,
+                session_id=tc_session_id,
+                agent_run_id=tc_agent_run_id,
             )
         except EntraTokenMissing as e:
             entra_result = await self._handle_entra_token_missing(tool_call, e.user_id)
@@ -1570,9 +1591,9 @@ class ToolExecutor:
 
         logger.info(
             "mcp_tool_post_injection",
-            tool_call_id=str(tool_call.id),
-            mcp_server=tool_call.mcp_server,
-            tool_name=tool_call.tool_name,
+            tool_call_id=str(tc_id),
+            mcp_server=tc_server,
+            tool_name=tc_name,
             final_args=list(args.keys()),
         )
 
@@ -1588,34 +1609,34 @@ class ToolExecutor:
             # Mark as executing and commit so the session is clean
             # before the HTTP call (avoids auto-flush issues later)
             _repo.update_tool_call(
-                tool_call.id,
+                tc_id,
                 status=ToolCallStatus.EXECUTING,
             )
             self._active_db.commit()
 
-            if tool_call.tool_name == "bash":
-                args["tool_call_id"] = str(tool_call.id)
+            if tc_name == "bash":
+                args["tool_call_id"] = str(tc_id)
 
             # Long-running tools (run_tests, install_test_dependencies) get a
             # generous 20-min client timeout. Server-side subprocess timeouts
             # (300s/180s) should fire first, but this prevents infinite hangs
             # if the MCP server crashes or the network drops.
-            if tool_call.tool_name in CUSTOM_TIMEOUT_TOOLS:
+            if tc_name in CUSTOM_TIMEOUT_TOOLS:
                 try:
                     requested = float(args.get(CUSTOM_TIMEOUT_ARG, CUSTOM_TIMEOUT_DEFAULT))
                 except (TypeError, ValueError):
                     requested = CUSTOM_TIMEOUT_DEFAULT
                 timeout = min(requested, CUSTOM_TIMEOUT_MAX)
-            elif tool_call.tool_name in LONG_RUNNING_TOOLS:
+            elif tc_name in LONG_RUNNING_TOOLS:
                 timeout = LONG_RUNNING_TIMEOUT
-            elif tool_call.mcp_server in SLOW_START_SERVERS:
+            elif tc_server in SLOW_START_SERVERS:
                 timeout = SLOW_START_TIMEOUT
             else:
                 timeout = 60.0
 
             result = await self.mcp_http.call(
-                tool_call.mcp_server,
-                tool_call.tool_name,
+                tc_server,
+                tc_name,
                 args,
                 timeout_seconds=timeout,
             )
@@ -1627,20 +1648,20 @@ class ToolExecutor:
             if is_success and translated_content and translated_path:
                 try:
                     await self.mcp_http.call(
-                        tool_call.mcp_server,
+                        tc_server,
                         "write_file",
                         {**args, "path": translated_path, "content": translated_content},
                         timeout_seconds=60.0,
                     )
                     logger.info(
                         "translated_design_written",
-                        tool_call_id=str(tool_call.id),
+                        tool_call_id=str(tc_id),
                         translated_path=translated_path,
                     )
                 except Exception as e:
                     logger.warning(
                         "translated_design_write_failed",
-                        tool_call_id=str(tool_call.id),
+                        tool_call_id=str(tc_id),
                         translated_path=translated_path,
                         error=str(e),
                     )
@@ -1649,7 +1670,7 @@ class ToolExecutor:
             # awaited the MCP call, open a fresh short-lived one.
             try:
                 _repo.update_tool_call(
-                    tool_call.id,
+                    tc_id,
                     status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
                     result=result,
                     error=result.get("error") or result.get("stderr") if not is_success else None,
@@ -1662,14 +1683,14 @@ class ToolExecutor:
                     ) from None
                 logger.warning(
                     "tool_executor_session_lost_falling_back",
-                    tool_call_id=str(tool_call.id),
+                    tool_call_id=str(tc_id),
                 )
                 db = self._session_factory()
                 try:
                     from druppie.repositories import ExecutionRepository
                     repo = ExecutionRepository(db)
                     repo.update_tool_call(
-                        tool_call.id,
+                        tc_id,
                         status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
                         result=result,
                         error=result.get("error") or result.get("stderr") if not is_success else None,
@@ -1680,9 +1701,9 @@ class ToolExecutor:
 
             logger.info(
                 "mcp_tool_completed",
-                tool_call_id=str(tool_call.id),
-                mcp_server=tool_call.mcp_server,
-                tool_name=tool_call.tool_name,
+                tool_call_id=str(tc_id),
+                mcp_server=tc_server,
+                tool_name=tc_name,
                 success=is_success,
             )
 
@@ -1691,14 +1712,14 @@ class ToolExecutor:
         except MCPHttpError as e:
             logger.error(
                 "mcp_tool_error",
-                tool_call_id=str(tool_call.id),
-                mcp_server=tool_call.mcp_server,
-                tool_name=tool_call.tool_name,
+                tool_call_id=str(tc_id),
+                mcp_server=tc_server,
+                tool_name=tc_name,
                 error=str(e),
                 retryable=e.retryable,
             )
             self._update_tool_call_safe(
-                tool_call.id,
+                tc_id,
                 status=ToolCallStatus.FAILED,
                 error=str(e),
             )
@@ -1708,11 +1729,11 @@ class ToolExecutor:
         except Exception as e:
             logger.error(
                 "mcp_tool_unexpected_error",
-                tool_call_id=str(tool_call.id),
+                tool_call_id=str(tc_id),
                 error=str(e),
             )
             self._update_tool_call_safe(
-                tool_call.id,
+                tc_id,
                 status=ToolCallStatus.FAILED,
                 error=str(e),
             )
