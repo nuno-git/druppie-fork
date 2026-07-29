@@ -279,12 +279,16 @@ class ExecutionRepository(BaseRepository):
         return self._to_summary(agent_run) if agent_run else None
 
     def get_completed_runs(self, session_id: UUID) -> list[AgentRunSummary]:
-        """Get all completed agent runs for a session, ordered by completion time."""
+        """Get all completed agent runs for a session, ordered by completion time.
+
+        Excludes superseded runs so that retried agents start with a clean slate.
+        """
         runs = (
             self.db.query(AgentRun)
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.status == AgentRunStatus.COMPLETED.value,
+                AgentRun.superseded_at.is_(None),
             )
             .order_by(AgentRun.completed_at)
             .all()
