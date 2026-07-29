@@ -64,6 +64,7 @@ Last updated: 2026-07-15
 - ~~Document Formatter — Mermaid/ArchiMate Rendering Inside PDFs~~ ✅ DONE (Mermaid via @preview/mmdr:0.2.2; ArchiMate via Python SVG export)
 - Document Formatter — Database Persistence & Download API (render cache exists; full document domain model + REST endpoints still needed)
 - ~~Document Formatter — Replace Lato with Neusa Next Std (if licensed)~~ ✅ DONE (Neusa Next Pro fonts added alongside Lato)
+- FD Escalation via Expert HITL
 
 ---
 
@@ -446,6 +447,14 @@ Last updated: 2026-07-15
 - **Current state:** After merging the dataset-selection strategy and the charting guidance, the `data_analyst` system prompt is long, and the agent runs on `llm_profile: cheap` (small context). Long charting sessions can still approach context limits.
 - **Desired improvement:** trim/split the prompt or raise the agent's `llm_profile`; add conversation-history trimming for long sessions (overlaps with the existing "No Context Window Management" item).
 - **Priority:** Medium — reliability for extended sessions.
+
+### FD Escalation via Expert HITL
+
+**Location:** `druppie/agents/definitions/general/planner.yaml`, `druppie/execution/orchestrator.py`
+**Current state:** Planner routes DESIGN_FEEDBACK back to BA indefinitely with no escalation path.
+**Desired improvement:** After 3 failed design review cycles, escalate to human expert (BA or architect) via `ask_expert_multiple_choice_question`. Experts can iterate, override, escalate further, or terminate the session.
+**Priority:** High — prevents infinite loops in design review.
+**Branch:** `feature/fd-escalation-lite`
 
 ---
 

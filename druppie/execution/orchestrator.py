@@ -558,6 +558,14 @@ class Orchestrator:
         )
         return f"PREVIOUS AGENT SUMMARY:\n{accumulated}\n\n---\n\n{prompt}"
 
+    async def _assert_not_terminated(self, session_id: UUID) -> None:
+        """Raise ConflictError if session is terminated."""
+        from druppie.repositories import SessionRepository
+        session = SessionRepository(self.execution_repo.db).get_by_id(session_id)
+        if session and session.status == SessionStatus.TERMINATED.value:
+            from druppie.api.errors import ConflictError
+            raise ConflictError("Session has been terminated and cannot be resumed")
+
     def build_project_context(self, session_id: UUID) -> dict | None:
         """Build project context for agents.
 
@@ -898,7 +906,37 @@ class Orchestrator:
         agent_run_id: UUID,
         agent_id: str,
     ) -> None:
-        """Fire-and-forget live evaluation if configured."""
+        """Post-completion hooks: backstop counter, live evaluation."""
+        # --- Backstop: count architect DESIGN_FEEDBACK rejections ----------
+        if agent_id == "architect":
+            try:
+                summary = self.execution_repo.get_done_summary_for_run(agent_run_id)
+                if summary and "DESIGN_FEEDBACK" in summary:
+                    from druppie.db.models import Session as DBSession
+
+                    db = self.execution_repo.db
+                    session_obj = db.query(DBSession).filter(DBSession.id == session_id).first()
+                    if session_obj:
+                        session_obj.fd_rejection_count = (session_obj.fd_rejection_count or 0) + 1
+                        db.flush()
+                        count = session_obj.fd_rejection_count
+                        # Check threshold from agent definition
+                        from druppie.agents.definition_loader import AgentDefinitionLoader
+
+                        arch_def = AgentDefinitionLoader.load("architect")
+                        threshold = arch_def.escalation_threshold if arch_def else None
+                        if threshold and count >= threshold:
+                            logger.warning(
+                                "fd_rejection_threshold_reached",
+                                session_id=str(session_id),
+                                count=count,
+                                threshold=threshold,
+                            )
+            except Exception:
+                # Backstop counter must never crash agent execution
+                logger.exception("fd_rejection_counter_error", session_id=str(session_id))
+
+        # --- Fire-and-forget live evaluation if configured -----------------
         try:
             from druppie.testing.eval_config import get_evaluation_config
 
@@ -1042,6 +1080,8 @@ class Orchestrator:
             approval_id=str(approval_id),
         )
 
+        await self._assert_not_terminated(session_id)
+
         db = self.execution_repo.db
         mcp_config = MCPConfig()
         mcp_http = MCPHttp(mcp_config)
@@ -1163,6 +1203,8 @@ class Orchestrator:
             session_id=str(session_id),
             question_id=str(question_id),
         )
+
+        await self._assert_not_terminated(session_id)
 
         db = self.execution_repo.db
         mcp_config = MCPConfig()
@@ -1620,6 +1662,8 @@ class Orchestrator:
             has_context=bool(contexts),
         )
 
+        await self._assert_not_terminated(session_id)
+
         # Session is already set to ACTIVE by the endpoint's lock_for_resume()
 
         paused_leaves = self.execution_repo.get_user_paused_leaves(session_id)
@@ -1918,6 +1962,8 @@ class Orchestrator:
             return None
 
         session_id = agent_run.session_id
+
+        await self._assert_not_terminated(session_id)
 
         logger.info(
             "resume_after_sandbox",

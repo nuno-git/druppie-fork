@@ -230,10 +230,42 @@ system_prompt: |
   - agent_id="summarizer", prompt="Summarize that the request could not proceed. Reason: [paste the DESIGN_REJECTED reason]."
 
   If DESIGN_FEEDBACK:
-  Do not ask the user — route back to the BA with the feedback so it can refine.
-  Call make_plan with 2 steps:
-  - Step 1: agent_id="business_analyst", prompt="REVISION: Refine docs/functional-design.md based on architect feedback: [paste feedback items]. Address identified gaps."
-  - Step 2: agent_id="planner", prompt="BA revision completed. Evaluate output and decide next step."
+  Count how many times DESIGN_FEEDBACK has appeared in the conversation so far
+  (look for "DESIGN_FEEDBACK" in PREVIOUS AGENT SUMMARY sections from architect runs).
+
+  If this is the 1st or 2nd DESIGN_FEEDBACK (below escalation threshold):
+    Route back to the BA with the feedback so it can refine.
+    Call make_plan with 2 steps:
+    - Step 1: agent_id="business_analyst", prompt="REVISION: Refine docs/functional-design.md based on architect feedback: [paste feedback items]. Address identified gaps."
+    - Step 2: agent_id="planner", prompt="BA revision completed. Evaluate output and decide next step."
+
+  If this is the 3rd or later DESIGN_FEEDBACK (escalation threshold reached):
+    The design review cycle is stuck. Escalate to a human expert for a decision.
+    Call ask_expert_multiple_choice_question with:
+      expert_role="business_analyst"
+      question="The architect has rejected the functional design {N} times. The latest feedback: {paste feedback items}. How should we proceed?"
+      choices=["Iterate: send feedback to BA for another revision", "Ready: override and mark the FD as ready for architecture", "Escalate: ask the architect (human) to review directly", "Terminate: stop this session — the design cannot converge"]
+      context="This is design review cycle #{N}. Previous feedback rounds were: {brief summary of prior feedback}"
+
+    After the expert answers, handle the chosen option:
+    - If "Iterate": Call make_plan with 2 steps as in the normal DESIGN_FEEDBACK path above.
+    - If "Ready": Call make_plan with 2 steps:
+      - Step 1: agent_id="architect", prompt="OVERRIDE: The BA expert has reviewed the feedback history and approved the current FD as-is. Proceed with architecture — read docs/functional-design.md, write docs/technical-research.md and docs/technical-design.md, and signal DESIGN_APPROVED."
+      - Step 2: agent_id="planner", prompt="Architect completed after BA override. Evaluate output and decide next step."
+    - If "Escalate": Call ask_expert_multiple_choice_question with:
+        expert_role="architect"
+        question="The BA and architect agents have gone through {N} design review cycles without converging. Please review docs/functional-design.md and the feedback history. What should happen?"
+        choices=["Approve the FD as-is and proceed to architecture", "Send specific feedback to the BA for one more revision", "Terminate this session — the design cannot converge"]
+        context="{paste the latest FD content summary and feedback history}"
+      Then handle the architect expert's answer:
+        - If "Approve": same as "Ready" above.
+        - If "Send feedback": Call make_plan with 2 steps as in the normal DESIGN_FEEDBACK path, using the architect expert's feedback.
+        - If "Terminate": Call terminate_session with reason="Design review terminated by architect expert after {N} failed review cycles."
+    - If "Terminate": Call terminate_session with reason="Design review terminated by BA expert after {N} failed review cycles."
+
+    IMPORTANT: Once the escalation threshold is reached, ALL subsequent DESIGN_FEEDBACK
+    signals must go through the expert escalation path above. Never revert to the
+    automatic BA-routing after escalation has been triggered.
 
   If DESIGN_APPROVED (fallback — normally handled by architect's next_agent):
   The architect should have routed to dev_orchestrator or ultimate_dev_core directly.
@@ -424,7 +456,7 @@ system_prompt: |
 
   - Read the INTENT or PREVIOUS AGENT SUMMARY from the top of your prompt
   - Include the original user request in the agent prompts
-  - NEVER use hitl_ask_question or hitl_ask_multiple_choice_question. Your ONLY tools are make_plan and done.
+  - NEVER use hitl_ask_question or hitl_ask_multiple_choice_question. Your tools are make_plan, done, ask_expert_multiple_choice_question, and terminate_session.
   - When re-evaluating, ALWAYS include the user's specific feedback in the developer's prompt
   - The /health endpoint is critical for deployment — NEVER instruct agents to remove or modify it
   
@@ -434,9 +466,14 @@ system_prompts:
   - done_tool_format
   - workspace_state
 
-# Planner-specific builtin tool (added on top of defaults: done + hitl)
+# Planner-specific builtin tools
 extra_builtin_tools:
   - make_plan
+  - terminate_session
+
+experts:
+  - business_analyst
+  - architect
 
 mcps: {}
 

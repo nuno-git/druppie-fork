@@ -494,6 +494,7 @@ const STATUS_COLORS = {
   paused_tool: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   paused_sandbox: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   paused_crashed: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
+  terminated: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
 }
 
 const StatusBadge = ({ status }) => {
@@ -1005,7 +1006,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
 // AgentRunStatus values that indicate the agent has started processing (not pending)
-const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_user', 'paused_entra_auth', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'terminated', 'paused_hitl', 'paused_tool', 'paused_user', 'paused_entra_auth', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
 
 const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)
@@ -1578,6 +1579,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
+        terminated: 'bg-red-500',
       }[data.status] || 'bg-gray-400'
 
   const projectRepo = data?.project

@@ -1207,6 +1207,21 @@ YAML files  →  JobService.load_definitions_from_yaml()  →  job_definitions (
 
 3. **YAML validation at load time** — `JobService.load_definitions_from_yaml()` validates each file before DB insertion: required fields (`name`, `schedule`, `agent_id`, `prompt`), cron syntax (via `croniter`), and agent existence (via filesystem check). Invalid files are logged and skipped entirely; no broken definitions are recorded.
 
+### 8.11 FD Escalation (Design Review Loop)
+
+When the architect reviews a functional design (FD) and returns `DESIGN_FEEDBACK`, the planner routes the session back to the BA for revision. This loop is allowed up to 2 iterations by default. On the 3rd consecutive `DESIGN_FEEDBACK` (configurable via `escalation_threshold` in `architect.yaml`), the planner stops looping and escalates to a human expert using the `ask_expert_multiple_choice_question` HITL tool.
+
+**Expert choices.** The BA expert is presented with four options:
+
+- **Iterate** — send the FD back to the BA for another revision round.
+- **Ready (override)** — accept the FD as-is and advance the pipeline past the architect, overriding the rejection.
+- **Escalate to architect expert** — surface the disagreement to a human architect expert for a second opinion.
+- **Terminate** — end the session entirely; no further agent runs are created.
+
+**Termination mechanism.** The `terminate_session` builtin tool sets `session.status` to `TERMINATED` and cancels all pending agent runs in a single transaction. Once a session is terminated, the orchestrator's resume methods (`resume_after_approval`, `resume_after_hitl`, `resume_after_stop`) check for `TERMINATED` status and reject the request with a `ConflictError`, preventing any further execution.
+
+**Orchestrator backstop.** Independent of the planner-level threshold, the orchestrator tracks `fd_rejection_count` on the `Session` model. Each time the architect produces `DESIGN_FEEDBACK`, the counter increments. When it reaches the configured threshold, the orchestrator logs a warning. This serves as a safety net in case the planner logic is bypassed or misconfigured — it does not block execution, but ensures observability of repeated rejections.
+
 ---
 
 ## 9. Kubernetes Deployment
