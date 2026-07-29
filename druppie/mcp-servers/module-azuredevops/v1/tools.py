@@ -168,6 +168,23 @@ async def add_work_item_comment(item_id: int, text: str, user_token: str | None 
 
 
 @mcp.tool()
+async def resolve_user(display_name: str, user_token: str | None = None) -> dict:
+    """Resolve a display name to Azure DevOps identity details.
+
+    Useful for verifying user names before @mentioning them in comments,
+    or for looking up team member details.
+
+    Args:
+        display_name: The display name to search for, e.g. "Noordam, Pieter"
+            or "Pieter Noordam" or partial name like "Pieter".
+
+    Returns:
+        Dict with matching identities (display_name, guid, mail).
+    """
+    return await module.resolve_user(display_name, user_token=user_token)
+
+
+@mcp.tool()
 async def create_work_item(
     work_item_type: str,
     title: str,
