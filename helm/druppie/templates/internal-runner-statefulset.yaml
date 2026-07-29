@@ -67,11 +67,8 @@ spec:
           env:
             - name: GITEA_INSTANCE_URL
               value: "http://{{ include "druppie.fullname" . }}-gitea:{{ .Values.gitea.httpPort }}"
-            - name: GITEA_RUNNER_REGISTRATION_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "druppie.fullname" . }}-internal-runner-token
-                  key: token
+            - name: GITEA_RUNNER_REGISTRATION_TOKEN_FILE
+              value: "/etc/runner-token/token"
             - name: GITEA_RUNNER_NAME
               valueFrom:
                 fieldRef:
@@ -89,6 +86,8 @@ spec:
               mountPath: /castore
             - name: act-runner-config
               mountPath: /etc/act_runner
+            - name: runner-token-dir
+              mountPath: /etc/runner-token
           resources:
             {{- toYaml .Values.internalRunner.resources | nindent 12 }}
       volumes:

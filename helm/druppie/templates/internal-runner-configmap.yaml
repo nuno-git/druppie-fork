@@ -18,7 +18,7 @@ data:
         ubuntu-latest: "docker://node:20-bookworm"
     container:
       network: host
-      options: "-e GIT_SSL_NO_VERIFY=1"
+      options: "-e SSL_CERT_FILE=/castore/ca-bundle.pem -e CURL_CA_BUNDLE=/castore/ca-bundle.pem"
       valid_volumes:
         - '*'
 {{- end }}
