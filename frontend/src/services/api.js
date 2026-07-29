@@ -401,6 +401,10 @@ export const branchEnvironmentsApi = {
     request(`/api/branch-environments/${encodeURIComponent(id)}/auto-deploy`, { method: 'POST' }),
   disableAutoDeploy: (id) =>
     request(`/api/branch-environments/${encodeURIComponent(id)}/auto-deploy`, { method: 'DELETE' }),
+  getPullRequest: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/pull-request`),
+  createPullRequest: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/pull-request`, { method: 'POST' }),
 }
 
 // ============ Agents (Transparency) ============

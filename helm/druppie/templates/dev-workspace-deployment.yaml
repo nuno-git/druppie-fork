@@ -234,6 +234,7 @@ spec:
         - name: aigit-ca
           configMap:
             name: {{ .Values.devWorkspace.caConfigMap }}
+            optional: true
         {{- end }}
         
       {{- with .Values.devWorkspace.nodeSelector }}

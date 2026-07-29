@@ -1,19 +1,21 @@
 #!/usr/bin/env python
 """
-[DEPRECATED — K8s only] Keycloak Setup Script for Druppie Governance Platform
+Keycloak Setup Script for Druppie Governance Platform
 
-⚠️  THIS SCRIPT IS NOT USED IN THE KUBERNETES DEPLOYMENT.
-    The Helm chart imports the realm directly from helm/druppie/files/realm-export.json
-    via Keycloak's --import-realm flag. See that file for the source of truth.
+This runs in the Kubernetes deployment: the Helm chart executes it from the
+post-install/post-upgrade init Job (helm/druppie/templates/init-job.yaml ->
+scripts/init-entrypoint.sh). Keycloak imports the realm *base* from
+helm/druppie/files/realm-export.json (--import-realm), but this script is the
+source of the runtime realm setup layered on top — most importantly it is the
+ONLY creator of the 'workspace' OAuth client used by the dev-workspace
+oauth2-proxy. It also runs for local Docker-based development.
 
 This script:
 1. Creates the 'druppie' realm
 2. Creates roles (admin, developer, architect, infra-engineer, etc.)
 3. Creates users with appropriate roles
-4. Configures OAuth2 clients
-5. Configures Entra ID identity provider (when ENTRA_CLIENT_ID is set)
-
-Kept for reference / local Docker-based development only.
+4. Configures OAuth2 clients (incl. the 'workspace' oauth2-proxy client)
+5. Configures Entra ID identity provider (when ENTRA_ID_CLIENT_ID is set)
 """
 
 import os
@@ -211,6 +213,46 @@ class KeycloakAdmin:
                 if client.get("clientId") == client_id:
                     return client["id"]
         return None
+
+    def client_presence(self, realm: str, client_id: str, retries: int = 3) -> str:
+        """Determine whether a client exists, distinguishing a genuine absence
+        from a transient API error.
+
+        Unlike _get_client_uuid (which collapses both "not found" and "request
+        failed" into None), this returns one of:
+          - "present": the list endpoint returned 200 and the client was found
+          - "absent":  the list endpoint returned 200 but the client was not
+                       present (a definitive "does not exist")
+          - "unknown": every attempt hit a transient error (non-200 status or a
+                       request exception, e.g. 503, or a 401 from an admin token
+                       that expired mid-run)
+
+        Retries a few times with a short backoff so a single blip does not read
+        as "absent". Callers can then fail loudly only on a definitive "absent".
+        """
+        url = f"{self.base_url}/admin/realms/{realm}/clients"
+        for attempt in range(retries):
+            try:
+                response = requests.get(
+                    url, params={"clientId": client_id}, headers=self._headers(), timeout=10
+                )
+                if response.status_code == 200:
+                    for client in response.json():
+                        if client.get("clientId") == client_id:
+                            return "present"
+                    return "absent"
+                print(
+                    f"  [WARN] Listing clients returned {response.status_code} "
+                    f"while checking '{client_id}' (attempt {attempt + 1}/{retries})"
+                )
+            except Exception as e:
+                print(
+                    f"  [WARN] Error listing clients while checking '{client_id}' "
+                    f"(attempt {attempt + 1}/{retries}): {e}"
+                )
+            if attempt < retries - 1:
+                time.sleep(2)
+        return "unknown"
 
     def create_identity_provider(self, realm: str, idp_config: dict):
         """Create or update an identity provider."""
@@ -486,6 +528,13 @@ def load_yaml(file_path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def _entra_env(name: str) -> str:
+    """Read an Entra ID var, preferring the K8s secret key (ENTRA_ID_*, as
+    synced by the sync sidecar / dev-workspace-secrets) and falling back to the
+    legacy local-dev name (ENTRA_*, still used by .env / entra_token.py)."""
+    return os.getenv(f"ENTRA_ID_{name}", "") or os.getenv(f"ENTRA_{name}", "")
+
+
 def main():
     print("=" * 60)
     print("Druppie - Keycloak Setup")
@@ -576,9 +625,9 @@ def main():
         "${GITEA_PORT}": gitea_port,
         "${GITEA_SSH_PORT}": os.getenv("GITEA_SSH_PORT", "2223"),
         "${BACKEND_PORT}": os.getenv("BACKEND_PORT", "8100"),
-        "${ENTRA_TENANT_ID}": os.getenv("ENTRA_TENANT_ID", ""),
-        "${ENTRA_CLIENT_ID}": os.getenv("ENTRA_CLIENT_ID", ""),
-        "${ENTRA_CLIENT_SECRET}": os.getenv("ENTRA_CLIENT_SECRET", ""),
+        "${ENTRA_TENANT_ID}": _entra_env("TENANT_ID"),
+        "${ENTRA_CLIENT_ID}": _entra_env("CLIENT_ID"),
+        "${ENTRA_CLIENT_SECRET}": _entra_env("CLIENT_SECRET"),
     }
 
     def substitute_env(value: str) -> str:
@@ -697,6 +746,33 @@ def main():
             "webOrigins": [ws_origin] if ws_origin else [],
         }
         kc.create_client(REALM_NAME, workspace_client)
+        # Fail loud: WORKSPACE_CLIENT_SECRET is set, so this env expects the
+        # 'workspace' client to exist. If create_client failed and the client
+        # is not present, exiting non-zero makes the Helm init Job fail (and
+        # retry) instead of silently reporting success and leaving developers
+        # with an "invalid redirect_uri" login.
+        #
+        # But only abort on a *definitive* absence. A plain
+        # `_get_client_uuid(...) is None` check also fires on a transient
+        # list-clients error (503, or a 401 from an admin token that expired
+        # mid-run), which would spuriously fail the Job even though
+        # create_client just succeeded. client_presence retries and tells us
+        # whether the client is genuinely absent vs the check itself failed.
+        presence = kc.client_presence(REALM_NAME, "workspace")
+        if presence == "absent":
+            print(
+                "[ERROR] 'workspace' OAuth client was not created and does not "
+                "exist — aborting so the init Job fails and retries"
+            )
+            sys.exit(1)
+        elif presence == "unknown":
+            print(
+                "[WARN] Could not confirm the 'workspace' OAuth client after "
+                "creation due to a transient Keycloak API error; create_client "
+                "reported no failure, so continuing without failing the Job"
+            )
+        else:
+            print("  [OK] Verified 'workspace' OAuth client exists")
     else:
         print("\n[STEP 4c] WORKSPACE_CLIENT_SECRET unset — skipping dev-workspace client")
 
@@ -708,7 +784,7 @@ def main():
             kc.assign_default_client_scope(REALM_NAME, rc_id, scope_name)
 
     # Configure Entra ID identity provider (optional)
-    entra_client_id = os.getenv("ENTRA_CLIENT_ID", "")
+    entra_client_id = _entra_env("CLIENT_ID")
     if entra_client_id:
         print("\n[STEP 5] Configuring Entra ID identity provider...")
         idp_configs = realm_config.get("identityProviders", [])
@@ -732,7 +808,7 @@ def main():
             REALM_NAME, "druppie-backend", "realm-management", "view-users",
         )
     else:
-        print("\n[SKIP] ENTRA_CLIENT_ID not set — skipping Entra ID identity provider")
+        print("\n[SKIP] ENTRA_ID_CLIENT_ID not set — skipping Entra ID identity provider")
 
     # Set realm frontendUrl so tokens always have the correct HTTPS issuer
     print("\n[STEP 8] Setting realm frontend URL...")

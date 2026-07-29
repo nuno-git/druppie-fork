@@ -58,6 +58,7 @@ from ..domain.branch_environment import (
     BranchEnvironmentStatus,
     PipelineStage,
     PipelineStageStatus,
+    PullRequestInfo,
 )
 
 logger = structlog.get_logger()
@@ -201,6 +202,7 @@ def build_namespace_yaml(
     created_at: str,
     secrets_source: str = SECRETS_SOURCE_COLAB_DEV,
     auto_deploy_enabled: bool = True,
+    base_branch: str = APP_BASE_BRANCH,
 ) -> str:
     return _dump(
         {
@@ -214,6 +216,10 @@ def build_namespace_yaml(
                 },
                 "annotations": {
                     f"{_ANN}/branch": branch,
+                    # The branch this env was created from — the merge-back PR
+                    # targets it, so persist it here rather than re-reading the
+                    # (possibly-changed) global APP_BASE_BRANCH at PR time.
+                    f"{_ANN}/base-branch": base_branch,
                     f"{_ANN}/owner-id": str(owner_id),
                     f"{_ANN}/created-at": created_at,
                     f"{_ANN}/secrets-source": secrets_source,
@@ -562,6 +568,82 @@ class GiteaGitopsClient:
         self._raise_for(resp, f"listing runs for {repo}")
         runs = resp.json().get("runs") or []
         return runs[0] if runs else None
+
+    async def create_pull_request(
+        self, repo: str, head: str, base: str, title: str, body: str = ""
+    ) -> dict:
+        """Open a PR merging ``head`` into ``base`` in ``repo``; returns the PR.
+
+        Raises ConflictError (409 only) when an open PR for the same head→base
+        already exists — the caller then falls back to ``find_pull_request``.
+        A 422 from Gitea is a genuine validation failure (no commits between
+        head/base, head branch deleted, …) and is surfaced as a ValidationError
+        rather than being mistaken for an existing PR.
+        """
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self._base}/api/v1/repos/{repo}/pulls",
+                json={"head": head, "base": base, "title": title, "body": body},
+            )
+        # 422 is NOT "already exists": it means Gitea rejected the PR (e.g. no
+        # diff between head/base, or the head branch is gone). Surface it as a
+        # 422 validation error instead of conflating it with the 409 fall-back.
+        if resp.status_code == 422:
+            raise ValidationError(
+                f"cannot open pull request {head}→{base} in {repo}: {resp.text[:300]}"
+            )
+        self._raise_for(resp, f"opening pull request {head}→{base} in {repo}")
+        return resp.json()
+
+    async def find_pull_request(
+        self, repo: str, head: str, base: str
+    ) -> dict | None:
+        """Best matching PR for ``head``→``base`` in ``repo``, or None.
+
+        Prefers an *open* PR over a closed/merged one: an open PR is queried
+        first, and only when none exists does it fall back to the newest match
+        across all states. Without this, sorting by ``recentupdate`` could
+        surface a recently-touched closed PR ahead of the open one the caller
+        actually wants.
+
+        Each state is paged through (newest first) instead of only inspecting
+        the first page, so an older matching PR is not missed once enough newer
+        PRs exist to push it past the page boundary.
+        """
+        # Prefer open, then fall back to any state (which includes closed/merged).
+        for state in ("open", "all"):
+            pr = await self._find_pull_request_in_state(repo, head, base, state)
+            if pr is not None:
+                return pr
+        return None
+
+    async def _find_pull_request_in_state(
+        self, repo: str, head: str, base: str, state: str
+    ) -> dict | None:
+        """Paginated head→base lookup restricted to a single PR ``state``."""
+        limit = 50
+        page = 1
+        async with self._client() as client:
+            while True:
+                resp = await client.get(
+                    f"{self._base}/api/v1/repos/{repo}/pulls",
+                    params={
+                        "state": state,
+                        "sort": "recentupdate",
+                        "limit": limit,
+                        "page": page,
+                    },
+                )
+                self._raise_for(resp, f"listing pull requests in {repo}")
+                items = resp.json() or []
+                for pr in items:
+                    if (pr.get("head") or {}).get("ref") == head and (
+                        pr.get("base") or {}
+                    ).get("ref") == base:
+                        return pr
+                if len(items) < limit:
+                    return None
+                page += 1
 
     async def change_files(self, message: str, files: list[dict]) -> None:
         """Single-commit batch create/update/delete via POST /contents.
@@ -1028,6 +1110,14 @@ class BranchEnvironmentService:
             raise ValidationError(
                 f"invalid secrets_source: {secrets_source!r}", field="secrets_source"
             )
+        # A per-developer secrets source (anything other than the shared
+        # colab-dev map) resolves to that developer's own Vault path
+        # (druppie/developers/<username>/*), so a usable username is required.
+        if secrets_source != SECRETS_SOURCE_COLAB_DEV and not (owner_username or "").strip():
+            raise ValidationError(
+                "a usable username is required for a per-developer secrets source",
+                field="secrets_source",
+            )
         slug = _slugify(branch)
         namespace = f"druppie-{slug}"
         host = f"druppie-{slug}.{DOMAIN_SUFFIX}"
@@ -1090,7 +1180,8 @@ class BranchEnvironmentService:
                 "operation": "create",
                 "path": self._env_path(slug, "namespace.yaml"),
                 "content": build_namespace_yaml(
-                    slug, branch, owner_id, created_at, secrets_source=secrets_source
+                    slug, branch, owner_id, created_at,
+                    secrets_source=secrets_source, base_branch=APP_BASE_BRANCH,
                 ),
             },
             {
@@ -1425,6 +1516,7 @@ class BranchEnvironmentService:
             env["created_at"] or _utcnow_iso(),
             secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             auto_deploy_enabled=True,
+            base_branch=env.get("base_branch") or APP_BASE_BRANCH,
         )
         await self._change_files_with_retry(
             slug,
@@ -1475,6 +1567,7 @@ class BranchEnvironmentService:
             env["created_at"] or _utcnow_iso(),
             secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             auto_deploy_enabled=False,
+            base_branch=env.get("base_branch") or APP_BASE_BRANCH,
         )
         await self._change_files_with_retry(
             slug,
@@ -1504,7 +1597,24 @@ class BranchEnvironmentService:
             if e.get("type") == "dir" and e["name"].startswith("druppie-")
         ]
 
-        envs = [e for e in await asyncio.gather(*(self._read_env(s) for s in slugs)) if e]
+        # Read each env independently: a single bad env (corrupt YAML, a UTF-8
+        # decode error, or a transient HTTP error) must degrade to one FAILED
+        # row instead of 500-ing the whole overview. return_exceptions=True
+        # keeps the healthy envs even when a sibling read blows up.
+        raw = await asyncio.gather(
+            *(self._read_env(s) for s in slugs), return_exceptions=True
+        )
+        envs: list[dict] = []
+        degraded: list[dict] = []
+        for slug, result in zip(slugs, raw):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "branch_env_read_failed", slug=slug, exc_info=result
+                )
+                degraded.append(self._degraded_env(slug))
+            elif result:
+                envs.append(result)
+
         details: list[BranchEnvironmentDetail] = []
         statuses, ws_statuses = await asyncio.gather(
             asyncio.gather(*(self._live_status(env["namespace"]) for env in envs)),
@@ -1517,6 +1627,13 @@ class BranchEnvironmentService:
                 self._detail_from_env(
                     env, status=status, message=message, workspace_status=ws_status
                 )
+            )
+
+        # Envs whose read blew up: one FAILED row each (read_error forces the
+        # status in _detail_from_env), so the overview still renders.
+        for env in degraded:
+            details.append(
+                self._detail_from_env(env, status="", message=None)
             )
 
         # Envs deleted from git but whose namespace is still terminating.
@@ -1685,6 +1802,98 @@ class BranchEnvironmentService:
             overall = BranchEnvironmentStatus.DEPLOYING
         return BranchEnvironmentPipeline(env_id=slug, status=overall, stages=stages)
 
+    async def get_pull_request(self, env_id: str) -> PullRequestInfo:
+        """Merge-back PR status for an env (head=branch → base=env's base branch).
+
+        Read-only: returns ``exists=False`` (with head/base filled in) when no
+        such PR has been opened yet.
+        """
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
+        if env is None:
+            raise NotFoundError("branch_environment", slug)
+        # A corrupt manifest makes ``branch`` fall back to the slug (e.g.
+        # ``feature-foo`` instead of ``feature/foo``), which would target the
+        # wrong branch. Refuse rather than act on unreliable data.
+        if env.get("read_error"):
+            raise ExternalServiceError(
+                service="gitops-repo",
+                message=(
+                    f"environment '{slug}' manifest is corrupt; "
+                    "cannot determine the branch for a merge-back pull request"
+                ),
+            )
+        branch = env["branch"]
+        base = env["base_branch"]
+        pr = await self.gitea.find_pull_request(CHART_REPO, branch, base)
+        if pr is None:
+            return PullRequestInfo(
+                exists=False, head_branch=branch, base_branch=base
+            )
+        return self._pr_info(pr, branch, base)
+
+    async def create_pull_request(
+        self,
+        env_id: str,
+        user_id: UUID,
+        user_roles: list[str],
+    ) -> PullRequestInfo:
+        """Open a PR merging the env's branch back into the base branch.
+
+        The base is the branch the env was created from (persisted per env in
+        the ``druppie.io/base-branch`` annotation; default colab-dev). Owner or
+        admin only. If an open PR already exists the existing one is returned
+        instead of failing.
+        """
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
+        if env is None:
+            raise NotFoundError("branch_environment", slug)
+        # A corrupt manifest makes ``branch`` fall back to the slug, which would
+        # open a PR against the wrong branch. Refuse rather than act on it.
+        if env.get("read_error"):
+            raise ExternalServiceError(
+                service="gitops-repo",
+                message=(
+                    f"environment '{slug}' manifest is corrupt; "
+                    "cannot determine the branch for a merge-back pull request"
+                ),
+            )
+
+        _require_owner_or_admin(env["owner_id"], user_id, user_roles, "open a pull request for")
+
+        branch = env["branch"]
+        base = env["base_branch"]
+        if branch == base:
+            raise ValidationError(
+                f"branch '{branch}' is the base branch; nothing to merge back",
+                field="env_id",
+            )
+
+        title = f"Merge {branch} into {base}"
+        body = (
+            f"Merge-back of branch environment `druppie-{slug}` "
+            f"(branch `{branch}`).\n\n"
+            "Opened from the Druppie branch-environment preview."
+        )
+        try:
+            pr = await self.gitea.create_pull_request(
+                CHART_REPO, branch, base, title, body
+            )
+        except ConflictError:
+            # An open PR for this head→base already exists — return it.
+            pr = await self.gitea.find_pull_request(CHART_REPO, branch, base)
+            if pr is None:
+                raise
+        logger.info(
+            "branch_env_pull_request",
+            slug=slug,
+            branch=branch,
+            base=base,
+            number=pr.get("number"),
+        )
+        return self._pr_info(pr, branch, base)
+
     # -------------------------------------------------------------------------
     # Internals
     # -------------------------------------------------------------------------
@@ -1694,6 +1903,33 @@ class BranchEnvironmentService:
         base = f"{GITOPS_PATH}/druppie-{slug}"
         return f"{base}/{filename}" if filename else base
 
+    @staticmethod
+    def _degraded_env(slug: str) -> dict:
+        """A minimal ``read_error`` env dict for a slug whose read failed.
+
+        Only the slug is trustworthy; everything else falls back to a safe
+        default so ``_detail_from_env`` can render a single FAILED row.
+        """
+        return {
+            "slug": slug,
+            "branch": slug,
+            "base_branch": APP_BASE_BRANCH,
+            "namespace": f"druppie-{slug}",
+            "host": f"druppie-{slug}.{DOMAIN_SUFFIX}",
+            "owner_id": None,
+            "created_at": None,
+            "updated_at": None,
+            "image_tag": None,
+            "helmrelease_sha": None,
+            "secrets_source": None,
+            "workspace_enabled": False,
+            "developer": "",
+            "stack_mode": "real",
+            "recovery_mode": False,
+            "auto_deploy_enabled": True,
+            "read_error": True,
+        }
+
     async def _read_env(self, slug: str) -> dict | None:
         """Read an env's metadata from its committed manifests. None if absent."""
         ns_file, hr_file = await asyncio.gather(
@@ -1702,7 +1938,18 @@ class BranchEnvironmentService:
         )
         if ns_file is None:
             return None
-        ns_manifest = yaml.safe_load(ns_file[0]) or {}
+
+        # A single corrupt manifest must degrade only this env — never propagate
+        # a YAMLError up through list_all's asyncio.gather and 500 the whole
+        # overview. The slug is always derivable; branch/owner fall back to
+        # safe defaults when the annotations can't be parsed.
+        read_error = False
+        try:
+            ns_manifest = yaml.safe_load(ns_file[0]) or {}
+        except yaml.YAMLError:
+            logger.warning("branch_env_namespace_manifest_corrupt", slug=slug, exc_info=True)
+            ns_manifest = {}
+            read_error = True
         annotations = ns_manifest.get("metadata", {}).get("annotations", {}) or {}
 
         image_tag = None
@@ -1714,7 +1961,14 @@ class BranchEnvironmentService:
         recovery_mode = False
         if hr_file is not None:
             helmrelease_sha = hr_file[1]
-            hr_manifest = yaml.safe_load(hr_file[0]) or {}
+            try:
+                hr_manifest = yaml.safe_load(hr_file[0]) or {}
+            except yaml.YAMLError:
+                logger.warning(
+                    "branch_env_helmrelease_manifest_corrupt", slug=slug, exc_info=True
+                )
+                hr_manifest = {}
+                read_error = True
             hr_values = hr_manifest.get("spec", {}).get("values", {}) or {}
             image_tag = hr_values.get("global", {}).get("imageTag")
             updated_at = (
@@ -1740,6 +1994,9 @@ class BranchEnvironmentService:
         return {
             "slug": slug,
             "branch": annotations.get(f"{_ANN}/branch", slug),
+            # Persisted at create time; fall back to the global default for envs
+            # created before the base-branch annotation existed.
+            "base_branch": annotations.get(f"{_ANN}/base-branch") or APP_BASE_BRANCH,
             "namespace": f"druppie-{slug}",
             "host": f"druppie-{slug}.{DOMAIN_SUFFIX}",
             "owner_id": owner_id,
@@ -1753,6 +2010,7 @@ class BranchEnvironmentService:
             "stack_mode": stack_mode,
             "recovery_mode": recovery_mode,
             "auto_deploy_enabled": auto_deploy_enabled,
+            "read_error": read_error,
         }
 
     async def _read_namespace_file(self, slug: str) -> tuple[str, str]:
@@ -1795,6 +2053,11 @@ class BranchEnvironmentService:
         workspace_status: str | None = None,
     ) -> BranchEnvironmentDetail:
         enabled = env.get("workspace_enabled", False)
+        # A corrupt manifest degrades this one env instead of taking down the
+        # whole list: surface it as failed with the slug/branch still shown.
+        if env.get("read_error"):
+            status = BranchEnvironmentStatus.FAILED.value
+            message = "environment manifest could not be parsed (corrupt YAML)"
         return BranchEnvironmentDetail(
             id=env["slug"],
             branch=env["branch"],
@@ -1850,3 +2113,28 @@ class BranchEnvironmentService:
             except ValueError:
                 pass
         return datetime.fromtimestamp(0, tz=timezone.utc)
+
+    @staticmethod
+    def _parse_ts_opt(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _pr_info(cls, pr: dict, head: str, base: str) -> PullRequestInfo:
+        """Map a Gitea PR object to the PullRequestInfo domain model."""
+        return PullRequestInfo(
+            exists=True,
+            number=pr.get("number"),
+            url=pr.get("html_url"),
+            title=pr.get("title"),
+            state=pr.get("state"),
+            merged=bool(pr.get("merged")),
+            mergeable=pr.get("mergeable"),
+            head_branch=(pr.get("head") or {}).get("ref") or head,
+            base_branch=(pr.get("base") or {}).get("ref") or base,
+            created_at=cls._parse_ts_opt(pr.get("created_at")),
+        )

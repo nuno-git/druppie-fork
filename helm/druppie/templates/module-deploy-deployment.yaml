@@ -174,5 +174,6 @@ spec:
         - name: gitops-ca
           configMap:
             name: {{ .Values.modules.docker.userApps.gitops.caConfigMap }}
+            optional: true
         {{- end }}
 {{- end }}

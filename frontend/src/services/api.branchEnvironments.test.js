@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Test the REAL api client (no module mock) — a page-level test with a mocked
 // api module cannot catch the client dropping fields from the request body.
-vi.mock('./keycloak', () => ({ getToken: () => null }))
+vi.mock('./keycloak', () => ({
+  getToken: () => null,
+  ensureValidToken: async () => true,
+  redirectToLogin: () => {},
+}))
 
 import { branchEnvironmentsApi } from './api'
 
@@ -56,5 +60,45 @@ describe('branchEnvironmentsApi.pipeline', () => {
     const [url, options] = global.fetch.mock.calls[0]
     expect(url).toContain('/api/branch-environments/feature-foo/pipeline')
     expect(options?.method).toBeUndefined()
+  })
+})
+
+describe('branchEnvironmentsApi.getPullRequest', () => {
+  beforeEach(() => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ exists: true, number: 7, state: 'open' }),
+    })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('GETs the env pull-request with an encoded id and returns the body', async () => {
+    const result = await branchEnvironmentsApi.getPullRequest('feature/foo')
+    const [url, options] = global.fetch.mock.calls[0]
+    expect(url).toContain('/api/branch-environments/feature%2Ffoo/pull-request')
+    expect(options?.method).toBeUndefined()
+    expect(result).toEqual({ exists: true, number: 7, state: 'open' })
+  })
+})
+
+describe('branchEnvironmentsApi.createPullRequest', () => {
+  beforeEach(() => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ exists: true, number: 8, url: 'https://gitea/pr/8' }),
+    })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('POSTs to the env pull-request endpoint and returns the created PR', async () => {
+    const result = await branchEnvironmentsApi.createPullRequest('feature-foo')
+    const [url, options] = global.fetch.mock.calls[0]
+    expect(url).toContain('/api/branch-environments/feature-foo/pull-request')
+    expect(options?.method).toBe('POST')
+    expect(result).toEqual({ exists: true, number: 8, url: 'https://gitea/pr/8' })
   })
 })

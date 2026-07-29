@@ -13,11 +13,23 @@ vi.mock('../services/api', () => ({
     teardown: vi.fn(),
     enableWorkspace: vi.fn(),
     disableWorkspace: vi.fn(),
+    getPullRequest: vi.fn(),
+    createPullRequest: vi.fn(),
+    listBranches: vi.fn(),
   },
 }))
 
-import BranchEnvironments, { slugifyBranch } from './BranchEnvironments'
+// Mock useAuth so we can control the current user (owner / admin gating).
+vi.mock('../App', () => ({
+  useAuth: vi.fn(() => ({ user: null })),
+}))
+
+import BranchEnvironments, {
+  slugifyBranch,
+  mergeabilityRefetchInterval,
+} from './BranchEnvironments'
 import { branchEnvironmentsApi } from '../services/api'
+import { useAuth } from '../App'
 import { ToastProvider } from '../components/Toast'
 
 describe('slugifyBranch', () => {
@@ -48,6 +60,32 @@ describe('slugifyBranch', () => {
   })
 })
 
+describe('mergeabilityRefetchInterval', () => {
+  const openUnknown = { exists: true, state: 'open', mergeable: null }
+
+  it('polls while Gitea is still computing mergeability of an open PR', () => {
+    expect(mergeabilityRefetchInterval(openUnknown, 0)).toBe(5000)
+    expect(mergeabilityRefetchInterval(openUnknown, 5)).toBe(5000)
+  })
+
+  it('caps polling once the poll limit is reached (no infinite 5s loop)', () => {
+    // The cap is 12 — at/over it we must stop polling even if mergeable stays null.
+    expect(mergeabilityRefetchInterval(openUnknown, 12)).toBe(false)
+    expect(mergeabilityRefetchInterval(openUnknown, 50)).toBe(false)
+  })
+
+  it('does not poll once mergeability is resolved', () => {
+    expect(mergeabilityRefetchInterval({ exists: true, state: 'open', mergeable: true }, 0)).toBe(false)
+    expect(mergeabilityRefetchInterval({ exists: true, state: 'open', mergeable: false }, 0)).toBe(false)
+  })
+
+  it('does not poll for a non-open or non-existent PR', () => {
+    expect(mergeabilityRefetchInterval({ exists: false }, 0)).toBe(false)
+    expect(mergeabilityRefetchInterval({ exists: true, state: 'merged', mergeable: null }, 0)).toBe(false)
+    expect(mergeabilityRefetchInterval(undefined, 0)).toBe(false)
+  })
+})
+
 const renderPage = () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -64,6 +102,14 @@ const renderPage = () => {
 describe('BranchEnvironments page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Sensible defaults: no current user (non-owner) and a "no PR yet" status so
+    // rendering a card never leaves the PR query unmocked.
+    useAuth.mockReturnValue({ user: null })
+    branchEnvironmentsApi.getPullRequest.mockResolvedValue({
+      exists: false,
+      base_branch: 'colab-dev',
+    })
+    branchEnvironmentsApi.listBranches.mockResolvedValue([])
   })
 
   it('renders a running environment with its branch and Open link', async () => {
@@ -158,7 +204,7 @@ describe('BranchEnvironments page', () => {
     renderPage()
 
     fireEvent.click(await screen.findByRole('button', { name: /deploy branch/i }))
-    fireEvent.change(screen.getByPlaceholderText('feature/my-branch'), {
+    fireEvent.change(await screen.findByPlaceholderText(/type or select a branch name/i), {
       target: { value: 'feature/foo' },
     })
     fireEvent.submit(screen.getByRole('button', { name: /^deploy$/i }).closest('form'))
@@ -173,22 +219,22 @@ describe('BranchEnvironments page', () => {
     )
   })
 
-  it('deploys with the developer secrets source when selected', async () => {
+  it('deploys with a developer secrets source when selected', async () => {
     branchEnvironmentsApi.list.mockResolvedValue({ items: [], total: 0 })
     branchEnvironmentsApi.deploy.mockResolvedValue({})
 
     renderPage()
 
     fireEvent.click(await screen.findByRole('button', { name: /deploy branch/i }))
-    fireEvent.change(screen.getByPlaceholderText('feature/my-branch'), {
+    fireEvent.change(await screen.findByPlaceholderText(/type or select a branch name/i), {
       target: { value: 'feature/foo' },
     })
-    fireEvent.click(screen.getByRole('radio', { name: /my developer vault map/i }))
+    fireEvent.click(screen.getByRole('radio', { name: /robbe/i }))
     fireEvent.submit(screen.getByRole('button', { name: /^deploy$/i }).closest('form'))
 
     await waitFor(() =>
       expect(branchEnvironmentsApi.deploy).toHaveBeenCalledWith(
-        expect.objectContaining({ secrets_source: 'developer' })
+        expect.objectContaining({ secrets_source: 'robbe' })
       )
     )
   })
@@ -349,5 +395,111 @@ describe('BranchEnvironments page', () => {
     await waitFor(() =>
       expect(branchEnvironmentsApi.disableWorkspace).toHaveBeenCalledWith('feature-ws')
     )
+  })
+
+  const runningEnv = (overrides = {}) => ({
+    id: 'feature-pr',
+    branch: 'feature/pr',
+    slug: 'feature-pr',
+    namespace: 'druppie-feature-pr',
+    url: 'https://druppie-feature-pr.rijnland.dev',
+    image_tag: 'abc123',
+    status: 'running',
+    status_message: null,
+    created_at: '2026-07-07T10:00:00Z',
+    workspace_enabled: false,
+    workspace_url: null,
+    workspace_status: null,
+    owner_id: 'owner-123',
+    ...overrides,
+  })
+
+  it('hides the "Pull request openen" button for a non-owner', async () => {
+    useAuth.mockReturnValue({ user: { id: 'someone-else', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [runningEnv()], total: 1 })
+
+    renderPage()
+
+    await screen.findByText('feature/pr')
+    expect(screen.queryByRole('button', { name: /pull request openen/i })).toBeNull()
+    expect(await screen.findByText(/alleen de eigenaar/i)).toBeTruthy()
+  })
+
+  it('opens a pull request when the owner clicks the button', async () => {
+    useAuth.mockReturnValue({ user: { id: 'owner-123', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [runningEnv()], total: 1 })
+    branchEnvironmentsApi.createPullRequest.mockResolvedValue({
+      exists: true,
+      number: 42,
+      url: 'https://gitea/pr/42',
+    })
+
+    renderPage()
+
+    const btn = await screen.findByRole('button', { name: /pull request openen/i })
+    // Wait until the PR-status query settles so the button is no longer disabled.
+    await waitFor(() => expect(btn.disabled).toBe(false))
+    fireEvent.click(btn)
+
+    await waitFor(() =>
+      expect(branchEnvironmentsApi.createPullRequest).toHaveBeenCalledWith('feature-pr')
+    )
+  })
+
+  it('shows a branch-not-pushed message and disables the button on a 404 status', async () => {
+    useAuth.mockReturnValue({ user: { id: 'owner-123', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [runningEnv()], total: 1 })
+    branchEnvironmentsApi.getPullRequest.mockRejectedValue(
+      Object.assign(new Error('not found'), { status: 404 })
+    )
+
+    renderPage()
+
+    expect(await screen.findByText(/branch nog niet gepusht/i)).toBeTruthy()
+    const btn = screen.getByRole('button', { name: /pull request openen/i })
+    expect(btn.disabled).toBe(true)
+  })
+
+  it('does not retry the PR-status query on a 404 (no per-card retry storm)', async () => {
+    useAuth.mockReturnValue({ user: { id: 'owner-123', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [runningEnv()], total: 1 })
+    branchEnvironmentsApi.getPullRequest.mockRejectedValue(
+      Object.assign(new Error('not found'), { status: 404 })
+    )
+
+    // Use a client whose defaults WOULD retry (3x, immediately) — the query's own
+    // retry opt-out must win so an expected 404 settles after a single call.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: 3, retryDelay: 0 } },
+    })
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider>
+          <MemoryRouter>
+            <BranchEnvironments />
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText(/branch nog niet gepusht/i)).toBeTruthy()
+    // A single call — no 3× exponential-backoff retry storm on the expected 404.
+    expect(branchEnvironmentsApi.getPullRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the "Pull request openen" button for a deleting environment', async () => {
+    useAuth.mockReturnValue({ user: { id: 'owner-123', roles: [] } })
+    branchEnvironmentsApi.list.mockResolvedValue({
+      items: [runningEnv({ status: 'deleting' })],
+      total: 1,
+    })
+
+    renderPage()
+
+    await screen.findByText('feature/pr')
+    const btn = screen.getByRole('button', { name: /pull request openen/i })
+    expect(btn.disabled).toBe(true)
+    // The PR endpoint 404s for a terminating env, so we never even query it.
+    expect(branchEnvironmentsApi.getPullRequest).not.toHaveBeenCalled()
   })
 })

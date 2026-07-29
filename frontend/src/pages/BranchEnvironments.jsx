@@ -28,6 +28,7 @@ import {
   Search,
   ToggleLeft,
   ToggleRight,
+  GitPullRequest,
 } from 'lucide-react'
 
 import { branchEnvironmentsApi } from '../services/api'
@@ -39,6 +40,18 @@ import EmptyState from '../components/shared/EmptyState'
 import { SkeletonProjectCard } from '../components/shared/Skeleton'
 
 const POLL_MS = 5000
+
+// Cap how many times a card polls Gitea for a PR whose mergeability never
+// resolves — otherwise a stuck `mergeable == null` polls every 5s forever.
+const MAX_MERGEABILITY_POLLS = 12
+
+// Decide the PR-status refetch interval: poll every POLL_MS while Gitea is still
+// computing mergeability of an open PR, but stop once we hit the poll cap so a
+// never-resolving `mergeable` can't loop forever. Exported for unit testing.
+export const mergeabilityRefetchInterval = (data, dataUpdateCount = 0) => {
+  const stillComputing = data?.exists && data.state === 'open' && data.mergeable == null
+  return stillComputing && dataUpdateCount < MAX_MERGEABILITY_POLLS ? POLL_MS : false
+}
 
 const TRANSITIONAL = new Set(['deploying', 'deleting'])
 
@@ -91,6 +104,136 @@ const formatDate = (value) => {
   if (!value) return '—'
   const d = new Date(value)
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString()
+}
+
+const PR_STATE_STYLE = {
+  open: { cls: 'bg-green-100 text-green-700', label: 'open' },
+  merged: { cls: 'bg-purple-100 text-purple-700', label: 'merged' },
+  closed: { cls: 'bg-gray-100 text-gray-500', label: 'closed' },
+}
+
+// "Merge terug"-knop: opent (of toont) een pull request die deze branch
+// terugmerget in de basisbranch waar de omgeving vanaf is gestart
+// (colab-dev of main). De PR-status komt live van de Gitea-API.
+const PullRequestSection = ({ env, canMerge }) => {
+  const qc = useQueryClient()
+  const toast = useToast()
+
+  const { data: pr, isLoading, isError, error } = useQuery({
+    queryKey: ['branch-env-pr', env.id],
+    queryFn: () => branchEnvironmentsApi.getPullRequest(env.id),
+    // A terminating env is gone from git — its PR endpoint 404s; skip it.
+    enabled: env.status !== 'deleting',
+    // A "branch not pushed" env is an EXPECTED 404 (and a forbidden env a 403),
+    // so opt those out of the default 3× backoff to avoid a per-card retry storm.
+    retry: (failureCount, error) => {
+      if (error?.status === 403 || error?.status === 404) return false
+      return failureCount < 2
+    },
+    refetchInterval: (query) =>
+      mergeabilityRefetchInterval(query.state.data, query.state.dataUpdateCount),
+  })
+
+  // A 404 means the branch was never pushed to Gitea (so there is no PR to
+  // open yet) — distinguish that from "no PR yet, go ahead and open one".
+  const branchNotPushed = isError && error?.status === 404
+  const statusUnknown = isError && !branchNotPushed
+
+  const createMut = useMutation({
+    mutationFn: () => branchEnvironmentsApi.createPullRequest(env.id),
+    onSuccess: (info) => {
+      qc.setQueryData(['branch-env-pr', env.id], info)
+      toast.success('Pull request klaar', 'De pull request is aangemaakt (of stond al open).')
+    },
+    onError: (err) => toast.error('Pull request mislukt', err.message),
+  })
+
+  const base = pr?.base_branch
+  const merged = pr?.merged
+  const state = merged ? 'merged' : pr?.state
+  const style = PR_STATE_STYLE[state] || PR_STATE_STYLE.closed
+  // A branch that IS the base branch has nothing to merge back.
+  const nothingToMerge = base && env.branch === base
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <GitPullRequest className="w-4 h-4 text-gray-500 flex-shrink-0" />
+          <span className="text-xs text-gray-600">Merge terug</span>
+          {pr?.exists && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${style.cls}`}>
+              {style.label}
+            </span>
+          )}
+        </div>
+        {pr?.exists ? (
+          <a
+            href={pr.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-white bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            PR #{pr.number}
+          </a>
+        ) : canMerge ? (
+          <button
+            onClick={() => createMut.mutate()}
+            disabled={
+              createMut.isPending ||
+              isLoading ||
+              nothingToMerge ||
+              isError ||
+              env.status === 'deleting'
+            }
+            title={
+              nothingToMerge
+                ? `"${env.branch}" is de basisbranch — niets om terug te mergen`
+                : branchNotPushed
+                  ? `Push branch "${env.branch}" eerst naar Gitea`
+                  : statusUnknown
+                    ? 'PR-status onbekend — probeer het later opnieuw'
+                    : `Open een pull request naar ${base || 'de basisbranch'}`
+            }
+            className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {createMut.isPending ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <GitPullRequest className="w-3.5 h-3.5" />
+            )}
+            Pull request openen
+          </button>
+        ) : null}
+      </div>
+      {isError ? (
+        <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+          <AlertCircle className="w-3 h-3 flex-shrink-0" />
+          {branchNotPushed
+            ? `Branch nog niet gepusht — push "${env.branch}" naar Gitea om terug te mergen.`
+            : 'PR-status onbekend — kon de pull request niet ophalen.'}
+        </p>
+      ) : pr?.exists && !merged && pr.mergeable === false ? (
+        <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+          <AlertCircle className="w-3 h-3 flex-shrink-0" />
+          Kan nog niet mergen — los eerst conflicten met {base} op.
+        </p>
+      ) : (
+        <p className="mt-1 text-[10px] text-gray-400">
+          {pr?.exists
+            ? merged
+              ? `Samengevoegd in ${base}.`
+              : `Open pull request: ${env.branch} → ${base}.`
+            : nothingToMerge
+              ? 'Dit is de basisbranch.'
+              : canMerge
+                ? `Merge ${env.branch} terug in ${base || 'de basisbranch'}.`
+                : 'Alleen de eigenaar (of een admin) kan deze branch terugmergen.'}
+        </p>
+      )}
+    </div>
+  )
 }
 
 const WorkspaceSection = ({
@@ -230,6 +373,8 @@ const WorkspaceSection = ({
 
 const BranchEnvCard = ({
   env,
+  currentUserId,
+  isAdmin,
   onRedeploy,
   onDelete,
   onEnableWorkspace,
@@ -245,6 +390,11 @@ const BranchEnvCard = ({
 }) => {
   const isTransitional = TRANSITIONAL.has(env.status)
   const canOpen = env.status === 'running' && env.url
+
+  // Merge-back is owner-or-admin only, mirroring the backend. When the owner
+  // annotation is unreadable (owner_id null) the backend falls back to
+  // admin-only, so we do too.
+  const canMerge = isAdmin || (!!env.owner_id && env.owner_id === currentUserId)
 
   // Deploy pipeline: auto-open while the env is transitioning or failed so you
   // can see which hop is busy/broken; the toggle overrides the default.
@@ -472,6 +622,9 @@ const BranchEnvCard = ({
             : 'Push events will not rebuild this environment.'}
         </p>
       </div>
+
+      {/* Merge terug (pull request) */}
+      <PullRequestSection env={env} canMerge={canMerge} />
 
       {/* Workspace */}
       <WorkspaceSection
@@ -809,6 +962,8 @@ const BranchEnvironments = () => {
   const [showDeploy, setShowDeploy] = useState(false)
   const [deployError, setDeployError] = useState(null)
   const { user } = useAuth() || {}
+  const currentUserId = user?.id
+  const isAdmin = !!user?.roles?.includes('admin')
   const toast = useToast()
   const qc = useQueryClient()
 
@@ -986,6 +1141,8 @@ const BranchEnvironments = () => {
             <BranchEnvCard
               key={env.branch}
               env={env}
+              currentUserId={currentUserId}
+              isAdmin={isAdmin}
               onRedeploy={(id) => redeployMut.mutate(id)}
               onDelete={(id) => deleteMut.mutate(id)}
               onEnableWorkspace={(id) => enableWorkspaceMut.mutate(id)}
