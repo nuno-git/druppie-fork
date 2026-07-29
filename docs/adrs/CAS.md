@@ -34,3 +34,4 @@ Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`
 | [030](030-sticky-fallback.md) | Sticky LLM fallback per session |
 | [031](031-hybrid-diagramming-strategy.md) | Hybrid ArchiMate + Mermaid diagramming strategy |
 | [036](036-devops-mention-resolution.md) | Use regex detection and Identity Picker API for @mention resolution |
+| [037](037-retry-on-copy-superseded-tracking.md) | Replace hard-delete retry with copy-and-supersede tracking |
