@@ -18,7 +18,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 MAX_EXTRACTED_TEXT = 50_000  # characters
 
 DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
-DEEPINFRA_OCR_MODEL = "google/gemma-4-31B-it"
+DEEPINFRA_OCR_MODEL = "google/gemma-3-27b-it"
 OCR_PAGE_TIMEOUT = 120
 OCR_MAX_PAGES = 50
 OCR_CONCURRENCY = 4
@@ -344,7 +344,7 @@ def schedule_extraction(att_id: UUID, file_path: Path, content_type: str) -> Non
                 repo = AttachmentRepository(db)
                 attachment = repo.get_by_id(att_id)
                 if attachment is not None:
-                    attachment.extracted_text = text
+                    attachment.extracted_text = text if text else ""
                     db.commit()
             finally:
                 db.close()

@@ -1027,6 +1027,14 @@ async def create_message(
         linked_attachments=linked_count,
     )
 
+    from druppie.core.session_event_manager import get_event_manager
+    try:
+        await get_event_manager().broadcast_message_created(
+            session_id=session_id, message=message,
+        )
+    except Exception:
+        logger.warning("create_message_broadcast_failed", session_id=str(session_id), exc_info=True)
+
     result: dict = {"status": "created", "message": "Message added to timeline"}
     if linked_count:
         result["attachment_count"] = linked_count

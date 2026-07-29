@@ -350,7 +350,7 @@ class SessionRepository(BaseRepository):
                     content_type=att.content_type,
                     file_size=att.file_size,
                     created_at=att.created_at,
-                    text_ready=bool(att.extracted_text),
+                    text_ready=att.extracted_text is not None,
                 )
             )
 
@@ -715,7 +715,7 @@ class SessionRepository(BaseRepository):
                         content_type=a.content_type,
                         file_size=a.file_size,
                         created_at=a.created_at,
-                        text_ready=bool(a.extracted_text),
+                        text_ready=a.extracted_text is not None,
                     )
                     for a in att_rows
                 ]
@@ -774,7 +774,7 @@ class SessionRepository(BaseRepository):
                         content_type=a.content_type,
                         file_size=a.file_size,
                         created_at=a.created_at,
-                        text_ready=bool(a.extracted_text),
+                        text_ready=a.extracted_text is not None,
                     )
                     for a in att_rows
                 ]
