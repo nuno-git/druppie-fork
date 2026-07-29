@@ -206,16 +206,21 @@ spec:
             - --cookie-secure=true
             - --skip-provider-button=true
           env:
+            # optional: true so the sidecar starts during the ESO sync window
+            # (secret not yet synced from Vault); Stakater Reloader restarts the
+            # pod once <instance>-secrets lands. Matches the envFrom fix.
             - name: OAUTH2_PROXY_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: client-secret
+                  optional: true
             - name: OAUTH2_PROXY_COOKIE_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: cookie-secret
+                  optional: true
           ports:
             - { name: proxy, containerPort: 4180 }
           resources:
