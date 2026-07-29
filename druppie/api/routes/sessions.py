@@ -588,13 +588,18 @@ async def resume_session(
 # =============================================================================
 
 
-async def _run_entra_auth_background(session_id: UUID, user_kc_token: str) -> None:
+async def _run_entra_auth_background(
+    session_id: UUID,
+    user_kc_token: str,
+    prefetched_entra_token: str | None = None,
+) -> None:
     """Resume workflow after Entra auth in background."""
 
     async def task(ctx):
         await ctx.orchestrator.resume_after_entra_auth(
             session_id=session_id,
             user_kc_token=user_kc_token,
+            prefetched_entra_token=prefetched_entra_token,
         )
 
     await run_session_task(session_id, task, "resume_after_entra_auth")
@@ -685,6 +690,7 @@ async def authorize_entra(
             _run_entra_auth_background(
                 session_id=session_id,
                 user_kc_token=bearer_token,
+                prefetched_entra_token=graph_token,
             ),
             name=f"entra-auth-{session_id}",
             skip_lock=True,

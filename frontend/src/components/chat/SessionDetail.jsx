@@ -1240,6 +1240,25 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           if (!old) return old
           return { ...old, status: event.status }
         })
+        // Trigger Entra auth immediately from WebSocket instead of waiting for next poll cycle
+        if (event.status === 'paused_entra_auth' && !entraAuthSentRef.current) {
+          entraAuthSentRef.current = true
+          authorizeEntra(sessionId)
+            .then((result) => {
+              if (result?.needs_reauth) {
+                const kc = getKeycloak()
+                if (kc) {
+                  kc.login({ idpHint: 'entra-id', redirectUri: window.location.origin + window.location.pathname })
+                }
+                return
+              }
+              queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+            })
+            .catch((err) => {
+              console.error('Entra auth failed:', err)
+              entraAuthSentRef.current = false
+            })
+        }
         queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       }
     }, {

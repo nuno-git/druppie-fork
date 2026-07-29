@@ -36,6 +36,11 @@ def _load_allowed_emails() -> set[str] | None:
 
 ALLOWED_ENTRA_EMAILS = _load_allowed_emails()
 
+# Cache for check_entra_linked() results: user_id -> (is_linked, timestamp)
+_entra_linked_cache: dict[str, tuple[bool, float]] = {}
+_ENTRA_LINKED_CACHE_TTL = 120  # seconds
+_ENTRA_LINKED_CACHE_MAX = 500
+
 
 def is_entra_configured() -> bool:
     return bool(ENTRA_CLIENT_ID and ENTRA_TENANT_ID)
@@ -128,9 +133,17 @@ async def check_entra_linked(user_id: str) -> bool:
     """Check if a user has a linked Entra ID identity in Keycloak.
 
     Uses the druppie-backend service account to query the KC Admin API.
+    Results are cached per user for 2 minutes to avoid repeated HTTP calls.
     """
     if not is_entra_configured():
         return False
+
+    # Check cache first
+    cached = _entra_linked_cache.get(user_id)
+    if cached is not None:
+        is_linked, cached_at = cached
+        if time.time() - cached_at < _ENTRA_LINKED_CACHE_TTL:
+            return is_linked
 
     sa_token = await _get_service_account_token()
     if not sa_token:
@@ -158,9 +171,16 @@ async def check_entra_linked(user_id: str) -> bool:
                 return False
 
             identities = response.json()
-            return any(
+            result = any(
                 idp.get("identityProvider") == IDP_ALIAS for idp in identities
             )
+
+            # Store in cache; clear if size exceeded
+            if len(_entra_linked_cache) >= _ENTRA_LINKED_CACHE_MAX:
+                _entra_linked_cache.clear()
+            _entra_linked_cache[user_id] = (result, time.time())
+
+            return result
         except Exception as e:
             logger.error("entra_check_error", error=str(e), user_id=user_id)
             return False
@@ -314,8 +334,17 @@ async def _exchange_refresh_for_scope(refresh_token: str, scope: str) -> str | N
     return result.get("access_token")
 
 
+_sa_token_cache: str | None = None
+_sa_token_expiry: float = 0
+
+
 async def _get_service_account_token() -> str | None:
     """Get a Keycloak access token for the druppie-backend service account."""
+    global _sa_token_cache, _sa_token_expiry
+
+    if _sa_token_cache is not None and time.time() < _sa_token_expiry:
+        return _sa_token_cache
+
     if not KEYCLOAK_CLIENT_SECRET:
         return None
 
@@ -334,7 +363,14 @@ async def _get_service_account_token() -> str | None:
         try:
             response = await client.post(token_url, data=data, timeout=10)
             if response.status_code == 200:
-                return response.json().get("access_token")
+                token = response.json().get("access_token")
+                if token:
+                    claims = _decode_jwt_payload(token)
+                    exp = claims.get("exp")
+                    if exp:
+                        _sa_token_cache = token
+                        _sa_token_expiry = exp - 60
+                return token
             logger.warning("sa_token_failed", status=response.status_code)
             return None
         except Exception as e:

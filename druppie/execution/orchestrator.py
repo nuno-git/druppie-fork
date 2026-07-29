@@ -1269,6 +1269,7 @@ class Orchestrator:
         self,
         session_id: UUID,
         user_kc_token: str,
+        prefetched_entra_token: str | None = None,
     ) -> UUID:
         """Resume execution after the frontend provides the user's KC token for Entra auth.
 
@@ -1280,7 +1281,7 @@ class Orchestrator:
         from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
         from druppie.execution.mcp_http import MCPHttp
         from druppie.core.mcp_config import MCPConfig
-        from druppie.core.entra_token import get_entra_token
+        from druppie.core.entra_token import get_entra_token, _is_token_expired
 
         logger.info("resume_after_entra_auth", session_id=str(session_id))
 
@@ -1305,8 +1306,14 @@ class Orchestrator:
         # MCP servers need a resource-specific scope.
         from druppie.core.mcp_config import get_mcp_config
         scope = get_mcp_config().get_entra_scope(waiting_tc.mcp_server)
-        token_result = await get_entra_token(user_kc_token, scope=scope)
-        entra_token = token_result.get("access_token")
+
+        entra_token = None
+        if prefetched_entra_token and not scope and not _is_token_expired(prefetched_entra_token):
+            entra_token = prefetched_entra_token
+            token_result = {"access_token": entra_token, "error": None, "needs_reauth": False}
+        else:
+            token_result = await get_entra_token(user_kc_token, scope=scope)
+            entra_token = token_result.get("access_token")
 
         if not entra_token:
             error_msg = token_result.get("error", "Failed to retrieve Entra ID token")
@@ -1340,6 +1347,11 @@ class Orchestrator:
 
         # M5: KC token no longer needed — drop reference
         user_kc_token = None
+
+        # Cache the token so subsequent tool calls in the same agent run
+        # can retrieve it from the class-level cache (survives across
+        # different ToolExecutor instances).
+        ToolExecutor.cache_entra_token(session_id, entra_token)
 
         # Step 3: Re-execute the tool with Entra token injected
         from druppie.execution.tool_context import ToolContext

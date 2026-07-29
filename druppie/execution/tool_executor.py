@@ -141,6 +141,31 @@ class ToolExecutor:
         status = await executor.execute(tool_call_id)
     """
 
+    # Class-level cache: Entra tokens persist across ToolExecutor instances
+    # within the same process, keyed by session_id string.  This is necessary
+    # because the orchestrator's resume_after_entra_auth() uses one ToolExecutor
+    # instance while the agent runtime creates a separate one for subsequent
+    # tool calls — without a shared cache the token would be lost.
+    _entra_token_cache: dict[str, str] = {}
+    _ENTRA_TOKEN_CACHE_MAX = 100
+
+    @classmethod
+    def cache_entra_token(cls, session_id, token: str) -> None:
+        """Cache an Entra token for a session so subsequent tool calls can use it."""
+        sid = str(session_id)
+        if len(cls._entra_token_cache) >= cls._ENTRA_TOKEN_CACHE_MAX:
+            # Evict expired entries first
+            from druppie.core.entra_token import _is_token_expired
+            cls._entra_token_cache = {
+                k: v for k, v in cls._entra_token_cache.items()
+                if not _is_token_expired(v)
+            }
+            # If still at capacity, clear all (shouldn't happen in practice)
+            if len(cls._entra_token_cache) >= cls._ENTRA_TOKEN_CACHE_MAX:
+                cls._entra_token_cache.clear()
+        cls._entra_token_cache[sid] = token
+        logger.info("entra_token_cached", session_id=sid)
+
     def __init__(
         self,
         db: "DBSession | None",
@@ -294,6 +319,24 @@ class ToolExecutor:
         # Use provided context or create a new one
         if context is None:
             context = ToolContext(self._active_db, session_id, agent_run_id=agent_run_id)
+            # Restore cached Entra token for this session so it survives
+            # across consecutive tool calls within the same agent run.
+            if session_id:
+                cached_token = self._entra_token_cache.get(str(session_id))
+                if cached_token:
+                    from druppie.core.entra_token import _is_token_expired
+                    if not _is_token_expired(cached_token):
+                        context.set_entra_token(cached_token)
+                        logger.info(
+                            "entra_token_restored_from_cache",
+                            session_id=str(session_id),
+                        )
+                    else:
+                        self._entra_token_cache.pop(str(session_id), None)
+                        logger.info(
+                            "entra_token_cache_expired",
+                            session_id=str(session_id),
+                        )
 
         # Apply each rule
         injected_args = dict(args)
