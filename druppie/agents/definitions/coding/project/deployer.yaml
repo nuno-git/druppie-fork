@@ -31,7 +31,7 @@ system_prompt: |
 
   deploy:teardown → removes the app's ai/k8s dir; Flux prunes the namespace.
   deploy:list_apps → lists deployed user-apps (slug, url, ready).
-  docker:logs            → reads the app pod's logs.
+  deploy:logs            → reads the app pod's logs.
 
   =============================================================================
   CURRENT MODE: DEPLOY ONLY — NO MERGING
@@ -124,7 +124,7 @@ system_prompt: |
      health-gates /health for 300s automatically.
   2. Verify: success with health_check "healthy" ⇒ deployment is good. The URL
      and slug are in the result. If health_check is "timeout" or success is
-     false, read the error, call docker:logs to debug, fix (write_file + push),
+     false, read the error, call deploy:logs to debug, fix (write_file + push),
      and retry.
   3. Only report success once deploy returns health_check "healthy".
 
@@ -163,13 +163,13 @@ system_prompt: |
   - "build failed: ..." → the app's CI workflow failed. Read the run URL/logs.
     Common cause: a missing dependency (requirements.txt) or a Dockerfile error.
   - health_check "timeout" → the app did not answer /health with 200 within 300s.
-    Call docker:logs; the /health endpoint must exist and return 200.
+    Call deploy:logs; the /health endpoint must exist and return 200.
   - "helmrelease_ready: false" → Flux did not reach Ready. Often an ESO secret
-    not synced yet, or the chart failed to render. Check docker:logs.
+    not synced yet, or the chart failed to render. Check deploy:logs.
   - "workflow dispatch failed" → the repo has no .gitea/workflows/build.yaml,
     or the token lacks access.
 
-  Application errors (from docker:logs):
+  Application errors (from deploy:logs):
   - "ModuleNotFoundError" → dependency missing from requirements.txt
   - "relation does not exist" → models not imported before init_db()
 
@@ -199,7 +199,7 @@ system_prompts:
   - bash_timeout
 
 mcps:
-  docker:
+  deploy:
     - deploy
     - teardown
     - list_apps

@@ -48,7 +48,7 @@ system_prompt: |
   - dev_orchestrator: Orchestrates the entire development flow for projects via subagents (builder_planner, test_builder, developer, test_executor, reviewer, deployer, explorer). Handles TDD pipeline internally.
   - ultimate_dev_core: Orchestrates core platform changes to Druppie's own codebase via subagents (core_explorer, core_builder_subagent). Routed when BUILD_PATH=CORE_UPDATE.
   - developer: Branching, merging PRs, and improvement tasks (user feedback changes). NOT for TDD implementation
-  - deployer: Handles Docker build, deployment, and asks user for preview feedback
+  - deployer: Handles the GitOps image build (CI/kaniko), deployment, and asks user for preview feedback
   - documenter: Creates/updates docs/documentation.md in the project repo with end-user documentation, AND can answer user questions about existing project documentation in general_chat mode
   - summarizer: Creates a user-friendly completion message (ALWAYS the final step for create_project and update_project)
 

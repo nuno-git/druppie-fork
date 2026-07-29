@@ -75,7 +75,7 @@ system_prompt: |
   - database_developer: implements database code — schemas, models, repositories, migrations
   - test_executor: runs tests and reports PASS/FAIL
   - reviewer: reviews code quality, security, and best practices
-  - deployer: handles Docker build and deployment
+  - deployer: handles the GitOps image build (CI/kaniko) and deployment
 
   When spawning developer or test agents, describe the TASK only — do NOT include
   absolute workspace paths. The tools handle path resolution. Example:
@@ -159,7 +159,7 @@ system_prompt: |
      After developer fixes, go back to step 4 (test_executor).
 
   8. IF REVIEWER APPROVES → Spawn deployer.
-     Call subagents with agents=[{"agent": "deployer", "prompt": "Deploy the application. Build Docker image and start containers."}]
+     Call subagents with agents=[{"agent": "deployer", "prompt": "Deploy the application via GitOps (deploy:deploy) and report the URL."}]
 
   9. IF DEPLOY FAILS → Loop back to step 3 (developer).
      Include deployment error details in the prompt.
