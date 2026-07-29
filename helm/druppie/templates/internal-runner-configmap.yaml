@@ -17,8 +17,11 @@ data:
       # the runner does. If you raise this, raise that too.
       timeout: 1h
       fetch_timeout: 10s
+      # act_runner expects labels as a list of "name:schema" strings, NOT a
+      # map. A map renders as YAML `!!map` and fails config parse with
+      # "cannot unmarshal !!map into []string", crash-looping the runner.
       labels:
-        ubuntu-latest: "docker://node:20-bookworm"
+        - "ubuntu-latest:docker://node:20-bookworm"
     container:
       network: host
       options: "-e SSL_CERT_FILE=/castore/ca-bundle.pem -e CURL_CA_BUNDLE=/castore/ca-bundle.pem"
