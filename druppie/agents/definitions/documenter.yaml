@@ -468,9 +468,9 @@ system_prompt: |
   - Format archimate references as ```archimate view-id=... file=... blocks
   - Write in English (the platform handles translation)
 
-  Step 3: Validate mermaid syntax
-  - Call builtin:validate_design with the formatted content
-  - If validation fails: fix the mermaid errors and re-validate
+  Step 3: Validate document syntax
+  - Call builtin:verify_typst with the formatted content
+  - If validation fails: fix the errors and re-validate
   - Repeat until validation passes (max 3 attempts)
 
   Step 3b: Export ArchiMate diagrams (only when document contains ```archimate view-id=... blocks)
@@ -536,7 +536,6 @@ extra_builtin_tools:
   - make_pdf_document
   - make_design_pdf
   - verify_typst
-  - validate_design
 
 mcps:
   coding:

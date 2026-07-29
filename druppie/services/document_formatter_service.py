@@ -36,6 +36,8 @@ def _escape_typst(text: str) -> str:
     text = text.replace("#", "\\#")
     text = text.replace("@", "\\@")
     text = text.replace("$", "\\$")
+    text = text.replace("<", "\\<")
+    text = text.replace(">", "\\>")
     return text
 
 
@@ -128,6 +130,7 @@ def markdown_to_typst(content: str) -> str:
             if in_code_block:
                 if code_lang == "mermaid":
                     mermaid_src = "\n".join(code_lines)
+                    mermaid_src = mermaid_src.replace("\\", "\\\\")
                     mermaid_src = mermaid_src.replace('"', '\\"')
                     result.append(f'#align(center)[#mermaid("{mermaid_src}")]')
                     result.append("")

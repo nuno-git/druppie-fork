@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 import structlog
 
 from druppie.api.deps import get_current_user, get_project_service, get_user_roles
-from druppie.api.errors import NotFoundError, ValidationError
+from druppie.api.errors import ExternalServiceError, NotFoundError, ValidationError
 from druppie.core.config import get_settings
 from druppie.core.gitea import GiteaClient
 from druppie.db.database import get_db
@@ -432,18 +432,57 @@ async def get_design_pdf(
     title = f"{default_title} — {project.name}"
 
     pdf_service = PdfRenderService(db=db)
-    pdf_bytes, _, error = await pdf_service.render_markdown_pdf(
-        project_id=project_id,
-        repo_name=project.repo_name,
-        repo_owner=project.repo_owner,
-        markdown_path=path,
-        document_type=doc_type,
-        title=title,
-        project_name=project.name,
-        branches=["main"],
-    )
+    try:
+        pdf_bytes, _, error = await pdf_service.render_markdown_pdf(
+            project_id=project_id,
+            repo_name=project.repo_name,
+            repo_owner=project.repo_owner,
+            markdown_path=path,
+            document_type=doc_type,
+            title=title,
+            project_name=project.name,
+            branches=["main"],
+        )
+    except OSError as exc:
+        logger.error(
+            "design_pdf_io_error",
+            project_id=str(project_id),
+            path=path,
+            error=str(exc),
+        )
+        raise ExternalServiceError(
+            service="pdf-render",
+            message="PDF generation failed due to I/O error",
+            original_error=str(exc),
+        )
+    except Exception as exc:
+        logger.error(
+            "design_pdf_unexpected_error",
+            project_id=str(project_id),
+            path=path,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise ExternalServiceError(
+            service="pdf-render",
+            message="PDF generation encountered an unexpected error",
+            original_error=str(exc),
+        )
+
     if error:
-        raise ValidationError(f"PDF generation failed: {error}", field="path")
+        if "not found" in error.lower():
+            raise NotFoundError(
+                resource="document",
+                resource_id=path,
+                message=f"PDF generation failed: {error}",
+            )
+        raise ExternalServiceError(
+            service="pdf-render",
+            message=f"PDF generation failed: {error}",
+        )
+
+    # Persist the cache entry created by the render service (flush -> commit).
+    db.commit()
 
     filename = f"{stem}.pdf"
     return Response(

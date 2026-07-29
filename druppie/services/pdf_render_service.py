@@ -165,7 +165,7 @@ class PdfRenderService:
                 pdf_storage_path=storage_path,
                 file_size=len(pdf_bytes),
             )
-            self.db.flush()
+            self.db.commit()
 
             logger.info(
                 "pdf_cache_miss_compiled",
@@ -322,7 +322,7 @@ class PdfRenderService:
                 pdf_storage_path=storage_path,
                 file_size=len(pdf_bytes),
             )
-            self.db.flush()
+            self.db.commit()
 
             logger.info(
                 "design_pdf_rendered",
@@ -334,6 +334,16 @@ class PdfRenderService:
 
         except DocumentFormatterError as e:
             return None, None, f"PDF compilation failed: {e}"
+
+        except Exception as exc:
+            logger.error(
+                "render_markdown_pdf_failed",
+                markdown_path=markdown_path,
+                project_id=str(project_id),
+                error=str(exc),
+                exc_info=True,
+            )
+            raise
 
         finally:
             if temp_dir.exists():
