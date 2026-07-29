@@ -137,14 +137,14 @@ class SessionRepository(BaseRepository):
         )
         return [self._to_summary(s) for s in sessions]
 
-    def get_detail(self, session_id: UUID, options: DetailOptions | None = None) -> SessionDetail | None:
+    def get_detail(self, session_id: UUID, include_superseded: bool = False, options: DetailOptions | None = None) -> SessionDetail | None:
         """Get session with full timeline."""
         session = self.get_by_id(session_id)
         if not session:
             return None
 
         options = options or DetailOptions()
-        timeline = self._build_timeline(session_id, options=options)
+        timeline = self._build_timeline(session_id, include_superseded=include_superseded, options=options)
         project = self._get_project_summary(session.project_id) if session.project_id else None
 
         return SessionDetail(
@@ -161,6 +161,12 @@ class SessionRepository(BaseRepository):
             ),
             created_at=session.created_at,
             updated_at=session.updated_at,
+            classificatie_code=session.classificatie_code,
+            informatiecategorie=session.informatiecategorie,
+            waardering=session.waardering,
+            bewaartermijn_looptijd=session.bewaartermijn_looptijd,
+            bewaartermijn_trigger=session.bewaartermijn_trigger,
+            access_level=session.access_level,
             # SessionDetail specific
             user_id=session.user_id,
             project=project,
@@ -169,9 +175,9 @@ class SessionRepository(BaseRepository):
         )
 
     # Backward compat alias
-    def get_with_chat(self, session_id: UUID, options: DetailOptions | None = None) -> SessionDetail | None:
+    def get_with_chat(self, session_id: UUID, include_superseded: bool = False, options: DetailOptions | None = None) -> SessionDetail | None:
         """Alias for get_detail (backward compatibility)."""
-        return self.get_detail(session_id, options=options)
+        return self.get_detail(session_id, include_superseded=include_superseded, options=options)
 
     def create(
         self,
@@ -233,6 +239,7 @@ class SessionRepository(BaseRepository):
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.status != AgentRunStatus.PENDING.value,
+                AgentRun.superseded_at.is_(None),
             )
             .first()
         )
@@ -293,9 +300,15 @@ class SessionRepository(BaseRepository):
             ),
             created_at=session.created_at,
             updated_at=session.updated_at,
+            classificatie_code=session.classificatie_code,
+            informatiecategorie=session.informatiecategorie,
+            waardering=session.waardering,
+            bewaartermijn_looptijd=session.bewaartermijn_looptijd,
+            bewaartermijn_trigger=session.bewaartermijn_trigger,
+            access_level=session.access_level,
         )
 
-    def _build_timeline(self, session_id: UUID, options: DetailOptions | None = None) -> list[TimelineEntry]:
+    def _build_timeline(self, session_id: UUID, include_superseded: bool = False, options: DetailOptions | None = None) -> list[TimelineEntry]:
         """Build chronological timeline from messages and agent runs.
 
         Returns a unified list of TimelineEntry objects, each containing either:
@@ -314,6 +327,8 @@ class SessionRepository(BaseRepository):
             .filter_by(session_id=session_id)
             .filter(MessageModel.role.in_(["user", "system", "assistant", "tool"]))
         )
+        if not include_superseded:
+            messages_query = messages_query.filter(MessageModel.superseded_at.is_(None))
         if options.since_sequence is not None:
             messages_query = messages_query.filter(
                 MessageModel.sequence_number > options.since_sequence)
@@ -361,6 +376,8 @@ class SessionRepository(BaseRepository):
             self.db.query(AgentRun)
             .filter_by(session_id=session_id, parent_run_id=None)
         )
+        if not include_superseded:
+            agent_runs_query = agent_runs_query.filter(AgentRun.superseded_at.is_(None))
         if options.since_sequence is not None:
             agent_runs_query = agent_runs_query.filter(
                 AgentRun.sequence_number > options.since_sequence)
@@ -371,7 +388,7 @@ class SessionRepository(BaseRepository):
                 type=TimelineEntryType.AGENT_RUN,
                 timestamp=run.started_at or run.created_at,
                 sequence_number=run.sequence_number,
-                agent_run=self._build_agent_run_detail(run, options=options),
+                agent_run=self._build_agent_run_detail(run, include_superseded=include_superseded, options=options),
             ))
 
         # Sort by sequence_number (both messages and agent runs have one),
@@ -409,9 +426,12 @@ class SessionRepository(BaseRepository):
             ),
             started_at=run.started_at,
             completed_at=run.completed_at,
+            superseded_at=run.superseded_at,
+            superseded_by_run_id=run.superseded_by_run_id,
+            retry_attempt=run.retry_attempt or 0,
         )
 
-    def _build_agent_run_detail(self, run: AgentRun, _depth: int = 0, options: DetailOptions | None = None) -> AgentRunDetail:
+    def _build_agent_run_detail(self, run: AgentRun, _depth: int = 0, include_superseded: bool = False, options: DetailOptions | None = None) -> AgentRunDetail:
         """Build full agent run detail with LLM calls, tool executions, and nested subagent runs."""
         options = options or DetailOptions()
         exclude = options.exclude
@@ -421,14 +441,15 @@ class SessionRepository(BaseRepository):
         else:
             subagent_runs = []
             if _depth < 10:
-                child_runs = (
+                child_query = (
                     self.db.query(AgentRun)
                     .filter_by(parent_run_id=run.id)
-                    .order_by(AgentRun.sequence_number, AgentRun.created_at)
-                    .all()
                 )
+                if not include_superseded:
+                    child_query = child_query.filter(AgentRun.superseded_at.is_(None))
+                child_runs = child_query.order_by(AgentRun.sequence_number, AgentRun.created_at).all()
                 subagent_runs = [
-                    self._build_agent_run_detail(child, _depth=_depth + 1, options=options)
+                    self._build_agent_run_detail(child, _depth=_depth + 1, include_superseded=include_superseded, options=options)
                     for child in child_runs
                 ]
 
@@ -444,9 +465,9 @@ class SessionRepository(BaseRepository):
 
         exclude_tool_results = "tool_results" in exclude
         if "llm_raw" in exclude:
-            llm_calls = self._build_llm_calls(run.id, exclude_llm_raw=True, exclude_tool_results=exclude_tool_results)
+            llm_calls = self._build_llm_calls(run.id, include_superseded=include_superseded, exclude_llm_raw=True, exclude_tool_results=exclude_tool_results)
         else:
-            llm_calls = self._build_llm_calls(run.id, exclude_tool_results=exclude_tool_results)
+            llm_calls = self._build_llm_calls(run.id, include_superseded=include_superseded, exclude_tool_results=exclude_tool_results)
 
         return AgentRunDetail(
             id=run.id,
@@ -464,6 +485,9 @@ class SessionRepository(BaseRepository):
             ),
             started_at=run.started_at,
             completed_at=run.completed_at,
+            superseded_at=run.superseded_at,
+            superseded_by_run_id=run.superseded_by_run_id,
+            retry_attempt=run.retry_attempt or 0,
             llm_calls=llm_calls,
             subagent_runs=subagent_runs,
             compaction_events=compaction_events,
@@ -512,7 +536,7 @@ class SessionRepository(BaseRepository):
             for e in events_db
         ]
 
-    def _build_llm_calls(self, agent_run_id: UUID, exclude_llm_raw: bool = False, exclude_tool_results: bool = False) -> list[LLMCallDetail]:
+    def _build_llm_calls(self, agent_run_id: UUID, include_superseded: bool = False, exclude_llm_raw: bool = False, exclude_tool_results: bool = False) -> list[LLMCallDetail]:
         """Build LLM calls with their tool executions for an agent run."""
         import json
 
@@ -529,7 +553,7 @@ class SessionRepository(BaseRepository):
             messages = self._parse_messages(llm.request_messages)
 
             # Get tool calls that were executed after this LLM call
-            tool_calls = self._build_tool_calls_for_llm(llm, exclude_tool_results=exclude_tool_results)
+            tool_calls = self._build_tool_calls_for_llm(llm, include_superseded=include_superseded, exclude_tool_results=exclude_tool_results)
 
             response_content = self._extract_response_content(llm.response_content)
 
@@ -619,7 +643,7 @@ class SessionRepository(BaseRepository):
             ))
         return messages
 
-    def _build_tool_calls_for_llm(self, llm: LlmCall, exclude_tool_results: bool = False) -> list[ToolCallDetail]:
+    def _build_tool_calls_for_llm(self, llm: LlmCall, include_superseded: bool = False, exclude_tool_results: bool = False) -> list[ToolCallDetail]:
         """Build tool call details for an LLM call.
 
         Uses llm_call_id foreign key for direct lookup instead of
@@ -634,11 +658,11 @@ class SessionRepository(BaseRepository):
         )
 
         return [
-            self._build_tool_call_detail(tc, tc.tool_call_index or idx, exclude_tool_results=exclude_tool_results)
+            self._build_tool_call_detail(tc, tc.tool_call_index or idx, include_superseded=include_superseded, exclude_tool_results=exclude_tool_results)
             for idx, tc in enumerate(tool_calls_db)
         ]
 
-    def _build_tool_call_detail(self, tc: ToolCall, index: int, exclude_tool_results: bool = False) -> ToolCallDetail:
+    def _build_tool_call_detail(self, tc: ToolCall, index: int, include_superseded: bool = False, exclude_tool_results: bool = False) -> ToolCallDetail:
         """Build a single tool call detail.
 
         Uses ToolRegistry to get tool description. Parameter schema is not
@@ -710,14 +734,15 @@ class SessionRepository(BaseRepository):
         # Check for child run (execute_agent)
         child_run = None
         if tc.tool_name == "execute_agent":
-            child_run_db = (
+            child_query = (
                 self.db.query(AgentRun)
                 .filter_by(parent_run_id=tc.agent_run_id)
-                .order_by(AgentRun.started_at)
-                .first()
             )
+            if not include_superseded:
+                child_query = child_query.filter(AgentRun.superseded_at.is_(None))
+            child_run_db = child_query.order_by(AgentRun.started_at).first()
             if child_run_db:
-                child_run = self._build_agent_run_detail(child_run_db)
+                child_run = self._build_agent_run_detail(child_run_db, include_superseded=include_superseded)
 
         question_id = None
         question_attachments = []

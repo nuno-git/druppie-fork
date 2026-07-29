@@ -32,9 +32,9 @@ const WorkflowPipeline = ({ timeline, hidePending }) => {
 
   if (!timeline) return null
 
-  // Extract agent runs from timeline
+  // Extract agent runs from timeline, excluding superseded runs
   const allAgentRuns = timeline
-    .filter((e) => e.type === 'agent_run' && e.agent_run)
+    .filter((e) => e.type === 'agent_run' && e.agent_run && !e.agent_run.superseded_at)
     .map((e) => e.agent_run)
 
   // Optionally hide pending (not yet started) agents

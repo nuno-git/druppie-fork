@@ -48,6 +48,11 @@ class AgentRun(Base):
     completed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
+    # Superseded tracking (retry/redirect preserves old runs instead of deleting)
+    superseded_at = Column(DateTime(timezone=True), nullable=True)
+    superseded_by_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id"), nullable=True)
+    retry_attempt = Column(Integer, default=0)
+
     # Relationships
     messages = relationship("Message", back_populates="agent_run")
     tool_calls = relationship("ToolCall", back_populates="agent_run", foreign_keys="[ToolCall.agent_run_id]")
@@ -70,6 +75,9 @@ class AgentRun(Base):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "superseded_at": self.superseded_at.isoformat() if self.superseded_at else None,
+            "superseded_by_run_id": str(self.superseded_by_run_id) if self.superseded_by_run_id else None,
+            "retry_attempt": self.retry_attempt or 0,
         }
 
 
@@ -92,6 +100,7 @@ class Message(Base):
 
     sequence_number = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+    superseded_at = Column(DateTime(timezone=True), nullable=True)
 
     agent_run = relationship("AgentRun", back_populates="messages")
     attachments = relationship("MessageAttachment", back_populates="message")
@@ -109,4 +118,5 @@ class Message(Base):
             "tool_call_id": self.tool_call_id,
             "sequence_number": self.sequence_number,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "superseded_at": self.superseded_at.isoformat() if self.superseded_at else None,
         }

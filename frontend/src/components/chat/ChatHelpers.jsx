@@ -279,6 +279,7 @@ export const findPendingQuestion = (timeline) => {
   if (!timeline) return null
   for (const entry of timeline) {
     if (entry.type !== 'agent_run' || !entry.agent_run) continue
+    if (entry.agent_run.superseded_at) continue
     const found = _scanRunForPendingQuestion(entry.agent_run)
     if (found) return found
   }
@@ -289,6 +290,7 @@ export const findFallbackQuestion = (timeline) => {
   if (!timeline) return null
   for (const entry of timeline) {
     if (entry.type !== 'agent_run' || !entry.agent_run) continue
+    if (entry.agent_run.superseded_at) continue
     for (const llm of entry.agent_run.llm_calls || []) {
       for (const tc of llm.tool_calls || []) {
         if (tc.arguments?._type === 'provider_fallback' && tc.status === 'waiting_answer') {

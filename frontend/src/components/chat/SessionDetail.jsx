@@ -1033,6 +1033,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     if (viewMode !== 'inspect' && newMode === 'inspect' && timelineRef.current) {
       savedInspectScroll.current = timelineRef.current.scrollTop
     }
+    // Reset merge buffer on mode switch to prevent superseded data leaking between modes
+    highestSeqRef.current = undefined
+    mergedTimelineRef.current = []
     _setViewMode(newMode)
   }
   const queryClient = useQueryClient()
@@ -1069,8 +1072,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   }
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['session', sessionId],
+    queryKey: ['session', sessionId, viewMode === 'inspect' ? 'with-superseded' : 'default'],
     queryFn: () => {
+      const isInspect = viewMode === 'inspect'
+
+      // Inspect mode: always full fetch with superseded data
+      if (isInspect) {
+        return getSession(sessionId, { includeSuperseded: true })
+      }
+
       const isFirstLoad = highestSeqRef.current === undefined
       const lostBuffer = highestSeqRef.current !== undefined && mergedTimelineRef.current.length === 0
       

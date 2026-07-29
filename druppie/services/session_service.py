@@ -69,6 +69,7 @@ class SessionService:
         session_id: UUID,
         user_id: UUID,
         user_roles: list[str],
+        include_superseded: bool = False,
         since_sequence: int | None = None,
         exclude: set[str] | None = None,
     ) -> SessionDetail:
@@ -84,7 +85,7 @@ class SessionService:
             raise AuthorizationError("Cannot access this session")
 
         options = DetailOptions(since_sequence=since_sequence, exclude=exclude or set())
-        detail = self.session_repo.get_with_chat(session_id, options=options)
+        detail = self.session_repo.get_detail(session_id, include_superseded=include_superseded, options=options)
         if not detail:
             raise NotFoundError("session", str(session_id))
 

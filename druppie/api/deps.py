@@ -459,6 +459,19 @@ def require_any_role(roles: list[str]) -> Callable:
     return check_roles
 
 
+COMPLIANCE_OFFICER_ROLE = "compliance-officer"
+
+
+async def require_compliance_officer(user: dict = Depends(get_current_user)) -> dict:
+    """Dependency that requires compliance-officer or admin role."""
+    if not user_has_any_role(user, [COMPLIANCE_OFFICER_ROLE]):
+        raise HTTPException(
+            status_code=403,
+            detail="Requires compliance-officer role",
+        )
+    return user
+
+
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
     """Dependency that requires admin role.
 

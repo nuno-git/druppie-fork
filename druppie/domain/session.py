@@ -14,7 +14,7 @@ from uuid import UUID
 from datetime import datetime
 from enum import Enum
 
-from .common import Attachment, TokenUsage, SessionStatus
+from .common import AccessLevel, Attachment, TokenUsage, SessionStatus, Waardering
 from .agent_run import AgentRunDetail
 from .project import ProjectSummary
 
@@ -38,6 +38,7 @@ class Message(BaseModel):
     sequence_number: int = 0
     created_at: datetime
     attachments: list[Attachment] = []
+    superseded_at: datetime | None = None
 
 
 class TimelineEntry(BaseModel):
@@ -69,11 +70,19 @@ class SessionSummary(BaseModel):
     project_id: UUID | None
     # Username of the session owner. Sidebar uses this to flag sessions
     # that belong to someone else (e.g. an architect viewing a session
-    # they were pulled into as an expert).
+    # they were pulled into as an expert via the ask_expert tool family).
     username: str | None = None
     token_usage: TokenUsage
     created_at: datetime
     updated_at: datetime | None
+
+    # MDTO archiving metadata
+    classificatie_code: str | None = None
+    informatiecategorie: str | None = None
+    waardering: Waardering | None = None
+    bewaartermijn_looptijd: str | None = None
+    bewaartermijn_trigger: str | None = None
+    access_level: AccessLevel | None = None
 
 
 class SessionDetail(SessionSummary):
