@@ -2,12 +2,17 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "druppie.fullname" . }}-internal-runner
+  # A StatefulSet appends "-<10-char revision hash>" to its name to form the
+  # controller-revision-hash pod label, which K8s caps at 63 bytes. The full
+  # "<fullname>-internal-runner" is 55 bytes for long slugs (→ 66 with hash),
+  # so truncate to 52 to keep name+hash within the limit. StatefulSets, unlike
+  # Deployments, do NOT truncate this hash themselves.
+  name: {{ printf "%s-internal-runner" (include "druppie.fullname" .) | trunc 52 | trimSuffix "-" }}
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: internal-runner
 spec:
-  serviceName: {{ include "druppie.fullname" . }}-internal-runner
+  serviceName: {{ printf "%s-internal-runner" (include "druppie.fullname" .) | trunc 52 | trimSuffix "-" }}
   replicas: {{ .Values.internalRunner.replicas }}
   podManagementPolicy: Parallel
   selector:
