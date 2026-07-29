@@ -17,7 +17,7 @@ defaults. See the user-facing functional defaults in
 | Frontend | React 18 + Vite + TypeScript | From `druppie/templates/project/frontend/` |
 | Backend | Python 3.11 + FastAPI | From `druppie/templates/project/app/` |
 | Database | Postgres 15 | One DB per project, no sharing |
-| Runtime | Docker Compose (dev) + the Druppie deploy pipeline (prod) | |
+| Runtime | Helm chart on Kubernetes, via the Druppie deploy pipeline | App ships its own `chart/`; local dev runs the app directly |
 | LLM access | Druppie SDK (`druppie_sdk.client`) — never direct provider SDKs | Provider swaps handled centrally |
 | Module access | Druppie SDK — module discovery + calls | Do NOT reimplement capabilities that exist as modules |
 
@@ -137,9 +137,9 @@ anti-patterns — see the `rag-patterns` skill in the Druppie core.
 
 ## 8. Testing
 
-- Backend: pytest. Integration tests target a real Postgres (via the
-  template's `docker-compose.yaml`). Mocks only for external third-party
-  APIs.
+- Backend: pytest. Integration tests target a real Postgres (the chart
+  ships a Postgres StatefulSet; locally, point tests at any Postgres).
+  Mocks only for external third-party APIs.
 - Frontend: Playwright for end-to-end. Unit tests only where logic is
   non-trivial — UI snapshots are usually not worth it.
 - The TD names the scenarios that need tests; test implementation
@@ -181,11 +181,11 @@ standard deviation with rationale.
 
 ## 11. Deployment
 
-- Each app ships a `Dockerfile` and a `docker-compose.yaml` in the same
+- Each app ships a `Dockerfile` and a Helm `chart/` in the same
   shape as the template.
 - Every service has a `/health` endpoint returning 200 when ready.
-- Startup uses the existing `init` pattern — see
-  `druppie/templates/project/docker-compose.yaml`.
+- Startup uses the chart's init pattern — see
+  `druppie/templates/project/chart/`.
 - Prod deployment is via the Druppie deploy pipeline; the TD does not
   describe Kubernetes manifests or cloud infra.
 

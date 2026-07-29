@@ -21,8 +21,8 @@ Usage:
     # OCR: extract text from an image URL
     text = ocr_extract("https://example.com/receipt.png")
 
-The DEEPINFRA_API_KEY env var is injected at deploy time via docker-compose.
-You never need to hardcode it.
+The DEEPINFRA_API_KEY env var is injected at deploy time via the Helm chart's
+ExternalSecret (locally: your `.env`). You never need to hardcode it.
 """
 
 from openai import OpenAI
@@ -40,7 +40,8 @@ def _get_client() -> OpenAI:
     if _ai_client is None:
         if not settings.deepinfra_api_key:
             raise RuntimeError(
-                "DEEPINFRA_API_KEY not set — configure it in .env or docker-compose.yaml"
+                "DEEPINFRA_API_KEY not set — set it in your environment "
+                "(locally via .env; in-cluster via the chart's ExternalSecret)"
             )
         _ai_client = OpenAI(
             api_key=settings.deepinfra_api_key,

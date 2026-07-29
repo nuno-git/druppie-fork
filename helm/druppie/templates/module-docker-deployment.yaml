@@ -53,7 +53,7 @@ spec:
               value: {{ .Values.modules.docker.port | quote }}
             - name: DRUPPIE_URL
               value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
-            {{- if and .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
+            {{- if and (not .Values.agentSandbox.enabled) .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
             - name: DOCKER_HOST
               value: "unix:///var/run/docker.sock"
             {{- end }}
@@ -83,7 +83,7 @@ spec:
             - name: workspace
               mountPath: /workspaces
             {{- end }}
-            {{- if and .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
+            {{- if and (not .Values.agentSandbox.enabled) .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
             - name: docker-sock
               mountPath: /var/run/docker.sock
             {{- end }}
@@ -140,7 +140,7 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
         {{- end }}
-        {{- if and .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
+        {{- if and (not .Values.agentSandbox.enabled) .Values.backend.dockerSocket .Values.backend.dockerSocket.enabled }}
         - name: docker-sock
           hostPath:
             path: /var/run/docker.sock
