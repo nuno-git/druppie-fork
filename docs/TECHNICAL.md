@@ -1,3 +1,13 @@
+> **⚠️ SUPERSEDED** — The decisions, behaviors, and product descriptions in this
+> document have been migrated to the formal documentation framework:
+> - **ADRs 007-014** (`docs/adrs/`) — architectural decisions (layering, data modeling, LLM providers, approvals, summary relay, tool schema, pause/resume, cron)
+> - **PRDs 008-013** (`docs/prds/`) — product requirements (module system, data access, approvals, session lifecycle, LLM provider management, scheduled jobs)
+> - **Research 007** (`docs/research/007-kubernetes-as-built-analysis.md`) — K8s as-built analysis
+> - **Specs 007-014** (`docs/specs/`) — executable behavioral specifications
+>
+> This file is retained as the canonical as-built reference. Do not add new
+> decisions here — create formal ADRs/PRDs/Specs instead.
+
 # Technical Architecture
 
 This document describes how the Druppie platform is built: its components, data flow, runtime behavior, and infrastructure.
@@ -117,6 +127,7 @@ druppie/
     deployment_service.py
     revert_service.py
     avatar_service.py    # Entra ID profile photo fetch + disk cache
+    attachment_service.py  # Text extraction (pdfplumber + OCR), background extraction scheduling
     document_formatter_service.py
   repositories/
     session_repository.py
@@ -239,15 +250,24 @@ Project isolation is enforced in two independent layers:
    at another project even if the credential were over-scoped.
 
 Read tools: `list_backlog_items`, `get_work_item`, `search_work_items`,
-`get_current_sprint`, `get_sprint_summary`, `get_work_item_comments` (all
-`requires_approval: false`). Write tools: `create_work_item`, `update_work_item`,
+`get_current_sprint`, `get_sprint_summary`, `get_work_item_comments`, `resolve_user`
+(all `requires_approval: false`). Write tools: `create_work_item`, `update_work_item`,
 `add_work_item_comment` (`requires_approval: true`, `required_role: session_owner`).
 Consumed by the **Product Owner** agent. Isolation is pinned by
 `druppie/tests/test_azuredevops_isolation.py`.
 
+**@mention resolution:** `add_work_item_comment`, `create_work_item`, and
+`update_work_item` automatically resolve `@Display Name` patterns to Azure DevOps
+identity GUIDs via the Identity Picker API (`vssps.dev.azure.com`). Resolved mentions
+are replaced with `<a href="#" data-vss-mention="version:2.0,{GUID}">@Name</a>` HTML
+so that tagged users receive notifications. Resolution results are cached in-memory
+with a 1-hour TTL. Unresolved mentions are left as plain text (graceful degradation).
+The `resolve_user` tool exposes identity lookup directly so agents can verify names
+before mentioning.
+
 ### 2.6 Document Formatter Service
 
-PDF generation from agent-authored content. Two authoring paths:
+PDF generation from agent-authored content. The corporate identity is chosen per project (see house styles below). Two authoring paths:
 
 1. **Native Typst** — agents write `.typ` files, call `builtin:make_pdf_document`.
 2. **Markdown** — agents write standard markdown, call `builtin:make_design_pdf`. The platform converts via `markdown_to_typst()`.
@@ -260,7 +280,42 @@ PDF generation from agent-authored content. Two authoring paths:
 
 **Markdown-to-Typst converter:** `document_formatter_service.py:markdown_to_typst()` converts markdown to native Typst. Handles headings, bold/italic (sentinel-based to prevent double-conversion), tables (equal-width `1fr` columns with escaped `#`/`@`/`$`/`\`), mermaid fenced blocks (via `@preview/mmdr:0.2.2` import), archimate fenced blocks (parsed `view-id=X` → `#image("docs/diagrams/X.svg")`), code blocks, links, images, blockquotes, and horizontal rules. Helper `wrap_with_rijnland_template()` prepends the Rijnland template import and show rule.
 
-**Template library:** `druppie/templates/documents/rijnland.typ` — exposes a `rijnland_doc(body, ...)` function with parameters for document type (FO, TO, technical_research, core_documentation), title, status, TOC, watermark, section breaks, and author. Agents import it with `#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`.
+**Template library:** Each house style is one Typst module that exports a single show-rule function with an identical signature — parameters for document type (FO, TO, technical_research, core_documentation), title, status, TOC, watermark, section breaks, and author:
+
+- `druppie/templates/documents/rijnland.typ` → `rijnland_doc(body, ...)`
+- `druppie/templates/documents/hhsk.typ` → `hhsk_doc(body, ...)`
+
+Because the signatures match, only the `#import` line and the function name differ between styles — the parameter block an agent writes is otherwise byte-identical.
+
+#### 2.6.1 House styles
+
+Druppie ships two corporate identities, selectable per project:
+
+- **Rijnland** — Hoogheemraadschap van Rijnland (default).
+- **HHSK** — Hoogheemraadschap van Schieland en de Krimpenerwaard.
+
+**Single source of truth — the `DocumentHouseStyle` enum** (`druppie/domain/document_formatter.py`) maps a style to its Typst template and export function. It is a `str` enum (`rijnland` | `hhsk`) with three derived helpers so nothing else in the codebase has to hard-code paths:
+
+- `template_path` → `/druppie/templates/documents/<style>.typ` (the `--root`-relative import path)
+- `template_function` → `<style>_doc` (the show-rule function the module exports)
+- `import_line` → the exact `#import "<template_path>": <template_function>` line an agent must write
+
+`DEFAULT_HOUSE_STYLE = DocumentHouseStyle.RIJNLAND`.
+
+**Style-selection data flow:**
+
+1. `project.house_style` (`druppie/db/models/project.py`) — a constrained SQLAlchemy `Enum` column (`document_house_style`), `nullable=False`, defaulting to Rijnland. It is a real enum column, **not JSON and not free text**, so the database enforces the valid set. Changed via `PUT /api/projects/{id}/house-style` (`SetHouseStyleRequest` → `ProjectService.set_house_style`). Per project policy there is no migration — the column is added to the model and the DB is reset with `reset-db`.
+2. `Orchestrator.build_project_context()` reads `project.house_style.value` and injects it into the agent context as `document_house_style`.
+3. `PromptBuilder` renders that value into the agent's CONTEXT block.
+4. `documenter.yaml` maps the value to the correct import line and show rule (a two-row table keyed on `document_house_style`), falling back to `rijnland` if the value is absent.
+
+**Shared vs. per-style code:** `druppie/templates/documents/_shared.typ` holds only house-style-**agnostic** helpers — Dutch date/month formatting, `document-type-label` / `status-label`, the breakable-table-type set, and the standard disclaimer/notice strings. Everything visual (palette, fonts, gradients, grid, layout, logo placement) lives in the per-style file. The two styles are deliberately **not** forced onto one shared base template: the brands have materially different layout systems (HHSK uses an 8-part page grid, gradient headings, and a normative contrast matrix; Rijnland uses a conventional report layout with a full-bleed footer shape), and a common base would only accumulate conditionals.
+
+**Fonts:** the HHSK house font **Ruda** (family name `Ruda`, weights 400–900, no italic — emphasis maps to a heavier weight rather than a synthesised oblique) lives in `assets/fonts/ruda/`. Fonts are discovered recursively from `assets/fonts/`, so it auto-registers via Typst's `--font-path`; **no Dockerfile change was needed** to add it.
+
+**Asset layout:** the Dockerfile does `COPY druppie/ /app/druppie/`, so everything under `templates/documents/` ships in the image. Runtime assets referenced by a `.typ` (`assets/hhsk/logo.png`, `logo_white.png`, `Beeldmerk.svg`, and the fonts) stay under `assets/`. Reference-only material — the Huisstijlhandboek PDF and the `Vormelementen-2024.ai` shape library — is **not kept in the repository**: no `.typ` loads it, so it would only bloat the image. The same applies to the Red Hat Display font that arrived in HHSK's asset pack: the handbook never mentions it, no template uses it, and it is not shipped.
+
+**Cache correctness (note for future maintainers):** the `PdfRenderService` cache key is `(project_id, typ_path, git_blob_sha)`. The house style is encoded *inside* the `.typ` source (the import line and show rule), so changing a project's style changes the file contents and therefore the Git blob SHA — the cache invalidates naturally. **Do not add a house-style component to the cache key**; it would be redundant. This is stated explicitly so nobody "fixes" a non-problem.
 
 **Rijnland corporate identity applied by the template:**
 
@@ -277,9 +332,11 @@ PDF generation from agent-authored content. Two authoring paths:
 - Footer: Full-bleed dijk-en-sloot shape (`dijkEnSloot.png`) above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page / total". Excluded from title page.
 - Diagram rendering: Mermaid diagrams are rendered inline by the `@preview/mmdr:0.2.2` Typst package (pure Typst, no Chromium/Node.js). ArchiMate diagrams export to SVG via the `archimate:save_model` MCP tool (`module-archimate/v1/svg_export.py`, pure Python) and are embedded via `#image()` in the Typst source.
 
-**Font path resolution:** The Dockerfile installs Typst CLI and sets `TYPST_FONT_PATHS` to `/app/druppie/templates/documents/assets/fonts`. Custom TTF/OTF files are referenced by their internal family name (verify with `typst fonts --font-path <dir>`). The Google Fonts Lato files register as family **"Lato"** — weight is controlled via Typst's `weight` parameter. Neusa Next Pro files register as family **"Neusa Next Pro"**.
+**Font path resolution:** The Dockerfile installs Typst CLI and sets `TYPST_FONT_PATHS` to `/app/druppie/templates/documents/assets/fonts`; `DocumentFormatterService` additionally passes `<template_dir>/assets/fonts` as `--font-path`. Scanning is recursive, so a new family only needs its own subdirectory — no config change. Custom TTF/OTF files are referenced by their internal family name (verify with `typst fonts --font-path <dir>`). Lato registers as family **"Lato"** (weight controlled via Typst's `weight` parameter), Neusa Next Pro as **"Neusa Next Pro"**, and Ruda as **"Ruda"**.
 
-**Test fixtures:** `druppie/templates/documents/test-inputs/` contains FO and TO `.typ` source files for pytest.
+**Test fixtures:** `druppie/templates/documents/test-inputs/` contains FO and TO `.typ` source files for pytest, including an HHSK-styled variant (`hhsk-functional-design.typ`).
+
+**Notes:** while adding HHSK a pre-existing Rijnland zebra-striping bug was fixed — striped table rows were driven by `show table.cell.where(y: <predicate>)`, but `.where()` only matches literal field values, so a function predicate produced a selector that silently never matched. Row fills now use the `table` `fill: (x, y) => …` callback (the supported mechanism), which both styles use.
 
 ---
 
@@ -315,10 +372,12 @@ PDF generation from agent-authored content. Two authoring paths:
 
 ### 3.3 Real-time Updates
 
-The frontend uses polling for real-time updates:
+The frontend uses **WebSocket** for real-time updates with a Redis pub/sub backbone for cross-replica broadcasting:
 
-- **Active sessions**: 500ms polling interval for chat messages and agent status.
-- **Approvals**: 1-second polling interval for pending approval/question lists.
+- **WebSocket endpoint**: `/api/sessions/{id}/events` — connects without a token in the URL, then authenticates by sending a JSON frame `{type:"auth",token:"<jwt>"}` within 10 seconds. Pushes `timeline_entry`, `agent_run_update`, `approval`, `question`, and `session_status` events as they happen. This prevents the token from leaking into access logs, browser history, and Referer headers.
+- **Redis pub/sub**: When the backend broadcasts an event, it publishes to a Redis channel (`session:{id}`) so all backend replicas receive the event and can forward it to their local WebSocket clients. This ensures users see updates regardless of which replica handles their connection.
+- **Graceful fallback**: If Redis is unavailable, events are broadcast locally within the process. The system degrades cleanly to single-replica behavior.
+- **Legacy polling**: Some pages (e.g., approvals list, agent test runs) still use polling for simplicity where WebSocket is not yet wired.
 
 ### 3.4 API Client
 
@@ -629,7 +688,7 @@ standards.
 
 ### 6.9 Data Access Server (port 9010)
 
-Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/MCP/data-access.md`](MCP/data-access.md).
+Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/adrs/020-data-access-mcp.md`](adrs/020-data-access-mcp.md).
 
 | Tool | Approval | Description |
 |------|----------|-------------|
@@ -1033,7 +1092,7 @@ Skills are reusable prompt/instruction packages stored as Markdown files in `dru
    - The skill's Markdown body is returned as the tool result (instructions for the LLM).
 4. `ToolExecutor` checks `_is_tool_allowed_via_skill()` to permit tools granted by active skills.
 
-**Decision-guide skills.** Agent intake steps contain pattern-detection trigger lines that instruct an agent to call `invoke_skill(...)` proactively when specific design signals match. For in-app LLM workflows the responsibility is split along the architect/builder_planner role boundary: the Architect's Step 1 intake (in `druppie/agents/definitions/architect.yaml`) invokes `llm-orchestration-in-apps` to decide the **WHAT** (workflow pattern and agency level via a strict hierarchy) without naming any framework — which respects the architect's own rule that it never names concrete libraries; capability placement is left to the architect's generic reuse decision framework rather than re-derived per skill. The Builder-Planner's intake (`builder_planner.yaml`, which now carries a `skills:` block) invokes `llm-orchestration-standard` to decide the **HOW** (the single platform standard: plain Python everywhere, with the single agent built as a small core-style tool-loop rather than an agent framework; access-pattern; code placement). Both skills share one platform-research document (`docs/LLM-orchestration/llm-orchestration-in-apps.md`) that leads with the standard and demotes the framework survey to an appendix. End-to-end verification runs via the seed tool test `testing/tools/architect-fd-llm-chain-pending.yaml`, which pauses on the FD-approval gate so an analyst can drive the loop manually from `/evaluations` + `/tasks`.
+**Decision-guide skills.** Agent intake steps contain pattern-detection trigger lines that instruct an agent to call `invoke_skill(...)` proactively when specific design signals match. For in-app LLM workflows the responsibility is split along the architect/builder_planner role boundary: the Architect's Step 1 intake (in `druppie/agents/definitions/architect.yaml`) invokes `llm-orchestration-in-apps` to decide the **WHAT** (workflow pattern and agency level via a strict hierarchy) without naming any framework — which respects the architect's own rule that it never names concrete libraries; capability placement is left to the architect's generic reuse decision framework rather than re-derived per skill. The Builder-Planner's intake (`builder_planner.yaml`, which now carries a `skills:` block) invokes `llm-orchestration-standard` to decide the **HOW** (the single platform standard: plain Python everywhere, with the single agent built as a small core-style tool-loop rather than an agent framework; access-pattern; code placement). Both skills share one platform-research document (`docs/research/002-llm-orchestration-in-apps.md`) that leads with the standard and demotes the framework survey to an appendix. End-to-end verification runs via the seed tool test `testing/tools/architect-fd-llm-chain-pending.yaml`, which pauses on the FD-approval gate so an analyst can drive the loop manually from `/evaluations` + `/tasks`.
 
 ### 8.8 Orchestrator
 
@@ -1069,6 +1128,20 @@ All methods reconstruct agent state from the database (LLM call history, tool ca
 **Cooperative pause/cancellation:** The orchestrator checks the session status (via DB poll) before each agent run and after each agent completes. If the status is `paused` or `cancelled`, it stops executing further runs. The agent loop also checks the session status between LLM iterations. This means stopping is cooperative -- it happens at the next check point, not mid-LLM-call. See section 8.9 for the full stop and resume architecture.
 
 **Retry from agent run:** The `POST /api/sessions/{id}/retry-from/{run_id}` endpoint spawns a background task that uses `RevertService` to revert the target run and all subsequent runs, then calls `execute_pending_runs()` to re-execute them. `RevertService` handles git revert (via `revert_to_commit` MCP tool), PR cleanup, and DB record management.
+
+**Background PDF extraction (`attachment_service.py`):**
+
+Scanned-PDF OCR can take minutes, so text extraction runs as a fire-and-forget background task instead of blocking the upload request.
+
+1. **`schedule_extraction(att_id, file_path, content_type)`** -- Called by the upload route after committing the attachment row. Creates an `asyncio.Task` that calls `extract_text()`, writes the result to `attachment.extracted_text` in a fresh DB session, and removes itself from the in-memory registry on completion (success or failure). The upload HTTP response returns immediately.
+
+2. **`_pending_extractions: dict[UUID, asyncio.Task]`** -- In-process registry mapping attachment IDs to their running extraction tasks. Safe because the backend runs a single uvicorn worker, so upload requests and the orchestrator share one event loop. Tasks self-clean on completion via a `finally` block.
+
+3. **`await_extractions(att_ids)`** -- Called by the orchestrator in two places: (a) after linking attachments to a user message (so the first agent sees the text), and (b) inside `build_project_context()` before building session-level attachment context (so agents on retry/resume also see it). Gathers all in-flight tasks for the given IDs and awaits them. Never raises -- failed extractions leave `extracted_text` as `None`. Tolerates unknown IDs, empty lists, and already-done tasks.
+
+4. **Orchestrator integration** -- `build_project_context()` is now `async`. Before building attachment context it calls `await_extractions()` for all session attachments, then re-fetches attachment rows so the `extracted_text` populated by the background task is loaded. The user message and attachment links are committed to the DB *before* awaiting extraction, so the timeline is visible in the UI during a long OCR (enabling the frontend "reading notice"), and the row lock is released so the background extraction commit cannot deadlock.
+
+5. **`text_ready` domain field** -- `Attachment` (in `domain/common.py`) exposes `text_ready: bool`, derived from `bool(extracted_text)` at serialization time in the session repository. No DB column -- purely a computed presentation field consumed by the frontend to toggle the scanned-PDF reading notice.
 
 ### 8.9 Pause and Resume
 
@@ -1276,6 +1349,10 @@ Optional:
 
 ## 11. Sandbox Infrastructure (Open-Inspect)
 
+> **⚠️ STALE** — This section describes the removed Open-Inspect/background-agents architecture.
+> The current sandbox is managed entirely by the module-coding MCP server via Docker socket.
+> See `docs/SANDBOX.md` for the current sandbox documentation.
+
 > Full documentation: [docs/SANDBOX.md](SANDBOX.md) — covers architecture, OpenCode integration, provider resilience, Kata Containers, and security.
 
 [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a git submodule at `background-agents/`. Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
@@ -1326,15 +1403,15 @@ The `tool_call_id` FK enables direct lookup from webhook → tool call without t
 
 ---
 
-## 11. Agent Runtime Library (`druppie/agent_runtime/`)
+## 12. Agent Runtime Library (`druppie/agent_runtime/`)
 
-### 11.1 Design Principle
+### 12.1 Design Principle
 
 The `agent_runtime` package is a **storage-agnostic, self-contained agent execution library** with zero coupling to `druppie.db`, `druppie.domain`, or `druppie.repositories`. It defines its own types (dataclasses, not Pydantic), its own event system, and its own tool routing. The only external dependencies are stdlib and PyYAML.
 
 This library can execute an LLM agent loop with MCP tool calling, event emission, subagent spawning, and sandbox management without touching any database or web framework.
 
-### 11.2 Dependencies
+### 12.2 Dependencies
 
 | Dependency | Purpose |
 |------------|---------|
@@ -1343,7 +1420,7 @@ This library can execute an LLM agent loop with MCP tool calling, event emission
 
 No Pydantic, no SQLAlchemy, no FastAPI, no LiteLLM. All domain types use `@dataclass` for zero-framework overhead.
 
-### 11.3 Layer Architecture (Bottom-Up)
+### 12.3 Layer Architecture (Bottom-Up)
 
 The package is organized in strict dependency layers. Higher layers import from lower layers, never the reverse.
 
@@ -1472,7 +1549,7 @@ Key responsibilities:
 
 Bridges the storage-agnostic runtime to the existing Druppie backend without modifying either. Provides `adapt_llm()` (wraps the old `BaseLLM` as the runtime's async LLM callable), `DruppieToolProvider` (implements the `ToolProvider` protocol over the old `ToolExecutor`/builtin tools, persisting every call to the DB via short-lived sessions), `create_event_persister()` (an event callback that maps runtime `AgentEvent`s to DB writes for runs, LLM calls, tool calls, and compaction events), `SubagentsMCPConnection` (in-process MCP wrapper around `SubagentsMCP`), and `old_definition_to_new()` (converts the old Pydantic `AgentDefinition` to the new dataclass). Also bridges the `waiting_entra_auth` pause status from the `ToolExecutor` to the new runtime's pause/resume mechanism.
 
-### 11.4 Data Flow
+### 12.4 Data Flow
 
 ```
 AgentDefinition (YAML)
@@ -1497,7 +1574,7 @@ AgentLoop.run(llm, tool_provider, ...)
 AgentResult (output, status, metadata)
 ```
 
-### 11.5 LLM Interface
+### 12.5 LLM Interface
 
 The library accepts an **async callable** as its LLM interface, compatible with litellm's `acompletion`:
 
@@ -1508,7 +1585,7 @@ async def llm(messages: list, tools: list, **kwargs) -> LLMResponse:
 
 The library never imports litellm directly. The caller (typically the druppie backend) wraps litellm or any compatible provider and passes the callable. This keeps the library provider-agnostic.
 
-### 11.6 Tool Routing
+### 12.6 Tool Routing
 
 ```
 AgentLoop
@@ -1526,7 +1603,7 @@ MCPToolProvider
 
 Each MCP server has its own `MCPConnection`. The provider maps tool names to their originating server and routes calls accordingly.
 
-### 11.7 Coexistence with Existing Agent System
+### 12.7 Coexistence with Existing Agent System
 
 The `agent_runtime` library is **completely separate** from the existing agent system in `druppie/agents/` and `druppie/execution/`:
 
@@ -1541,7 +1618,7 @@ The `agent_runtime` library is **completely separate** from the existing agent s
 
 Zero modifications are required to existing code when using the library. Both systems can coexist in the same process.
 
-### 11.8 Test Suite
+### 12.8 Test Suite
 
 179 tests in `druppie/tests/agent_runtime/` with a shared `conftest.py` providing:
 
@@ -1554,11 +1631,11 @@ Tests cover all layers: type construction, YAML parsing, event emission, tool ro
 
 ---
 
-## 12. Translation Service
+## 13. Translation Service
 
 The platform provides automatic translation so agents always work in English while users interact in their own language.
 
-### 12.1 Architecture
+### 13.1 Architecture
 
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
@@ -1568,7 +1645,7 @@ The platform provides automatic translation so agents always work in English whi
 
 The translation service is separate from the main LLM provider — it always uses DeepInfra regardless of `LLM_PROVIDER`. This requires `DEEPINFRA_API_KEY` to be set. If the key is missing, `TranslationNotAvailableError` is raised on first use (not silently swallowed).
 
-### 12.2 Data Flow
+### 13.2 Data Flow
 
 ```
 User (Dutch) → Orchestrator → [detect language] → [translate to English] → Router/Planner/Agent
@@ -1580,7 +1657,7 @@ Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ 
     └─► done (summary) → [translate to Dutch] → Chat timeline
 ```
 
-### 12.3 Integration Points
+### 13.3 Integration Points
 
 | Point | File | What happens |
 |-------|------|--------------|
@@ -1592,7 +1669,7 @@ Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ 
 | Summarizer message | `builtin_tools.py` ~line 731 | Translate to session language before storing |
 | Agent prompt | `prompt_builder.py` ~line 82 | Inject English-only instruction block |
 
-### 12.3.1 HITL Answer Field Naming
+### 13.3.1 HITL Answer Field Naming
 
 The tool call result for answered HITL questions stores two versions of the answer:
 
@@ -1603,7 +1680,7 @@ The tool call result for answered HITL questions stores two versions of the answ
 
 `message_history.py` strips `user_answer` before reconstructing tool results for agent context, so agents only see the English version.
 
-### 12.3.2 HITL Question Bilingual Storage
+### 13.3.2 HITL Question Bilingual Storage
 
 HITL questions store both the translated (display) and original (English) versions:
 
@@ -1616,7 +1693,7 @@ HITL questions store both the translated (display) and original (English) versio
 
 The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on HITL tool calls when `question_english` is present, making it easy to compare what the agent generated vs what the user saw.
 
-### 12.4 Design Document Translation Paths
+### 13.4 Design Document Translation Paths
 
 | English path | Dutch path |
 |--------------|------------|
@@ -1624,11 +1701,11 @@ The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on H
 | `docs/technical-design.md` | `docs/technisch-ontwerp.md` |
 | `docs/technical-research.md` | `docs/technisch-onderzoek.md` |
 
-### 12.5 Session Language
+### 13.5 Session Language
 
 Stored in `sessions.language` (VARCHAR(10), nullable). Set on the first user message and locked — HITL answers do not update it, preventing a Dutch user's English-sounding answer from flipping the session language.
 
-### 12.6 Error Handling
+### 13.6 Error Handling
 
 - `TranslationNotAvailableError` (missing API key) propagates — the session fails with a clear error message.
 - Transient translation errors (API timeouts, empty responses) fall back to the original English text with a logged warning.

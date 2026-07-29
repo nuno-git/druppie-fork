@@ -111,7 +111,7 @@ export const getAttachmentUrl = (attachmentId) => {
   return `${API_URL}/api/attachments/${attachmentId}`
 }
 
-export const downloadAttachment = async (attachmentId) => {
+export const downloadAttachment = async (attachmentId, filename) => {
   const token = getToken()
   const response = await fetch(`${API_URL}/api/attachments/${attachmentId}`, {
     headers: token ? { 'Authorization': `Bearer ${token}` } : {},
@@ -121,7 +121,7 @@ export const downloadAttachment = async (attachmentId) => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = attachmentId
+  a.download = filename || attachmentId
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -169,7 +169,20 @@ export const getSessions = (page = 1, limit = 20) =>
   request(`/api/sessions?page=${page}&limit=${limit}`)
 
 // Get complete session with ALL data (messages, llm_calls, events, approvals, etc.)
-export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
+export const getSession = (sessionId, options = {}) => {
+  const params = new URLSearchParams()
+  if (options.includeSuperseded) {
+    params.append('include_superseded', 'true')
+  }
+  if (options.sinceSequence !== undefined && options.sinceSequence !== null) {
+    params.append('since_sequence', options.sinceSequence)
+  }
+  if (options.exclude && options.exclude.length > 0) {
+    params.append('exclude', options.exclude.join(','))
+  }
+  const qs = params.toString()
+  return request(`/api/sessions/${sessionId}${qs ? '?' + qs : ''}`)
+}
 
 export const resumeSession = (sessionId, contexts = null) => {
   const body = {}
@@ -545,6 +558,7 @@ export const getAgentTestRun = (runId) =>
 
 // ============ Documentation ============
 export const getDocumentation = () => request("/api/documentation")
+export const getPlatformDocumentation = () => request("/api/documentation/platform")
 
 // ============ Jobs (Scheduled / Cron) ============
 export const getJobs = () => request('/api/jobs')

@@ -5,7 +5,7 @@ import structlog
 
 from ..repositories import ProjectRepository
 from ..core.gitea import get_gitea_client
-from ..domain import ProjectDetail, ProjectSummary
+from ..domain import DocumentHouseStyle, ProjectDetail, ProjectSummary
 from ..api.errors import NotFoundError, AuthorizationError
 
 logger = structlog.get_logger()
@@ -57,6 +57,39 @@ class ProjectService:
         if not detail:
             raise NotFoundError("project", str(project_id))
 
+        return detail
+
+    def set_house_style(
+        self,
+        project_id: UUID,
+        house_style: DocumentHouseStyle,
+        user_id: UUID,
+        user_roles: list[str],
+    ) -> ProjectDetail:
+        """Set the document house style for a project (owner or admin only)."""
+        project = self.project_repo.get_by_id(project_id)
+        if not project:
+            raise NotFoundError("project", str(project_id))
+
+        is_owner = project.owner_id == user_id
+        is_admin = "admin" in user_roles
+
+        if not is_owner and not is_admin:
+            raise AuthorizationError("Only owner or admin can change the house style")
+
+        self.project_repo.set_house_style(project_id, house_style)
+        self.project_repo.commit()
+
+        logger.info(
+            "project_house_style_set",
+            project_id=str(project_id),
+            house_style=house_style.value,
+            by_user=str(user_id),
+        )
+
+        detail = self.project_repo.get_detail(project_id)
+        if not detail:
+            raise NotFoundError("project", str(project_id))
         return detail
 
     async def delete(

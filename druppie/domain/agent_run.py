@@ -138,6 +138,10 @@ class AgentRunSummary(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
 
+    superseded_at: datetime | None = None
+    superseded_by_run_id: UUID | None = None
+    retry_attempt: int = 0
+
 
 class ResumeContext(BaseModel):
     """Context message injected by user when resuming a paused agent run."""

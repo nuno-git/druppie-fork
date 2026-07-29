@@ -115,6 +115,9 @@ system_prompt: |
       **IMPORTANT — Documenter prompt format for general_chat:**
       When routing to the documenter for documentation Q&A, the prompt MUST start with
       "DOC Q&A: <user question>" so the documenter knows to enter conversational mode.
+      Preserve the user's request verbatim in "<user question>" — do NOT paraphrase it
+      away. In particular, keep any house-style phrase the user included (e.g. "in HHSK
+      style", "in de Rijnland stijl") intact so the documenter can honor it.
 
       **ALWAYS include project context** when available (from the INTENT block at top of your prompt):
       - Check for PROJECT_ID in the INTENT block (format: "PROJECT_ID: <uuid>")

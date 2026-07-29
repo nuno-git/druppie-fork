@@ -206,6 +206,7 @@ const OutlineAgentHeader = ({ agentRun, selected, onClick }) => {
   const AgentIcon = config.icon
   const colors = getAgentMessageColors(config.color)
   const tokens = agentRun.token_usage?.total_tokens || 0
+  const isSuperseded = !!agentRun.superseded_at
 
   const duration = useMemo(() => {
     if (agentRun.started_at && agentRun.completed_at) return formatDuration(new Date(agentRun.completed_at) - new Date(agentRun.started_at))
@@ -220,26 +221,30 @@ const OutlineAgentHeader = ({ agentRun, selected, onClick }) => {
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
       className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors border-l-2 cursor-pointer select-text ${
+        isSuperseded ? 'opacity-50 border-l-gray-300 bg-gray-50/50' :
         selected ? `${colors.bg} border-l-current ${colors.accent}` : 'border-l-transparent hover:bg-gray-50'
       }`}
     >
-      <AgentIcon className={`w-3.5 h-3.5 flex-shrink-0 ${colors.accent}`} />
-      <span className={`text-xs font-semibold whitespace-nowrap ${selected ? colors.accent : 'text-gray-700'}`}>
+      <AgentIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isSuperseded ? 'text-gray-400' : colors.accent}`} />
+      <span className={`text-xs font-semibold whitespace-nowrap ${isSuperseded ? 'text-gray-400 line-through' : selected ? colors.accent : 'text-gray-700'}`}>
         {config.name}
       </span>
+      {isSuperseded && (
+        <span className="text-[9px] font-medium px-1 py-0.5 rounded bg-gray-200 text-gray-500">Vorige poging</span>
+      )}
       <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
         {tokens > 0 && <span className="text-[10px] text-gray-400">{formatTokens(tokens)}</span>}
         {duration && <span className="text-[10px] text-gray-400">{duration}</span>}
-        {agentRun.status === 'running' && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />}
-        {agentRun.status === 'failed' && <span className="w-1.5 h-1.5 bg-red-400 rounded-full" />}
+        {!isSuperseded && agentRun.status === 'running' && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />}
+        {!isSuperseded && agentRun.status === 'failed' && <span className="w-1.5 h-1.5 bg-red-400 rounded-full" />}
       </span>
     </div>
   )
 }
 
-const OutlineToolLine = ({ tc, selected, onClick }) => {
+const OutlineToolLine = ({ tc, selected, onClick, isSuperseded = false }) => {
   const StatusIcon = tc.status === 'completed' ? Check : tc.status === 'failed' ? X : Clock
-  const statusColor = tc.status === 'completed' ? 'text-green-500' : tc.status === 'failed' ? 'text-red-500' : 'text-amber-500'
+  const statusColor = isSuperseded ? 'text-gray-400' : tc.status === 'completed' ? 'text-green-500' : tc.status === 'failed' ? 'text-red-500' : 'text-amber-500'
   const hint = getToolContextHint(tc)
 
   return (
@@ -249,14 +254,15 @@ const OutlineToolLine = ({ tc, selected, onClick }) => {
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
       className={`w-full text-left pl-9 pr-3 py-1 flex items-center gap-1.5 text-[11px] transition-colors cursor-pointer select-text ${
+        isSuperseded ? 'opacity-50' :
         selected ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50 text-gray-500'
       }`}
     >
       <StatusIcon className={`w-3 h-3 flex-shrink-0 ${statusColor}`} />
-      <span className={`font-medium truncate ${selected ? 'text-blue-700' : 'text-gray-600'}`}>
+      <span className={`font-medium truncate ${isSuperseded ? 'text-gray-400 line-through' : selected ? 'text-blue-700' : 'text-gray-600'}`}>
         {formatToolName(tc.tool_name)}
       </span>
-      {tc.question_id && <span className="bg-amber-50 text-amber-600 text-[9px] font-medium px-1 py-0.5 rounded flex-shrink-0">HITL</span>}
+      {tc.question_id && !isSuperseded && <span className="bg-amber-50 text-amber-600 text-[9px] font-medium px-1 py-0.5 rounded flex-shrink-0">HITL</span>}
       {hint && <span className="text-gray-400 font-mono truncate ml-auto text-[10px]" title={hint}>{hint}</span>}
     </div>
   )
@@ -363,6 +369,7 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
   const colors = getAgentMessageColors(config.color)
   const tokens = agentRun.token_usage?.total_tokens || 0
   const llmCalls = agentRun.llm_calls || []
+  const isSuperseded = !!agentRun.superseded_at
   const [showRetryConfirm, setShowRetryConfirm] = useState(false)
   const queryClient = useQueryClient()
 
@@ -372,6 +379,9 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
     },
     onSuccess: () => {
       setShowRetryConfirm(false)
+      window.dispatchEvent(new CustomEvent('druppie-reset-session-cache', {
+        detail: { sessionId }
+      }))
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
@@ -380,7 +390,7 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
     },
   })
 
-  const canRetry = sessionStatus && sessionStatus !== 'active'
+  const canRetry = sessionStatus && sessionStatus !== 'active' && !isSuperseded
 
   const duration = useMemo(() => {
     if (agentRun.started_at && agentRun.completed_at) return formatDuration(new Date(agentRun.completed_at) - new Date(agentRun.started_at))
@@ -391,10 +401,14 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className={`flex items-center gap-2.5 px-4 py-2.5 -mx-4 -mt-3 ${colors.bg} border-b ${colors.border}`}>
-        <AgentIcon className={`w-4 h-4 ${colors.accent}`} />
-        <span className={`text-sm font-semibold ${colors.accent}`}>{config.name}</span>
-        <StatusBadge status={agentRun.status} />
+      <div className={`flex items-center gap-2.5 px-4 py-2.5 -mx-4 -mt-3 ${isSuperseded ? 'bg-gray-100 border-b border-gray-300 opacity-60' : `${colors.bg} border-b ${colors.border}`}`}>
+        <AgentIcon className={`w-4 h-4 ${isSuperseded ? 'text-gray-400' : colors.accent}`} />
+        <span className={`text-sm font-semibold ${isSuperseded ? 'text-gray-400 line-through' : colors.accent}`}>{config.name}</span>
+        {isSuperseded ? (
+          <span className="px-1.5 py-0.5 rounded text-xs bg-gray-200 text-gray-500 font-medium">Vorige poging</span>
+        ) : (
+          <StatusBadge status={agentRun.status} />
+        )}
         {tokens > 0 && <span className="text-xs text-gray-500">{formatTokens(tokens)} tok</span>}
         {duration && <span className="text-xs text-gray-500">&middot; {duration}</span>}
         {agentRun.status === 'running' && <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />}
@@ -1123,6 +1137,7 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
                             tc={stc}
                             selected={isToolSelected(stc)}
                             onClick={() => selectTool(stc, subRun)}
+                            isSuperseded={!!subRun.superseded_at}
                           />
                           {subToolMap[stc.id]?.map(sa => renderSubBlock(sa, depth + 1))}
                         </div>
@@ -1157,6 +1172,7 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
                           tc={tc}
                           selected={isToolSelected(tc)}
                           onClick={() => selectTool(tc, run)}
+                          isSuperseded={!!run.superseded_at}
                         />
                         {subagentToolMap[tc.id]?.map(sa => renderSubBlock(sa, 0))}
                       </div>

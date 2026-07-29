@@ -299,7 +299,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             "name": "make_pdf_document",
             "description": (
                 "Compile a native Typst source file (.typ) into a professionally formatted PDF "
-                "using the Rijnland corporate identity template. "
+                "using the corporate identity template the .typ file imports. "
                 "The agent must first write the .typ file to the workspace, "
                 "then call this tool with the workspace-relative path. "
                 "The resulting PDF is attached to the chat and a download link is returned."
@@ -1019,7 +1019,7 @@ async def create_message(
     except Exception:
         logger.debug("caller_agent_id_lookup_failed", agent_run_id=str(agent_run_id))
 
-    message_id = execution_repo.create_message(
+    message = execution_repo.create_message(
         session_id=session_id,
         role="assistant",
         content=display_content,
@@ -1028,6 +1028,7 @@ async def create_message(
         agent_id=caller_agent_id,
         sequence_number=seq,
     )
+    message_id = message.id
     execution_repo.flush()
 
     linked_count = 0
@@ -1079,6 +1080,14 @@ async def create_message(
         content_preview=display_content[:100] if display_content else "",
         linked_attachments=linked_count,
     )
+
+    from druppie.core.session_event_manager import get_event_manager
+    try:
+        await get_event_manager().broadcast_message_created(
+            session_id=session_id, message=message,
+        )
+    except Exception:
+        logger.warning("create_message_broadcast_failed", session_id=str(session_id), exc_info=True)
 
     result: dict = {"status": "created", "message": "Message added to timeline"}
     if linked_count:
