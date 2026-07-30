@@ -3,7 +3,7 @@
 The architect builds up the ArchiMate plate freely through the
 archimate MCP write tools — none of them are individually
 approval-gated. The single architect-approval point is the
-``coding:make_design`` call on ``docs/technical-design.md`` (gated
+``coding:submit_design_for_review`` call on ``docs/technical-design.md`` (gated
 via the architect agent's ``approval_overrides``). At that moment the
 reviewer sees the markdown + the embedded plate as one artifact and
 approves the TD as a whole. Approving each MCP call separately is
@@ -14,7 +14,7 @@ This test pins both halves of that contract:
   1. ALL archimate write tools are ungated in mcp_config.yaml.
   2. ALL read tools stay ungated.
   3. session_id is injected for every write tool + assess_layout.
-  4. The architect agent overrides coding:make_design to
+  4. The architect agent overrides coding:submit_design_for_review to
      requires_approval=true with required_role=architect.
 
 Run with:
@@ -87,7 +87,7 @@ def main() -> int:
         if tool.get("requires_approval"):
             failures.append(
                 f"{name} is approval-gated; archimate write tools must be ungated "
-                f"(approval lives on coding:make_design for the TD instead)"
+                f"(approval lives on coding:submit_design_for_review for the TD instead)"
             )
 
     # Read tools must also stay ungated.
@@ -111,15 +111,15 @@ def main() -> int:
             "session_id injection missing for: " + ", ".join(sorted(missing_inject))
         )
 
-    # The architect agent must gate coding:make_design.
+    # The architect agent must gate coding:submit_design_for_review.
     with ARCHITECT_YAML.open() as f:
         architect = yaml.safe_load(f)
-    override = architect.get("approval_overrides", {}).get("coding:make_design", {})
+    override = architect.get("approval_overrides", {}).get("coding:submit_design_for_review", {})
     if not override.get("requires_approval"):
-        failures.append("architect.yaml: coding:make_design override must set requires_approval=true")
+        failures.append("architect.yaml: coding:submit_design_for_review override must set requires_approval=true")
     if override.get("required_role") != "architect":
         failures.append(
-            "architect.yaml: coding:make_design required_role must be 'architect', "
+            "architect.yaml: coding:submit_design_for_review required_role must be 'architect', "
             f"got {override.get('required_role')!r}"
         )
 
@@ -132,7 +132,7 @@ def main() -> int:
     print(f"OK — {len(WRITE_TOOLS)} archimate write tools are ungated")
     print(f"OK — {len(READ_TOOLS)} archimate read tools are ungated")
     print(f"OK — session_id injected for all write tools + assess_layout")
-    print(f"OK — architect agent gates coding:make_design (the TD-review point)")
+    print(f"OK — architect agent gates coding:submit_design_for_review (the TD-review point)")
     print("=" * 50)
     print("All checks passed.")
     return 0

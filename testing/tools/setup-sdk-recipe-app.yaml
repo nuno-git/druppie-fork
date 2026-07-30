@@ -58,7 +58,7 @@ tool-test:
       mock_result: "Uitgebreid: tekst + afbeelding OCR"
 
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: analyst
@@ -123,7 +123,7 @@ tool-test:
           - { contains: "Functioneel Ontwerp" }
 
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect

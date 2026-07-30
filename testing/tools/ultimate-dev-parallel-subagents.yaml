@@ -49,7 +49,7 @@ tool-test:
 
     # --- Business Analyst (creates FD with health check requirements) ---
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -102,7 +102,7 @@ tool-test:
         path: docs/functional-design.md
 
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect
@@ -131,7 +131,7 @@ tool-test:
           for current needs. Can add readiness probe later if needed.
 
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect

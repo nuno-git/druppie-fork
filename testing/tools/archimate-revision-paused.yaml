@@ -4,7 +4,7 @@
 ## Unlike archimate-e2e-paused-at-fd-approval (which builds the plate live with a
 ## real LLM, ~7 min), this seed INJECTS a finished plate + TD deterministically so
 ## you land straight on the TD approval with a plate to revise. Both files are
-## written with coding:make_design (the architect IS allowed it; it writes content
+## written with coding:submit_design_for_review (the architect IS allowed it; it writes content
 ## verbatim, only validating Mermaid — the .archimate XML has none).
 ##
 ## To test the revision loop:
@@ -56,10 +56,10 @@ tool-test:
       arguments:
         summary: "Agent planner: Planned architect to produce the technical design"
 
-    # --- Inject the finished ArchiMate model (architect IS allowed make_design;
+    # --- Inject the finished ArchiMate model (architect IS allowed submit_design_for_review;
     #     it writes verbatim, Mermaid-validating only — the XML has none) ---
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -385,7 +385,7 @@ tool-test:
 
     # --- Architect writes the TD referencing the plate — approval gate PENDING ---
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: pending
       arguments:

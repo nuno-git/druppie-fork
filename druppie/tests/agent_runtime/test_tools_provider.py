@@ -162,17 +162,17 @@ class TestPrevalidation:
                 return {"success": True, "data": "valid"}
             return {"success": True, "data": "design created"}
 
-        conn = _make_connection("sandbox", ["make_design", "validate_mermaid"], mock_call)
+        conn = _make_connection("sandbox", ["submit_design_for_review", "validate_mermaid"], mock_call)
         provider = MCPToolProvider(
             {"sandbox": conn},
             approval_overrides={
-                "sandbox:make_design": {"pre_validate": "validate_mermaid"},
+                "sandbox:submit_design_for_review": {"pre_validate": "validate_mermaid"},
             },
         )
 
-        result = await provider.execute("make_design", {"content": "graph TD..."})
+        result = await provider.execute("submit_design_for_review", {"content": "graph TD..."})
         assert result["success"] is True
-        assert calls == ["validate_mermaid", "make_design"]
+        assert calls == ["validate_mermaid", "submit_design_for_review"]
 
     @pytest.mark.asyncio
     async def test_prevalidation_hook_fail(self):
@@ -181,15 +181,15 @@ class TestPrevalidation:
                 return {"success": False, "error": "Invalid mermaid syntax"}
             return {"success": True, "data": "should not reach"}
 
-        conn = _make_connection("sandbox", ["make_design", "validate_mermaid"], mock_call)
+        conn = _make_connection("sandbox", ["submit_design_for_review", "validate_mermaid"], mock_call)
         provider = MCPToolProvider(
             {"sandbox": conn},
             approval_overrides={
-                "sandbox:make_design": {"pre_validate": "validate_mermaid"},
+                "sandbox:submit_design_for_review": {"pre_validate": "validate_mermaid"},
             },
         )
 
-        result = await provider.execute("make_design", {"content": "bad syntax"})
+        result = await provider.execute("submit_design_for_review", {"content": "bad syntax"})
         assert result["success"] is False
         assert "Invalid mermaid" in result["error"]
 

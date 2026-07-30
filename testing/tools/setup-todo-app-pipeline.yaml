@@ -44,7 +44,7 @@ tool-test:
 
     # --- Business Analyst ---
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -102,7 +102,7 @@ tool-test:
           - { contains: "Functioneel Ontwerp" }
 
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect

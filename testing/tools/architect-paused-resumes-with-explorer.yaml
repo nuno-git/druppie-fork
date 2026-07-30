@@ -56,7 +56,7 @@ tool-test:
     # BA writes FD for a webhook delivery system (approved, pushed, done)
     # =========================================================================
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -223,7 +223,7 @@ tool-test:
     # Architect resumes after core_explorer completes — writes research doc
     # =========================================================================
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect
@@ -306,7 +306,7 @@ tool-test:
     # Architect writes technical design (approved)
     # =========================================================================
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect

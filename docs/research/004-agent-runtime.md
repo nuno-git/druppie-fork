@@ -858,7 +858,7 @@ Agents that need these tools list them in their `mcps:` field:
 # business_analyst.yaml
 mcps:
   core-tools: [hitl_ask_question, invoke_skill]
-  coding: [read_file, list_dir, make_design]
+  coding: [read_file, list_dir, submit_design_for_review]
 ```
 
 Agents that DON'T need them (like the builder in sandbox):
@@ -922,7 +922,7 @@ completion_preconditions:
   - summary_contains: "DESIGN_APPROVED"
     unless_summary_contains: "REQUIREMENT_CHALLENGE outcome: HARD"
     required_tools:
-      - tool_name: "make_design"
+      - tool_name: "submit_design_for_review"
         min_calls: 1
       - tool_name: "run_git"
         min_calls: 1
@@ -940,9 +940,9 @@ completion_preconditions:
    ✓ summary contains "DESIGN_APPROVED" → YES
    ✓ unless summary contains "REQUIREMENT_CHALLENGE outcome: HARD" → NO (not present)
    → precondition is ACTIVE, must check required_tools
-   ✗ Was "make_design" called? → NO
+   ✗ Was "submit_design_for_review" called? → NO
 4. Loop REJECTS done(), returns error_message to LLM
-5. LLM must call make_design first, then retry done()
+5. LLM must call submit_design_for_review first, then retry done()
 ```
 
 ### Why This Belongs in the Library (Not in MCP)
@@ -984,7 +984,7 @@ This is NOT Druppie-specific. It's a general concept: "validate done() against t
 ```python
 @dataclass
 class RequiredToolCall:
-    tool_name: str           # "make_design"
+    tool_name: str           # "submit_design_for_review"
     min_calls: int = 1       # must be called at least this many times
 
 @dataclass
@@ -1065,7 +1065,7 @@ def _validate_done(self, summary: str, variables: dict, tool_history: list) -> s
 | D27 | Subagents-only architecture | No special coding task tool. All agent spawning via subagents builtin. Infinite recursive depth with max_subagent_depth config. Sandbox auto-created per agent def. | ✅ Decided |
 | D28 | Shared sandbox policy | Subagents within a coding task share ONE sandbox. Agent-level responsibility to avoid file conflicts. Pragmatic first iteration. | ✅ Superseded by D29 |
 | D29 | Agent-level sandbox & git config | Per-agent sandbox config in YAML (mcps.sandbox with tools + git scope). ToolProvider determines sharing based on git scope. | ✅ Decided |
-| D30 | make_design tool — sandbox MCP with auto-commit | make_design lives in sandbox MCP, available only to agents that explicitly list it (architect, business_analyst). Auto-commits to git after writing. Pre-validate: Mermaid syntax check via ToolProvider. Approval gate: architect role requires human approval. Frontend renders markdown + Mermaid in approval gateway. | ✅ Decided |
+| D30 | submit_design_for_review tool — sandbox MCP with auto-commit | submit_design_for_review lives in sandbox MCP, available only to agents that explicitly list it (architect, business_analyst). Auto-commits to git after writing. Pre-validate: Mermaid syntax check via ToolProvider. Approval gate: architect role requires human approval. Frontend renders markdown + Mermaid in approval gateway. | ✅ Decided |
 | D31 | Subagent timeline representation | Separate agent_run with parent_agent_run_id FK. Same table, same schema, just with an optional FK. Simple to query, easy to nest in API response. | ✅ Decided |
 | D32 | Subagent event ownership | Events reference the subagent's own agent_run_id. API assembles nested timeline by querying all agent_runs and building tree using parent_agent_run_id. | ✅ Decided |
 | D33 | Subagent run status tracking | Same status field as primary agents. Subagents MCP creates agent_run with status=running, updates to completed/error/cancelled when done. | ✅ Decided |
@@ -1692,7 +1692,7 @@ mcps:
 
 **Key concepts**:
 
-- `mcps.sandbox.tools` — which sandbox MCP tools the agent gets. `push_changes` is a sandbox MCP tool — included for agents that can push, excluded for read-only agents. The sandbox MCP tools listed in YAML examples are representative. The full tool list will be defined during implementation based on the current coding MCP's tools (read_file, write_file, edit_file, bash, make_design, push_changes, list_dir, batch_write_files, delete_file, search_files, get_file_info, etc.).
+- `mcps.sandbox.tools` — which sandbox MCP tools the agent gets. `push_changes` is a sandbox MCP tool — included for agents that can push, excluded for read-only agents. The sandbox MCP tools listed in YAML examples are representative. The full tool list will be defined during implementation based on the current coding MCP's tools (read_file, write_file, edit_file, bash, submit_design_for_review, push_changes, list_dir, batch_write_files, delete_file, search_files, get_file_info, etc.).
 - `mcps.sandbox.git` — which git scope:
    - `current_project`: The user's project being worked on (cloned from Gitea)
    - `other_projects`: Other projects for reference (read-only, all projects cloned). All projects in Gitea that the session user has access to are cloned into the sandbox. The agent receives a project listing tool to know what's available. This scales with Gitea — clone is read-only, no push.
@@ -1793,13 +1793,13 @@ User quote: "sandbox config in agent YAML under mcps.sandbox, ToolProvider handl
 
 ---
 
-### Decision D30: make_design Tool — Sandbox MCP with Auto-Commit
+### Decision D30: submit_design_for_review Tool — Sandbox MCP with Auto-Commit
 
-**Decision**: `make_design` is a sandbox MCP tool with automatic git commit and push. It's only available to agents that explicitly list it in their `mcps.sandbox.tools` — currently only `architect` and `business_analyst`. NOT available to all sandbox agents by default — restricted per agent YAML.
+**Decision**: `submit_design_for_review` is a sandbox MCP tool with automatic git commit and push. It's only available to agents that explicitly list it in their `mcps.sandbox.tools` — currently only `architect` and `business_analyst`. NOT available to all sandbox agents by default — restricted per agent YAML.
 
 **Key points**:
 
-- `make_design` lives in the **sandbox MCP** — it's a file write operation with extras
+- `submit_design_for_review` lives in the **sandbox MCP** — it's a file write operation with extras
 - Available only to agents that explicitly list it in their `mcps.sandbox.tools` — currently only `architect` and `business_analyst`
 - NOT available to all sandbox agents by default — restricted per agent YAML
 - **Auto-commits to git after writing** — design docs are architectural milestones, always saved immediately
@@ -1807,7 +1807,7 @@ User quote: "sandbox config in agent YAML under mcps.sandbox, ToolProvider handl
 - Approval gate: architect role requires human approval (existing behavior, configured via ToolProvider approval_overrides)
 - The git push happens via ToolProvider (same mechanism as `push_changes` — ToolProvider has credentials, extracts via git bundle, sandbox has no creds)
 - What it does: validates Mermaid syntax in markdown content, writes file to sandbox workspace, auto-commits and pushes
-- `make_design` is the ONLY sandbox tool that auto-commits. Regular `write_file` does NOT auto-commit — agents write many files and commit when ready via `push_changes`
+- `submit_design_for_review` is the ONLY sandbox tool that auto-commits. Regular `write_file` does NOT auto-commit — agents write many files and commit when ready via `push_changes`
 - Frontend renders the design document in the approval gateway — user can see the rendered markdown + Mermaid diagrams before approving
 
 **YAML examples**:
@@ -1817,7 +1817,7 @@ User quote: "sandbox config in agent YAML under mcps.sandbox, ToolProvider handl
 role: primary
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, make_design, push_changes]
+    tools: [read_file, write_file, edit_file, bash, submit_design_for_review, push_changes]
     git: current_project
   core-tools: [hitl_ask_question, make_plan]
 
@@ -1825,11 +1825,11 @@ mcps:
 role: primary
 mcps:
   sandbox:
-    tools: [read_file, make_design]
+    tools: [read_file, submit_design_for_review]
     git: current_project
   core-tools: [hitl_ask_question]
 
-# builder.yaml — no make_design
+# builder.yaml — no submit_design_for_review
 role: subagent
 mcps:
   sandbox:
@@ -1841,7 +1841,7 @@ mcps:
 **Flow example**:
 
 ```
-architect → make_design(path="docs/technical-design.md", content="# Design\n```mermaid\n...")
+architect → submit_design_for_review(path="docs/technical-design.md", content="# Design\n```mermaid\n...")
   → Pre-validate: Mermaid syntax check (ToolProvider, backend-side)
   → Approval gate: architect role → pause for human approval
   → Human approves → write file to sandbox workspace
@@ -1902,21 +1902,21 @@ This ensures that agents designed only as subagents cannot be invoked directly a
 
 ### Pre-Validation + Approval Flow
 
-Example: `make_design` needs mermaid format validation + architect approval.
+Example: `submit_design_for_review` needs mermaid format validation + architect approval.
 
 ```
-1. LLM calls make_design(content="graph TD...")
-2. Runtime calls provider.execute("make_design", {content: "..."})
+1. LLM calls submit_design_for_review(content="graph TD...")
+2. Runtime calls provider.execute("submit_design_for_review", {content: "..."})
 3. Provider: pre-validation hook
    ├── Call mermaid_validate(content) on MCP server
    ├── If validation fails → return error to LLM immediately (no approval wasted)
    └── If validation passes → continue
 4. Provider: approval gate
-   ├── Check: does make_design need approval for this agent?
+   ├── Check: does submit_design_for_review need approval for this agent?
    ├── Yes → return {"_pending": true, "_resume_id": "approval_xxx"}
    └── User approves (hours later)
 5. Provider: actual execution
-   └── Call make_design(content) on MCP server → return result
+   └── Call submit_design_for_review(content) on MCP server → return result
 ```
 
 ### Approval Configuration
@@ -1926,7 +1926,7 @@ Approval rules are configured per-tool, per-agent in the agent YAML:
 ```yaml
 # architect.yaml
 approval_overrides:
-  "sandbox:make_design":
+  "sandbox:submit_design_for_review":
     requires_approval: true
     required_role: architect
     pre_validate: "validate_mermaid"  # optional pre-validation tool

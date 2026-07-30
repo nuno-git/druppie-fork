@@ -60,7 +60,7 @@ tool-test:
 
     # --- Business Analyst writes the FD (pre-approved; contains a mermaid flowchart) ---
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -214,7 +214,7 @@ tool-test:
 
     # --- Architect writes the research doc (pre-approved) ---
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -262,10 +262,10 @@ tool-test:
 
           **Aanbevolen: Benadering B (modulair met MCP-modules + polling).** Deze balanceert herbruikbaarheid, complexiteit en operationele kosten, sluit aan op de platform-principes en realiseert de stop-completely-eis (synchrone DSP-call met directe foutterugkoppeling). Benadering A schiet tekort op herbruikbaarheid; C voegt complexiteit toe die de huidige volumes en de stop-completely-eis niet rechtvaardigen.
 
-    # --- Inject the finished ArchiMate model (architect IS allowed make_design;
+    # --- Inject the finished ArchiMate model (architect IS allowed submit_design_for_review;
     #     it writes verbatim, Mermaid-validating only — the XML has none) ---
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -591,7 +591,7 @@ tool-test:
 
     # --- Architect writes the TD referencing the plate + mermaid — approval gate PENDING ---
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: pending
       arguments:

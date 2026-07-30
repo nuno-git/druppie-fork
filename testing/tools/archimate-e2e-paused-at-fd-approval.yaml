@@ -1,8 +1,8 @@
 ## Setup: project with a waterschap-context FD pending at the
 ## approval gate, ready for a human reviewer.
 ##
-## The chain runs router → planner → BA → make_design and STOPS at
-## the make_design approval gate (status: pending). The session lands
+## The chain runs router → planner → BA → submit_design_for_review and STOPS at
+## the submit_design_for_review approval gate (status: pending). The session lands
 ## in paused_approval state with the FD awaiting a real human
 ## decision in the UI.
 ##
@@ -64,7 +64,7 @@ tool-test:
     # Approval gate is left PENDING. The chain stops here; the session
     # lands in paused_approval state for the human reviewer to resolve.
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: pending
       arguments:

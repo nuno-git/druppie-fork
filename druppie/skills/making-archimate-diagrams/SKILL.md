@@ -64,7 +64,7 @@ in the TD draft, you are getting ahead of the design.
 
 After the plate is materialised, write the TD with a
 \`\`\`archimate view-id=... \`\`\` block referencing the saved view.
-That single `coding_make_design` call is the approval gate; the
+That single `coding_submit_design_for_review` call is the approval gate; the
 reviewer sees the TD narrative and the rendered plate side by side.
 
 **Build the whole plate in ONE call.** Assemble every element and
@@ -120,7 +120,7 @@ existing view (see "Updating an Existing View" below).
    flags its invisible Unicode and humans don't read XML.
 
 4. **Embed the view id** in the TD as the ```archimate code block
-   shown above, then call `coding_make_design(path, content)` for
+   shown above, then call `coding_submit_design_for_review(path, content)` for
    `docs/technical-design.md`. **This is the architect-approval gate.**
    The reviewer sees the markdown + the embedded plate (rendered from
    the just-saved view-id) in one place and approves the TD as a

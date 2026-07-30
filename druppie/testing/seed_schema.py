@@ -15,7 +15,7 @@ class ApprovalFixture(BaseModel):
 
 class ToolCallFixture(BaseModel):
     """A single tool call within an agent run."""
-    tool: str  # "builtin:set_intent", "coding:make_design", etc.
+    tool: str  # "builtin:set_intent", "coding:submit_design_for_review", etc.
     arguments: dict = Field(default_factory=dict)
     status: Literal[
         "pending", "waiting_approval", "waiting_answer",

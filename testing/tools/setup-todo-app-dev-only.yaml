@@ -38,7 +38,7 @@ tool-test:
 
     # --- Business Analyst (creates FD) ---
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -89,7 +89,7 @@ tool-test:
         path: docs/functional-design.md
 
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect

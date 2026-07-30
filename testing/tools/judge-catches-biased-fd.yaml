@@ -40,7 +40,7 @@ tool-test:
 
     # BA writes a BIASED functional design (intentionally bad)
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: analyst

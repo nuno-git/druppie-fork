@@ -128,13 +128,13 @@ class TestCompletionPrecondition:
         pre = CompletionPrecondition(
             summary_contains="DESIGN_APPROVED",
             unless_summary_contains="EXCEPTION",
-            required_tools=[RequiredToolCall(tool_name="make_design", min_calls=1)],
-            error_message="Must call make_design",
+            required_tools=[RequiredToolCall(tool_name="submit_design_for_review", min_calls=1)],
+            error_message="Must call submit_design_for_review",
         )
         assert pre.summary_contains == "DESIGN_APPROVED"
         assert pre.unless_summary_contains == "EXCEPTION"
         assert len(pre.required_tools) == 1
-        assert pre.error_message == "Must call make_design"
+        assert pre.error_message == "Must call submit_design_for_review"
 
 
 class TestRequiredToolCall:

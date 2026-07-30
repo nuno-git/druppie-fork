@@ -65,7 +65,7 @@ tool-test:
     # BA writes FD — NO explicit assumption flag, NFR-01 looks normal but is impossible
     # =========================================================================
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:

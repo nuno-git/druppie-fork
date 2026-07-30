@@ -2,7 +2,7 @@
 ##
 ## Starting point for manually testing the architect-role approval flow
 ## end-to-end. When this test finishes, the session is paused with a
-## pending `coding:make_design` approval for `docs/technical-design.md`
+## pending `coding:submit_design_for_review` approval for `docs/technical-design.md`
 ## that requires the `architect` role to resolve.
 ##
 ## To test:
@@ -20,7 +20,7 @@
 ## Extends setup-project-with-fd (project + FD already committed), then
 ## has the planner plan the architect and has the architect go through
 ## its intake (FD read + principles skill mocked), write the technical
-## research and approve+commit it, then call `coding:make_design` for
+## research and approve+commit it, then call `coding:submit_design_for_review` for
 ## the technical-design.md — at which point the TD approval gate fires
 ## and stays open.
 
@@ -86,7 +86,7 @@ tool-test:
 
     # --- Architect writes the technical research first (approved inline) ---
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect
@@ -156,7 +156,7 @@ tool-test:
       tool: coding:push_changes
 
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: pending
       arguments:
@@ -235,7 +235,7 @@ tool-test:
     # The research HAS been approved and committed, so it should exist in Gitea.
     - file_exists: docs/technical-research.md
     # The TD has NOT been written yet — the TD approval gate is pending,
-    # so the second make_design call has not produced output. This
+    # so the second submit_design_for_review call has not produced output. This
     # asserts that the TD approval really is unresolved (if it had been
     # approved, docs/technical-design.md would already exist in Gitea).
     # If the verifier gains a file_not_exists check later, we can be

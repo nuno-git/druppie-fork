@@ -34,9 +34,9 @@ agent-test:
   judge:
     context: [architect]
     checks:
-      - "The architect must have called coding:read_file to read docs/functional-design.md before writing any designs. Check that read_file appears BEFORE any make_design calls in the tool_calls sequence."
-      - "The architect must have created docs/technical-research.md via coding:make_design. The research document should compare at least 2 different technical approaches with pros and cons for each."
-      - "The architect must have created docs/technical-design.md via coding:make_design. The design document should reference the chosen approach from the research and include concrete implementation details like components, data models, or API endpoints."
+      - "The architect must have called coding:read_file to read docs/functional-design.md before writing any designs. Check that read_file appears BEFORE any submit_design_for_review calls in the tool_calls sequence."
+      - "The architect must have created docs/technical-research.md via coding:submit_design_for_review. The research document should compare at least 2 different technical approaches with pros and cons for each."
+      - "The architect must have created docs/technical-design.md via coding:submit_design_for_review. The design document should reference the chosen approach from the research and include concrete implementation details like components, data models, or API endpoints."
       - "The architect's final done() summary must contain DESIGN_APPROVED and BUILD_PATH. Check the last builtin:done call's arguments."
       - "The architect must have called coding:push_changes at least once to commit the design documents to the repository."
 

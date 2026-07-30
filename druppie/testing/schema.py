@@ -30,7 +30,7 @@ class CheckAssertion(BaseModel):
     # three matching modes as CheckRef.expected (exact / "*" / any-of list).
     # Useful for picking a specific call when an agent makes several calls
     # to the same tool (e.g. architect writes research.md + technical-design.md
-    # via coding:make_design).
+    # via coding:submit_design_for_review).
     arguments: dict[str, object] | None = None
 
 
@@ -268,6 +268,9 @@ class AgentTestDefinition(BaseModel):
     # What to run
     message: str = ""
     agents: list[str] = Field(default_factory=list)
+
+    # Wall-clock timeout in seconds for the bounded orchestrator (default 10 min)
+    timeout: int = 600
 
     # HITL: single profile name, list of names, or inline config
     hitl: str | list[str] | HITLProfile | None = None

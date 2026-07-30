@@ -16,12 +16,12 @@
 ##   - Answer "5s is een harde UX-eis" → HARD path: BA adds the user's
 ##     justification to FD Section 10, NFR-02 unchanged, done() with
 ##     `REQUIREMENT_CHALLENGE outcome: HARD`. Architect re-entry revises
-##     research.md via make_design (approval gate fires on revision)
+##     research.md via submit_design_for_review (approval gate fires on revision)
 ##     with Benadering A as Recommendation, then TD.
 ##   - Answer "5s mag naar 15s" → RELAXED path: BA updates NFR-02 (5s
 ##     → 15s), logs the change in Section 10, done() with
 ##     `REQUIREMENT_CHALLENGE outcome: RELAXED: 5s → 15s`. Architect
-##     re-entry revises research.md via make_design (approval gate fires
+##     re-entry revises research.md via submit_design_for_review (approval gate fires
 ##     on revision) with Benadering B as Recommendation, then TD.
 
 tool-test:
@@ -70,7 +70,7 @@ tool-test:
     # BA writes FD — challengeable NFR-02, Section 10 explicitly flags it as BA-assumption
     # =========================================================================
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -154,7 +154,7 @@ tool-test:
     # (Step 3), hits the Requirement Challenge Gate (Step 3b), and —
     # because NFR-02 looks like a BA assumption blocking a superior
     # approach — calls done(DESIGN_FEEDBACK) with the full analysis
-    # inline. No coding_make_design for research.md yet: the approval
+    # inline. No coding_submit_design_for_review for research.md yet: the approval
     # gate must fire only once, after the challenge is resolved.
     # =========================================================================
     - agent: architect

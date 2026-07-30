@@ -25,4 +25,4 @@ agent-test:
     checks:
       - "The BA must have recognized this as a technical bug (search broken with accented characters), NOT a functional change. It should have asked a few clarifying questions about the bug (when it happens, which characters, etc.) but must NOT have started full requirements elicitation for a new feature."
       - "The BA must have called done() with NO_FD_CHANGE in the summary and included a clear technical description of the bug for the Architect."
-      - "The BA must NOT have called coding:make_design. Writing or updating the functional design for a bug fix is incorrect behavior."
+      - "The BA must NOT have called coding:submit_design_for_review. Writing or updating the functional design for a bug fix is incorrect behavior."

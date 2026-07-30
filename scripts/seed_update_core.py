@@ -493,7 +493,7 @@ def populate_db(repo_info: dict):
                         total_tc += 1
                         tc_idx = 1
 
-                # Architect: make_design (for TD)
+                # Architect: submit_design_for_review (for TD)
                 if agent_id == "architect":
                     cur.execute(
                         """INSERT INTO tool_calls
@@ -502,7 +502,7 @@ def populate_db(repo_info: dict):
                             arguments, status, result, created_at, executed_at)
                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                         (_uid(NS_CORE, 3000 + seq * 10), session_id, run_id, llm_id,
-                         "coding", "make_design", 0,
+                         "coding", "submit_design_for_review", 0,
                          json.dumps({"path": "docs/technical-design.md", "content": TECHNICAL_DESIGN}),
                          "completed", "Wrote docs/technical-design.md",
                          run_ts, run_ts),

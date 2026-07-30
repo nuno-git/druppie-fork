@@ -4,8 +4,8 @@ check:
   tags: [business_analyst, language, quality]
   assert:
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
   judge:
     context: business_analyst
     checks:
-      - "The functional design content passed to coding:make_design must be written in English. All section headings, requirement descriptions, user journeys, and business rules must be in English. A few Dutch domain terms are acceptable (e.g., 'waterschap', 'vergunning') but the body text must be English."
+      - "The functional design content passed to coding:submit_design_for_review must be written in English. All section headings, requirement descriptions, user journeys, and business rules must be in English. A few Dutch domain terms are acceptable (e.g., 'waterschap', 'vergunning') but the body text must be English."

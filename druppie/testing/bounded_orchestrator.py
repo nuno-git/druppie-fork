@@ -19,11 +19,12 @@ class BoundedOrchestrator:
     """Wraps the real Orchestrator to stop after the last real_agent completes."""
 
     def __init__(self, db: DbSession, user_id: UUID, real_agents: list[str],
-                 hitl_simulator: HITLSimulator | None):
+                 hitl_simulator: HITLSimulator | None, timeout: int = 600):
         self._db = db
         self._user_id = user_id
         self._real_agents = real_agents
         self._hitl_simulator = hitl_simulator
+        self._timeout = timeout
 
     def _all_real_agents_done(self, session_id: UUID, execution_repo) -> bool:
         if not self._real_agents:
@@ -80,7 +81,7 @@ class BoundedOrchestrator:
             return session_id
 
         async def _bounded_execute(session_id):
-            deadline = time.monotonic() + 600  # 10 minute wall-clock timeout
+            deadline = time.monotonic() + self._timeout
             while time.monotonic() < deadline:
                 session_repo.db.expire_all()
                 session = session_repo.get_by_id(session_id)

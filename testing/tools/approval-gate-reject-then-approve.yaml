@@ -1,15 +1,15 @@
-## Tool test: exercise the coding:make_design approval gate end-to-end.
+## Tool test: exercise the coding:submit_design_for_review approval gate end-to-end.
 ##
 ## Deterministic chain (no LLM) that:
 ##   1. Creates a project via create_project
-##   2. BA calls coding:make_design — approval gate fires → REJECTED
+##   2. BA calls coding:submit_design_for_review — approval gate fires → REJECTED
 ##      (the file should NOT be written to Gitea)
-##   3. BA calls coding:make_design again — approval gate fires → APPROVED
+##   3. BA calls coding:submit_design_for_review again — approval gate fires → APPROVED
 ##      (the file IS written and the second content takes effect)
 ##   4. BA commits + pushes + done
 ##
 ## Verifies that the approval gate:
-##   - Actually pauses execution on a make_design call
+##   - Actually pauses execution on a submit_design_for_review call
 ##   - Rejection prevents the file from landing in Gitea
 ##   - A retry with approval writes the file with the final content
 ##
@@ -18,7 +18,7 @@
 
 tool-test:
   name: approval-gate-reject-then-approve
-  description: "coding:make_design approval gate: first call rejected, retry approved"
+  description: "coding:submit_design_for_review approval gate: first call rejected, retry approved"
   tags: [approval-gate, platform-standards, setup, create-project]
 
   chain:
@@ -28,7 +28,7 @@ tool-test:
       arguments:
         intent: create_project
         project_name: approval-gate-test
-        description: "Deterministic test of the coding:make_design approval gate"
+        description: "Deterministic test of the coding:submit_design_for_review approval gate"
       assert:
         result:
           - not_empty
@@ -46,17 +46,17 @@ tool-test:
       arguments:
         steps:
           - agent_id: business_analyst
-            prompt: "Write an FD; demonstrate reject-then-approve on make_design"
+            prompt: "Write an FD; demonstrate reject-then-approve on submit_design_for_review"
 
     - agent: planner
       tool: builtin:done
       arguments:
         summary: "Agent planner: Planned business_analyst"
 
-    # --- BA: first make_design attempt — REJECTED by approval gate ---
+    # --- BA: first submit_design_for_review attempt — REJECTED by approval gate ---
     # Incomplete FD (missing platform-standards link). Reviewer rejects.
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       status: failed
       approval:
         status: rejected
@@ -69,10 +69,10 @@ tool-test:
           Deze versie mist de verplichte link naar
           docs/platform-functional-standards.md en §14.
 
-    # --- BA: second make_design attempt — APPROVED by approval gate ---
+    # --- BA: second submit_design_for_review attempt — APPROVED by approval gate ---
     # Revised FD with the mandatory link and §14 deviations section.
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -85,14 +85,14 @@ tool-test:
           ## 1. Probleemsamenvatting
 
           Dit ontwerp bestaat puur om te controleren dat de approval gate
-          op `coding:make_design` correct werkt: eerst rejection met reden,
+          op `coding:submit_design_for_review` correct werkt: eerst rejection met reden,
           daarna approval met een gereviseerde versie.
 
           ## 2. Functionele Eisen
 
           | ID | Bron | Eis | Verificatiemethode |
           |----|------|-----|--------------------|
-          | FR-01 | BA | De approval gate pauzeert execution bij make_design | Tool-test |
+          | FR-01 | BA | De approval gate pauzeert execution bij submit_design_for_review | Tool-test |
           | FR-02 | BA | Rejection verhindert dat het bestand in Gitea landt | Tool-test `file_contains` |
           | FR-03 | BA | Retry met approved schrijft de definitieve content weg | Tool-test `file_contains` |
 
@@ -108,7 +108,7 @@ tool-test:
     - agent: business_analyst
       tool: builtin:done
       arguments:
-        summary: "Agent business_analyst: DESIGN_APPROVED. Eerste make_design werd afgewezen met reden; tweede poging met gereviseerde FD werd goedgekeurd."
+        summary: "Agent business_analyst: DESIGN_APPROVED. Eerste submit_design_for_review werd afgewezen met reden; tweede poging met gereviseerde FD werd goedgekeurd."
       assert:
         completed: true
 
