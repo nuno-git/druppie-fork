@@ -1,16 +1,25 @@
 # Per-app CI/CD pipeline for a Druppie-generated application.
 #
-# Uses kaniko (daemonless, non-privileged) to build and push images.
-# No Docker daemon or privileged sidecar needed.
+# ⚠️ DISABLED / REFERENCE ONLY. Builds are no longer driven by Gitea Actions.
+# Druppie's module-deploy now builds this app's image itself, k8s-natively:
+# it runs the SAME kaniko invocation below as a Kubernetes Job in a per-app
+# build namespace (see druppie/mcp-servers/module-deploy/v1/k8s_deploy.py),
+# then commits the image tag into the app's HelmRelease in ai/k8s. No Gitea
+# Actions runner is required (and none runs in the cluster).
 #
-# Secrets (org-level on the `druppie-apps` org):
+# This file is kept as documentation of the build contract and as a fallback if
+# an Actions runner is ever reintroduced. Its triggers are neutered to
+# workflow_dispatch-only so it never auto-runs; if manually dispatched with no
+# runner registered, the run simply stays queued (harmless).
+#
+# Secrets (org-level on the `druppie-apps` org), if ever re-enabled:
 #   HARBOR_REGISTRY, HARBOR_USERNAME, HARBOR_PASSWORD  (Harbor robot, push+pull)
 #   CI_GIT_TOKEN  (write to ai/k8s — scoped to clusters/user-apps/<slug>/)
-name: Build and Deploy
+name: Build and Deploy (disabled — kaniko Job in module-deploy builds instead)
 
 on:
-  push:
-    branches: [main, 'release/**']
+  # Manual-only. Automatic push builds are intentionally disabled — the build
+  # runs as a kaniko Job launched by module-deploy, not here.
   workflow_dispatch:
 
 env:

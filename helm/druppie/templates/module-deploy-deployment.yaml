@@ -85,6 +85,16 @@ spec:
               value: {{ .harbor.registry | quote }}
             - name: HARBOR_PROJECT
               value: {{ .harbor.project | quote }}
+            {{- with .build }}
+            # k8s-native build (kaniko Job): image overrides + ESO store. Vault
+            # paths / build-ns suffix / timeouts keep their in-code defaults.
+            - name: USERAPPS_KANIKO_IMAGE
+              value: {{ .kanikoImage | quote }}
+            - name: USERAPPS_GIT_CLONE_IMAGE
+              value: {{ .gitCloneImage | quote }}
+            - name: USERAPPS_SECRET_STORE
+              value: {{ .secretStore | quote }}
+            {{- end }}
             {{- end }}
           envFrom:
             - configMapRef:

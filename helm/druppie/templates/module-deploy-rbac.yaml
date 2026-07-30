@@ -1,10 +1,15 @@
-# READ-ONLY cluster RBAC for module-deploy (user-app GitOps).
+# Cluster RBAC for module-deploy (user-app GitOps).
 #
 # module-deploy deploys user apps by committing a Flux GitRepository+HelmRelease
 # to the GitOps repo (ai/k8s) via the Gitea API — Flux does the actual deploys.
-# The only cluster access it needs is reading live status: HelmRelease conditions
-# per app namespace, pods (for logs + status), and namespaces (to list apps).
-# Writes go through git (Flux), never through this ServiceAccount.
+# The k8s-native image build works the same way: the build namespace, its
+# ExternalSecrets AND the kaniko Job are all committed to git and created by
+# Flux. module-deploy only READS their status back (namespaces, pods/logs,
+# HelmRelease conditions, ExternalSecret sync status, Job success/failure).
+#
+# The ONE cluster write this ServiceAccount performs is scaling a Deployment to
+# 0 for k8s_stop (apps/deployments: patch). Everything else — every deploy and
+# every build — goes through git (Flux), never this ServiceAccount.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -36,6 +41,12 @@ rules:
   - apiGroups: ["helm.toolkit.fluxcd.io"]
     resources: ["helmreleases"]
     verbs: ["get", "list"]
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list"]   # read-only: gate the build on ESO Ready (no secret reads)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list"]   # read-only: poll the Flux-created kaniko build Job
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

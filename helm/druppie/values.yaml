@@ -110,8 +110,14 @@ gitea:
     limits:
       memory: 1Gi
       cpu: 1000m
+# Internal Gitea Actions runner — DISABLED (kept for reference/fallback).
+# Superseded by the k8s-native build: module-deploy builds user-app images with
+# a kaniko Job (see modules.docker.userApps.build), so no Actions runner is
+# needed. The runner could not work here anyway — a docker:// executor needs a
+# Docker daemon (absent on containerd), and kaniko can't run under a host
+# executor (it owns / and would corrupt the persistent runner FS).
 internalRunner:
-  enabled: true
+  enabled: false
   image: gitea/act_runner:latest
   replicas: 2
   capacity: 1
@@ -374,6 +380,20 @@ modules:
       harbor:
         registry: harbor.rijnland.dev
         project: druppie
+      # k8s-native image build (kaniko Job), purely git-driven. module-deploy
+      # commits a per-app build namespace + a Harbor-push ExternalSecret (Vault
+      # ci/harbor) + a git-auth ExternalSecret (Vault ci/gitea) + the daemonless
+      # kaniko Job to ai/k8s; Flux creates them all and module-deploy only polls
+      # status. No Docker, no runner, no imperative cluster writes.
+      build:
+        # kaniko must run in its own container (it extracts the base image over
+        # /). Point at a Harbor mirror if egress to gcr.io is blocked.
+        kanikoImage: gcr.io/kaniko-project/executor:v1.23.2
+        # Small git client for the clone init-container (Harbor-mirror if
+        # needed). Pinned (not :latest) for reproducible builds.
+        gitCloneImage: alpine/git:2.45.2
+        # ESO ClusterSecretStore the build ExternalSecrets read from.
+        secretStore: vault-ai-team-k8s
   filesearch:
     enabled: true
     replicaCount: 1

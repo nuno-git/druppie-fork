@@ -1,17 +1,33 @@
 # Refinement & Implementation Plan: Build & Deploy Without Docker Daemon
 
 > **Branch:** `feature/k8s-native-build-deploy` (branched from `colab-dev` in `ai/druppie`)
-> **Status:** IMPLEMENTED locally (uncommitted) — Phases 0–4 coded; cluster validation blocked on Longhorn outage
+> **Status:** IMPLEMENTED locally (uncommitted) — Phases 0–4 coded; build mechanism superseded (see below); cluster validation blocked on Longhorn outage
 > **Type:** Refinement + Implementation Plan
 > **Spans two repos:** `ai/druppie` (app/chart/template/MCP) **and** `ai/k8s` (GitOps footprint)
 > **Related:** [ADR-KUBERNETES.md](../ADR-KUBERNETES.md) §"Out of Scope (Phase 2)", [dev-environment-architecture.md](../dev-environment-architecture.md) v2, [BACKLOG.md](../BACKLOG.md) §"Kubernetes Phase 2"
-> **Last updated:** 2026-07-17
+> **Last updated:** 2026-07-30
 
-> **Implementation status (2026-07-17, local — nothing pushed):**
-> - ✅ Phase 0a — `ai/k8s` `user-apps` Flux Kustomization + machine-managed dir (`feature/user-apps-gitops`)
-> - ✅ Phase 1 — app template ships a Helm chart (`chart/`) + per-app CI (`.gitea/workflows/build.yaml`); `docker-compose.yaml` removed; template Dockerfile/SDK made buildable (`druppie-sdk` optional). `helm lint`+`template` green.
-> - ✅ Phase 2/3 — `module-deploy/v1/k8s_deploy.py` rewritten: GitOps commit (namespace+gitrepository+helmrelease), CI dispatch+poll, Flux rollout wait, 300s ingress health-gate, teardown, read-only logs/list, stubs. `tools.py` dispatch rewired; `httpx` added.
-> - ✅ Phase 4 — socket mount + `docker-installer` forced off in K8s mode (AC7); module-deploy GitOps env + read-only RBAC + egress CNP; `deployer.yaml` prompt rewritten for GitOps; backend `parse_container_to_deployment` handles the K8s shape (AC8 via existing UI); 13 unit tests pass.
+> **⚠️ SUPERSEDING DECISION (2026-07-30): build now runs as a git-driven kaniko Job, NOT the DinD Actions runner.**
+> The original plan (D2/§3) mandated building on the shared DinD Gitea-Actions
+> runner and said "No Kaniko". During implementation the runner proved unusable
+> for a k8s-native build: a `docker://` executor needs a Docker daemon (absent on
+> containerd), and kaniko can't run under a host executor (it owns `/` and would
+> corrupt the persistent runner FS). **Resolution:** module-deploy commits a
+> daemonless **kaniko Job** (plus its build namespace + Harbor-push/git-auth
+> ExternalSecrets) to `ai/k8s`; **Flux creates it**; module-deploy only polls
+> status. This keeps the GitOps invariant intact (module-deploy stays read-only —
+> no imperative cluster writes) and the internal Actions runner is disabled
+> (`internalRunner.enabled=false`), the app template's `build.yaml` kept but
+> neutered. See **§3 "Superseded build mechanism"** below and
+> `module-deploy/v1/k8s_deploy.py`. Everything else in this doc (GitOps footprint,
+> per-app namespace, teardown/prune, health gate, storage class, §5.1 token
+> hardening) stands.
+
+> **Implementation status (2026-07-30, local — nothing pushed):**
+> - ✅ Phase 0a — `ai/k8s` `user-apps` Flux Kustomization (`clusters/ka-k8s-ai/infra/user-apps/user-apps-kustomization.yaml`) + machine-managed `clusters/user-apps/` dir
+> - ✅ Phase 1 — app template ships a Helm chart (`chart/`) + per-app CI (`.gitea/workflows/build.yaml`, now **disabled/reference-only**); `docker-compose.yaml` removed; template Dockerfile/SDK made buildable (`druppie-sdk` optional). `helm lint`+`template` green.
+> - ✅ Phase 2/3 — `module-deploy/v1/k8s_deploy.py`: GitOps commit (namespace+gitrepository+helmrelease) **+ git-driven kaniko build Job** (build ns + ESOs + Job committed, Flux creates, module-deploy polls), Flux rollout wait, 300s ingress health-gate, teardown incl. build/, read-only logs/list/inspect. `tools.py` dispatch rewired; `httpx` added.
+> - ✅ Phase 4 — socket mount + `docker-installer` forced off in K8s mode (AC7); module-deploy GitOps env + **read-only** RBAC (jobs/externalsecrets get+list); `deployer.yaml` prompt rewritten for GitOps; unit tests green.
 > - ⏳ **Not done:** live cluster validation (blocked — Longhorn down on `ka-k8s-ai`, see §8); ADR/BACKLOG status bump (on merge). *(TLS needs no new cert — `<slug>-apps.rijnland.dev` is a single label, covered by the existing `*.rijnland.dev` wildcard.)*
 
 
@@ -103,12 +119,51 @@ symmetry with Druppie's own pipeline (`.gitea/workflows/build.yaml`).
      • deploy: commit the ai/k8s footprint, dispatch build, watch rollout
 ```
 
-**Why this design (and not direct `kubectl apply`, and not Kaniko):**
+**Why this design (and not direct `kubectl apply`):**
 - **GitOps invariant** — AGENTS.md: *"FluxCD will revert manual `kubectl apply` changes."* Committing to `ai/k8s` is the only durable path.
 - **Audit + drift correction** — every user-app deployment is a git commit; Flux self-heals drift.
 - **Symmetry** — identical mechanism to Druppie's own prod/dev/branch-env deploys. Reuses the **proven `branch-envs` machine-managed Kustomization pattern** (`clusters/ka-k8s-ai/infra/branch-envs/branch-envs-kustomization.yaml`).
-- **No Kaniko, no docker.sock in the backend** — the existing shared DinD runner (50Gi layer-cache PVC) builds via `docker build`, exactly like Druppie's own images. `module-deploy` only dispatches + watches; it never runs Docker.
+- **No docker.sock in the backend** — `module-deploy` never runs Docker; both deploy AND build go through git → Flux.
 - **Eliminates the hardest risk** — no compose→K8s translator; the app ships a real Helm chart.
+
+### Superseded build mechanism (2026-07-30): git-driven kaniko Job
+
+> This replaces the original D2/G1/G2 (build on the shared DinD Actions runner).
+> The historical text is kept below with ~~strikethrough-in-prose~~ notes for the
+> audit trail; the current behaviour is what this subsection describes.
+
+**What changed.** The build no longer runs on a Gitea Actions runner. Instead
+`module-deploy` commits — into `clusters/user-apps/<slug>/build/` — a per-app
+**build namespace**, a **Harbor-push ExternalSecret** (dockerconfigjson from Vault
+`ci/harbor`, the `druppie-ci` robot), a **git-auth ExternalSecret** (clone token
+from Vault `ci/gitea`), and a **kaniko Job** (`job.yaml`, whose object name carries
+the image tag). Flux creates all four; `module-deploy` only polls status
+(namespace exists → ExternalSecrets Ready → Job succeeded), then commits the app
+HelmRelease pinned to the exact tag kaniko just pushed.
+
+**Why kaniko-Job-via-git and not the DinD runner:**
+- The DinD runner can't build k8s-natively here: a `docker://` executor needs a
+  Docker daemon (absent on containerd), and kaniko can't run *under* a host
+  executor — kaniko takes over `/` to extract the base image and would corrupt
+  the runner's persistent filesystem. kaniko must run in **its own pod**.
+- Committing the Job to git (rather than `kubectl create`-ing it) keeps
+  `module-deploy` **read-only** — the branch-env invariant the whole design rests
+  on. No imperative cluster writes; Flux owns the Job's lifecycle and prunes a
+  superseded Job when a new tag is committed (Job names carry the tag).
+- kaniko is **daemonless** and runs unprivileged (no `privileged`, no extra caps),
+  so the build namespace gets `pod-security.kubernetes.io/enforce: baseline` —
+  deliberately NOT the `privileged` profile the old DinD runner namespace needed.
+
+**Ordering / safety.** Build infra is committed first and gated on the namespace
+existing + both ExternalSecrets reporting `Ready` (a fast, clear failure if Vault
+is missing a declared key) *before* the Job manifest is committed, so the kaniko
+pod never starts against an unsynced secret. The git token is mounted ONLY into
+the clone init-container, never the kaniko container that runs the untrusted
+Dockerfile. §5.1's token-hardening backlog still applies.
+
+**Retired pieces.** The in-cluster Actions runner is disabled
+(`internalRunner.enabled=false`); the app template's `.gitea/workflows/build.yaml`
+is kept but neutered to `workflow_dispatch`-only as reference/fallback.
 
 ### Precedent we copy verbatim
 
@@ -208,7 +263,7 @@ Partial code on `colab-dev`:
 ## 5. Design Decisions (your choices applied)
 
 - **D1 — Template ships a per-app Helm chart + CI workflow, drops compose.** `templates/project/chart/` (Chart.yaml, values.yaml, templates: Deployment, Service, Ingress, PVC, ExternalSecret) **and** `templates/project/.gitea/workflows/build.yaml`. `docker-compose.yaml` removed. *(AC1)*
-- **D2 — Build = per-app Gitea Actions CI (not Kaniko).** The template workflow (trimmed copy of Druppie's own): on push + `workflow_dispatch`, the shared DinD runner does `docker build` → pushes `harbor.rijnland.dev/druppie/<app>:<branch>-<ts>-<sha>` → bumps `imageTag` in the app's `ai/k8s` HelmRelease. `module-deploy` dispatches (if needed) + polls the run; **no Kaniko, no docker.sock in the backend**. *(AC2)*
+- **D2 — Build = per-app Gitea Actions CI (not Kaniko).** ⚠️ **SUPERSEDED 2026-07-30 — see §3 "Superseded build mechanism".** Build now runs as a git-driven **kaniko Job** (module-deploy commits build ns + ESOs + Job to `ai/k8s`, Flux creates them, module-deploy polls); the DinD Actions runner is disabled. Tag scheme (`<branch>-<ts>-<sha>`) and Harbor destination are unchanged. *Original plan:* the template workflow (trimmed copy of Druppie's own) had the shared DinD runner `docker build` → push → bump `imageTag`. *(AC2)*
 - **D3 — Credentials.** Push: Harbor robot creds (`HARBOR_USERNAME/PASSWORD`) provisioned into each app repo by `create_project` via the Gitea API (or org-level secrets). Pull: deployed Deployments get `imagePullSecrets: harbor-regcred`. *(AC2)*
 - **D4 — Deploy = GitOps commit to `ai/k8s`.** `module-deploy` commits `clusters/user-apps/<app-slug>/{gitrepository,helmrelease}.yaml` via the Gitea API (same code path `branch_environment_service.py:870` already uses). `HelmRelease.values` sets `imageTag`, ingress `host`, DB secret ref. Flux reconciles. **No `kubectl apply`.** *(AC3)*
 - **D5 — Per-app namespace + a `user-apps` Kustomization.** Each app gets its **own namespace** (clean teardown/isolation, matches branch-env precedent); a separate Flux Kustomization watches `./clusters/user-apps`, `prune:true`, machine-managed, isolated from prod. One-time infra commit. *(AC3, AC6)*

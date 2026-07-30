@@ -33,6 +33,12 @@ spec:
                   # Non-optional → waits for ESO (D11 gate), same as the app.
                   name: {{ include "app.fullname" . }}-db
                   key: {{ .Values.externalSecret.passwordKey }}
+            # The PVC is mounted at the data dir, and every ext4/Longhorn volume
+            # has a lost+found at its root — which makes `initdb` refuse ("exists
+            # but is not empty"). Point PGDATA at a subdirectory so initdb owns a
+            # clean dir and ignores lost+found. Standard postgres-on-PVC fix.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           ports:
             - name: postgres
               containerPort: {{ .Values.database.port }}
