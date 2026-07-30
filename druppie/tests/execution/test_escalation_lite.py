@@ -54,16 +54,7 @@ class TestTerminateSessionTool:
         # -- mocks --
         mock_session_repo = MagicMock()
 
-        pending_run_1 = MagicMock()
-        pending_run_1.id = uuid4()
-        pending_run_2 = MagicMock()
-        pending_run_2.id = uuid4()
-
         mock_execution_repo = MagicMock()
-        mock_execution_repo.get_pending_runs.return_value = [
-            pending_run_1,
-            pending_run_2,
-        ]
         mock_execution_repo.db = MagicMock()
 
         with patch(
@@ -77,20 +68,15 @@ class TestTerminateSessionTool:
                 execution_repo=mock_execution_repo,
             )
 
-        # Session status updated to terminated
+        # Session status updated to terminated (enum member, not .value)
         mock_session_repo.update_status.assert_called_once_with(
             session_id,
-            SessionStatus.TERMINATED.value,
+            SessionStatus.TERMINATED,
             error_message=reason,
         )
 
-        # Pending runs cancelled
-        assert mock_execution_repo.cancel_agent_run.call_count == 2
-        cancelled_ids = {
-            call.args[0]
-            for call in mock_execution_repo.cancel_agent_run.call_args_list
-        }
-        assert cancelled_ids == {pending_run_1.id, pending_run_2.id}
+        # Pending runs cancelled in one call
+        mock_execution_repo.cancel_pending_runs.assert_called_once_with(session_id)
 
         # DB flushed
         mock_execution_repo.db.flush.assert_called_once()
@@ -109,7 +95,6 @@ class TestTerminateSessionTool:
         mock_session_repo = MagicMock()
 
         mock_execution_repo = MagicMock()
-        mock_execution_repo.get_pending_runs.return_value = []
         mock_execution_repo.db = MagicMock()
 
         with patch(
@@ -124,7 +109,7 @@ class TestTerminateSessionTool:
             )
 
         mock_session_repo.update_status.assert_called_once()
-        mock_execution_repo.cancel_agent_run.assert_not_called()
+        mock_execution_repo.cancel_pending_runs.assert_called_once_with(session_id)
         assert result["status"] == "terminated"
 
 

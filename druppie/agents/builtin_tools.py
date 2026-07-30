@@ -1326,11 +1326,9 @@ async def terminate_session(
     db = execution_repo.db
     session_repo = SessionRepository(db)
 
-    session_repo.update_status(session_id, SessionStatus.TERMINATED.value, error_message=reason)
+    session_repo.update_status(session_id, SessionStatus.TERMINATED, error_message=reason)
 
-    pending_runs = execution_repo.get_pending_runs(session_id)
-    for run in pending_runs:
-        execution_repo.cancel_agent_run(run.id, reason="Session terminated")
+    execution_repo.cancel_pending_runs(session_id)
 
     db.flush()
 
