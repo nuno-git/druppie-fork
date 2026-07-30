@@ -67,7 +67,7 @@ discoverable and the updated `architect.yaml` is loaded.
 What this does:
 - Creates a Gitea repo for project `beleidsdocument-assistent`.
 - Replays Router → Planner → Business Analyst calls.
-- The Business Analyst's `make_design` for `docs/functional-design.md`
+- The Business Analyst's `submit_design_for_review` for `docs/functional-design.md`
   is **paused on the analyst-role approval gate**.
 
 ## 3. Approve the FD
@@ -105,14 +105,14 @@ watch the Architect's tool calls in real time.
    **This is the primary signal that the Step 1 trigger fired.**
 5. Likely `builtin:invoke_skill` for `architecture-principles` and
    `technical-research-format` as well.
-6. `coding:make_design` for `docs/technical-research.md` — research
+6. `coding:submit_design_for_review` for `docs/technical-research.md` — research
    document. Review for an RAG-patterns axis (chunking, retrieval,
    embedding, vector store, rerank, citations) with the choices
    motivated.
 7. Approval gate fires for the research; approve as **architect**
    (switch user to `architect` / `Architect123!`).
 8. `builtin:invoke_skill` for `technical-design-format`.
-9. `coding:make_design` for `docs/technical-design.md`.
+9. `coding:submit_design_for_review` for `docs/technical-design.md`.
 10. Approval gate fires for the TD; review the TD content (see §5),
     then approve.
 

@@ -44,7 +44,7 @@ tool-test:
 
     # --- Business Analyst (creates FD) ---
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -128,7 +128,7 @@ tool-test:
 
     # --- Architect resumes after core_explorer completes ---
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect
@@ -149,7 +149,7 @@ tool-test:
           in module-coding, een aparte module voegt onnodig complexiteit toe.
 
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect

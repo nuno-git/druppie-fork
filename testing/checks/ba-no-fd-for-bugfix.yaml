@@ -8,5 +8,5 @@ check:
   judge:
     context: business_analyst
     checks:
-      - "The user reported a technical bug (not a new feature). The BA must have correctly identified this as a technical change and called done() with NO_FD_CHANGE in the summary. The BA must NOT have called coding:make_design — writing a functional design for a bug fix is incorrect."
+      - "The user reported a technical bug (not a new feature). The BA must have correctly identified this as a technical change and called done() with NO_FD_CHANGE in the summary. The BA must NOT have called coding:submit_design_for_review — writing a functional design for a bug fix is incorrect."
       - "The BA's done() summary must contain a clear description of the bug that the Architect can act on — what is going wrong and what the expected behavior should be."

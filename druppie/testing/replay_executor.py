@@ -7,7 +7,7 @@ The only difference: the tool calls come from YAML instead of an LLM deciding th
 This means:
 - builtin:set_intent creates real projects + Gitea repos
 - coding:list_dir actually lists files
-- coding:make_design actually creates files
+- coding:submit_design_for_review actually creates files
 - Everything shows up in the session exactly like a real run
 
 Mocking is controlled per-step in the test YAML via `mock: true` + `mock_result`.

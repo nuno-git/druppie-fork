@@ -127,6 +127,7 @@ druppie/
     deployment_service.py
     revert_service.py
     avatar_service.py    # Entra ID profile photo fetch + disk cache
+    attachment_service.py  # Text extraction (pdfplumber + OCR), background extraction scheduling
     document_formatter_service.py
   repositories/
     session_repository.py
@@ -266,16 +267,25 @@ before mentioning.
 
 ### 2.6 Document Formatter Service
 
-PDF compilation from native **Typst** source files authored by agents. The Documenter agent writes `.typ` files using the project's corporate-identity template, pushes them to Gitea, and calls `builtin:make_pdf_document` to generate PDFs.
+PDF generation from agent-authored content. The corporate identity is chosen per project (see house styles below). Two authoring paths:
 
-**Flow:** Agent writes `.typ` file → pushes to Gitea → calls `builtin:make_pdf_document` → `PdfRenderService.get_or_create_pdf()` fetches source from Gitea → checks render cache (`pdf_renders` table keyed by Git blob SHA) → cache hit returns instantly; cache miss compiles via `DocumentFormatterService.compile_typ()` → stores PDF → creates `MessageAttachment` record → user downloads via `/api/attachments/{id}`.
+1. **Native Typst** — agents write `.typ` files, call `builtin:make_pdf_document`.
+2. **Markdown** — agents write standard markdown, call `builtin:make_design_pdf`. The platform converts via `markdown_to_typst()`.
+
+**Flow (native Typst):** Agent writes `.typ` file → pushes to Gitea → calls `builtin:make_pdf_document` → `PdfRenderService.get_or_create_pdf()` fetches source from Gitea → checks render cache (`pdf_renders` table keyed by Git blob SHA) → cache hit returns instantly; cache miss compiles via `DocumentFormatterService.compile_typ()` → stores PDF → creates `MessageAttachment` record → user downloads via `/api/attachments/{id}`.
+
+**Flow (markdown):** Agent writes `.md` file → pushes to Gitea → calls `builtin:make_design_pdf` → `PdfRenderService.render_markdown_pdf()` fetches markdown from Gitea → `markdown_to_typst()` converts to Typst → `wrap_with_rijnland_template()` adds template preamble → compiles and caches → creates `MessageAttachment`.
+
+**Frontend design-PDF download:** `GET /api/projects/{id}/design-pdf?path=docs/functional-design.md` — the frontend detects design document stems (`functional-design`, `technical-design`, `technical-research`) and calls this endpoint directly, bypassing the agent pipeline. Implemented in `frontend/src/utils/downloadDesign.js` and `frontend/src/services/api.js`.
+
+**Markdown-to-Typst converter:** `document_formatter_service.py:markdown_to_typst()` converts markdown to native Typst. Handles headings, bold/italic (sentinel-based to prevent double-conversion), tables (equal-width `1fr` columns with escaped `#`/`@`/`$`/`\`), mermaid fenced blocks (via `@preview/mmdr:0.2.2` import), archimate fenced blocks (parsed `view-id=X` → `#image("docs/diagrams/X.svg")`), code blocks, links, images, blockquotes, and horizontal rules. Helper `wrap_with_rijnland_template()` prepends the Rijnland template import and show rule.
 
 **Template library:** Each house style is one Typst module that exports a single show-rule function with an identical signature — parameters for document type (FO, TO, technical_research, core_documentation), title, status, TOC, watermark, section breaks, and author:
 
 - `druppie/templates/documents/rijnland.typ` → `rijnland_doc(body, ...)`
 - `druppie/templates/documents/hhsk.typ` → `hhsk_doc(body, ...)`
 
-Because the signatures match, only the `#import` line and the function name differ between styles — the parameter block an agent writes is otherwise byte-identical. The Markdown conversion pipeline is gone.
+Because the signatures match, only the `#import` line and the function name differ between styles — the parameter block an agent writes is otherwise byte-identical.
 
 #### 2.6.1 House styles
 
@@ -317,7 +327,7 @@ Druppie ships two corporate identities, selectable per project:
 - Grid-based margins: 25mm sides, 32mm bottom
 - Draft watermark: semi-transparent rotated text in **foreground** layer (`transparentize(50%)`) when `include_watermark == true && status != "FINAL"` — visible above all content including title page
 - Table of contents: optional via `include_toc`
-- Tables: Rijnland blue header row, striped rows, rounded corners
+- Tables: Rijnland blue header row, striped rows, rounded corners, breakable across pages
 - Code blocks: light blue background (`#E9EFFA`), rounded corners
 - Footer: Full-bleed dijk-en-sloot shape (`dijkEnSloot.png`) above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page / total". Excluded from title page.
 - Diagram rendering: Mermaid diagrams are rendered inline by the `@preview/mmdr:0.2.2` Typst package (pure Typst, no Chromium/Node.js). ArchiMate diagrams export to SVG via the `archimate:save_model` MCP tool (`module-archimate/v1/svg_export.py`, pure Python) and are embedded via `#image()` in the Typst source.
@@ -592,7 +602,7 @@ File and git operations within workspace sandboxes.
 | `create_pull_request` | None | Create PR on Gitea |
 | `merge_pull_request` | Developer | Merge PR and delete branch |
 | `execute_coding_task` | None | Execute coding task in isolated sandbox |
-| `make_design` | None (overridable per agent) | Write design document (FD/TD) with Mermaid syntax validation; file is rejected if Mermaid contains errors |
+| `submit_design_for_review` | None (overridable per agent) | Write design document (FD/TD) with Mermaid syntax validation; file is rejected if Mermaid contains errors |
 | `revert_to_commit` | None (internal) | Hard reset + force push to a target commit |
 | `close_pull_request` | None (internal) | Close a PR on Gitea without merging |
 
@@ -644,7 +654,7 @@ Read tools (WILMA + project model):
 | `list_models` / `get_statistics` / `list_elements` / `get_element` / `list_views` / `get_view` / `search_model` / `get_impact` | None | Query WILMA elements, relationships, views, and impact paths |
 | `assess_layout` | None | Element/connection count + density recommendation for a view (used to decide when to recommend `request_full_relayout`) |
 
-Write tools (per-project `docs/architecture.archimate`, **all ungated** — the architect builds the plate freely; the single human review point is the `coding:make_design` gate on `docs/technical-design.md` where the reviewer sees the markdown + embedded plate as one artifact):
+Write tools (per-project `docs/architecture.archimate`, **all ungated** — the architect builds the plate freely; the single human review point is the `coding:submit_design_for_review` gate on `docs/technical-design.md` where the reviewer sees the markdown + embedded plate as one artifact):
 
 | Tool | Description |
 |------|-------------|
@@ -880,8 +890,8 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 |-------|------|---------------|------------|--------|
 | `router` | Classifies user intent, selects project | `set_intent` | None | — |
 | `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
-| `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
-| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` (read + write) | `making-mermaid-diagrams`, `making-archimate-diagrams` |
+| `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, submit_design_for_review, list_dir) | `making-mermaid-diagrams` |
+| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, submit_design_for_review, list_dir), `archimate` (read + write) | `making-mermaid-diagrams`, `making-archimate-diagrams` |
 | `builder_planner` | Creates implementation plans, writes builder_plan.md | Default | `coding` | — |
 | `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
 | `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |
@@ -1118,6 +1128,20 @@ All methods reconstruct agent state from the database (LLM call history, tool ca
 **Cooperative pause/cancellation:** The orchestrator checks the session status (via DB poll) before each agent run and after each agent completes. If the status is `paused` or `cancelled`, it stops executing further runs. The agent loop also checks the session status between LLM iterations. This means stopping is cooperative -- it happens at the next check point, not mid-LLM-call. See section 8.9 for the full stop and resume architecture.
 
 **Retry from agent run:** The `POST /api/sessions/{id}/retry-from/{run_id}` endpoint spawns a background task that uses `RevertService` to revert the target run and all subsequent runs, then calls `execute_pending_runs()` to re-execute them. `RevertService` handles git revert (via `revert_to_commit` MCP tool), PR cleanup, and DB record management.
+
+**Background PDF extraction (`attachment_service.py`):**
+
+Scanned-PDF OCR can take minutes, so text extraction runs as a fire-and-forget background task instead of blocking the upload request.
+
+1. **`schedule_extraction(att_id, file_path, content_type)`** -- Called by the upload route after committing the attachment row. Creates an `asyncio.Task` that calls `extract_text()`, writes the result to `attachment.extracted_text` in a fresh DB session, and removes itself from the in-memory registry on completion (success or failure). The upload HTTP response returns immediately.
+
+2. **`_pending_extractions: dict[UUID, asyncio.Task]`** -- In-process registry mapping attachment IDs to their running extraction tasks. Safe because the backend runs a single uvicorn worker, so upload requests and the orchestrator share one event loop. Tasks self-clean on completion via a `finally` block.
+
+3. **`await_extractions(att_ids)`** -- Called by the orchestrator in two places: (a) after linking attachments to a user message (so the first agent sees the text), and (b) inside `build_project_context()` before building session-level attachment context (so agents on retry/resume also see it). Gathers all in-flight tasks for the given IDs and awaits them. Never raises -- failed extractions leave `extracted_text` as `None`. Tolerates unknown IDs, empty lists, and already-done tasks.
+
+4. **Orchestrator integration** -- `build_project_context()` is now `async`. Before building attachment context it calls `await_extractions()` for all session attachments, then re-fetches attachment rows so the `extracted_text` populated by the background task is loaded. The user message and attachment links are committed to the DB *before* awaiting extraction, so the timeline is visible in the UI during a long OCR (enabling the frontend "reading notice"), and the row lock is released so the background extraction commit cannot deadlock.
+
+5. **`text_ready` domain field** -- `Attachment` (in `domain/common.py`) exposes `text_ready: bool`, derived from `bool(extracted_text)` at serialization time in the session repository. No DB column -- purely a computed presentation field consumed by the frontend to toggle the scanned-PDF reading notice.
 
 ### 8.9 Pause and Resume
 
@@ -1644,7 +1668,7 @@ User (Dutch) → Orchestrator → [detect language] → [translate to English] �
 Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
     │
     ├─► HITL question → [translate question + choices to Dutch] → User
-    ├─► make_design   → [translate content] → Dutch file alongside English original
+    ├─► submit_design_for_review   → [translate content] → Dutch file alongside English original
     └─► done (summary) → [translate to Dutch] → Chat timeline
 ```
 

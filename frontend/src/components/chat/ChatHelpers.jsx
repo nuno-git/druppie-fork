@@ -459,7 +459,7 @@ export const extractSurfacedFileWrites = (agentRun) => {
       const toolName = tc.tool_name || ''
       const args = tc.arguments || {}
 
-      if ((toolName.includes('write_file') || toolName === 'make_design' || toolName.endsWith(':make_design')) && !toolName.includes('batch')) {
+      if ((toolName.includes('write_file') || toolName === 'submit_design_for_review' || toolName.endsWith(':submit_design_for_review')) && !toolName.includes('batch')) {
         if (args.path && args.content) {
           files.push({ path: args.path, content: args.content })
         }

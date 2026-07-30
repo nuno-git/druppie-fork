@@ -49,7 +49,7 @@ async def test_cache_miss_compiles_and_stores(tmp_path, monkeypatch):
     assert pdf_bytes == b"FAKE_PDF_BYTES"
     assert "pdf-cache" in storage_path
     mock_repo.create.assert_called_once()
-    db.flush.assert_called_once()
+    db.commit.assert_called_once()
 
 
 @pytest.mark.asyncio

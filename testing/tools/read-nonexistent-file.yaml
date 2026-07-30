@@ -45,7 +45,7 @@ tool-test:
 
     # Write a file then read it — should succeed
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect

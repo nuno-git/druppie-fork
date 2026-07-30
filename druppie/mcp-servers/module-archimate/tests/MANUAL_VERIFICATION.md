@@ -48,7 +48,7 @@ Pre-requisites: stack up via `docker compose --profile dev --profile init up -d`
      (or the primitive `create_element`, `create_relationship`,
      `add_to_view`, `add_connection_to_view`, `save_model` for
      incremental edits). These write tools are ungated — the single
-     approval gate is the `coding:make_design` call on the technical
+     approval gate is the `coding:submit_design_for_review` call on the technical
      design; approve that one as the architect user.
    - The agent writes `docs/technical-design.md` with at least one
      `` ```archimate view-id=… file=docs/architecture.archimate ``` ``

@@ -4,10 +4,10 @@ check:
   tags: [business_analyst, language, translation]
   assert:
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       arguments:
         path: docs/functional-design.md
   judge:
     context: business_analyst
     checks:
-      - "The coding:make_design tool call arguments for docs/functional-design.md must NOT contain a 'translated_content' field or a 'translated_path' field. In an English session, the platform should not inject any translation — only the English original is produced. If either field is present, this check fails."
+      - "The coding:submit_design_for_review tool call arguments for docs/functional-design.md must NOT contain a 'translated_content' field or a 'translated_path' field. In an English session, the platform should not inject any translation — only the English original is produced. If either field is present, this check fails."

@@ -90,7 +90,7 @@ tool-test:
     # Business Analyst — writes the full FD, leaves FD-approval gate PENDING
     # =========================================================================
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       arguments:
         path: docs/functional-design.md
         content: |
@@ -317,7 +317,7 @@ tool-test:
           - { contains: "functional-design.md" }
 
     # The chain ends here.
-    # - The BA does NOT call run_git / done because the FD make_design
+    # - The BA does NOT call run_git / done because the FD submit_design_for_review
     #   approval gate is open. Resolving the gate is the user's job in
     #   the UI; resuming will let the BA finish and the planner schedule
     #   the architect.

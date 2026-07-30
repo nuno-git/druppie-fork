@@ -39,7 +39,7 @@ tool-test:
         completed: true            # checks AGENT status, only on done steps
 
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:                    # resolve approval gate
         status: approved
         by: analyst
@@ -94,7 +94,7 @@ both `result` and `error_message` are checked (combined). Validators:
 
 ### Other step options
 
-- **`approval:`** — resolve approval gates (tools like `make_design` require role approval)
+- **`approval:`** — resolve approval gates (tools like `submit_design_for_review` require role approval)
   - `status: approved` or `status: rejected`
   - `by: architect` — which user approves
   - `reason: "..."` — rejection reason
@@ -206,7 +206,7 @@ check:
     - agent: architect
       completed: true
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
   judge:
     context: architect             # which agent runs the judge sees
     checks:

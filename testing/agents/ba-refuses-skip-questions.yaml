@@ -18,4 +18,4 @@ agent-test:
     context: business_analyst
     checks:
       - "The user repeatedly tried to skip questions or asked the BA to assume everything. The BA must have refused EVERY blanket skip request — it should never have said 'OK I will assume the rest' or proceeded to write the FD without gathering requirements. Check that after each skip attempt, the BA explained why it needs to ask questions and continued with its next specific question."
-      - "The BA must NOT have called coding:make_design with a full functional design after fewer than 3 genuine HITL question exchanges. If the user never cooperated, the BA should have continued trying to elicit rather than giving up and writing an assumption-based FD."
+      - "The BA must NOT have called coding:submit_design_for_review with a full functional design after fewer than 3 genuine HITL question exchanges. If the user never cooperated, the BA should have continued trying to elicit rather than giving up and writing an assumption-based FD."

@@ -75,7 +75,7 @@ tool-test:
     # Business Analyst — writes the full FD, leaves FD-approval gate PENDING
     # =========================================================================
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       arguments:
         path: docs/functional-design.md
         content: |
@@ -283,7 +283,7 @@ tool-test:
           - { contains: "functional-design.md" }
 
     # The chain ends here.
-    # - The BA does NOT call run_git / done because the FD make_design
+    # - The BA does NOT call run_git / done because the FD submit_design_for_review
     #   approval gate is open. Resolving the gate is the user's job in
     #   the UI; resuming will let the BA finish and the planner schedule
     #   the architect.
@@ -291,7 +291,7 @@ tool-test:
   verify:
     # The Gitea repo for the project exists.
     - gitea_repo_exists: true
-    # The FD has NOT been written to Gitea yet because the make_design
+    # The FD has NOT been written to Gitea yet because the submit_design_for_review
     # approval gate is still pending. If the verifier gains a
     # file_not_exists check later, we can be more explicit. For now we
     # rely on the positive check and the manual UI verification above.

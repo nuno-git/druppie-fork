@@ -10,10 +10,10 @@
 ##   3. BA writes and gets FD approved, pushes, done
 ##   4. Planner plans architect
 ##   5. Architect reads the FD
-##   6. Architect's FIRST make_design for technical-research.md is WEAK
+##   6. Architect's FIRST submit_design_for_review for technical-research.md is WEAK
 ##      (just "Use WebSockets" — no analysis, no comparison, no risks)
 ##      → REJECTED with detailed reason
-##   7. Architect's SECOND make_design for technical-research.md is PROPER
+##   7. Architect's SECOND submit_design_for_review for technical-research.md is PROPER
 ##      (compares WebSockets vs SSE vs polling with pros/cons)
 ##      → APPROVED
 ##   8. Architect writes technical-design.md → APPROVED
@@ -71,7 +71,7 @@ tool-test:
     # Business Analyst — FD approved
     # =========================================================================
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
       arguments:
@@ -180,7 +180,7 @@ tool-test:
     # external system analysis, no risk assessment. Just "Use WebSockets".
     # =========================================================================
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       status: failed
       approval:
         status: rejected
@@ -201,7 +201,7 @@ tool-test:
     # external system inventory, trade-off tables, and a recommendation.
     # =========================================================================
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect
@@ -312,7 +312,7 @@ tool-test:
     # Architect — technical design → APPROVED
     # =========================================================================
     - agent: architect
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: approved
         by: architect

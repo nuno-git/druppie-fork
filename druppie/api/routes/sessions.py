@@ -307,7 +307,7 @@ async def _run_retry_background(
                         project_repo=ctx.project_repo,
                         question_repo=ctx.question_repo,
                     )
-                    ctx_build = orch.build_project_context(session_id)
+                    ctx_build = await orch.build_project_context(session_id)
                     if is_continue:
                         orch.execution_repo.update_status(run_id, AgentRunStatus.RUNNING)
                         orch.execution_repo.commit()
@@ -352,7 +352,7 @@ async def _run_retry_background(
 
             parent_run = ctx.execution_repo.get_by_id(parent_run_id)
             parent_agent = Agent(parent_run.agent_id, db=ctx.execution_repo.db)
-            parent_context = ctx.orchestrator.build_project_context(session_id)
+            parent_context = await ctx.orchestrator.build_project_context(session_id)
             parent_result = await parent_agent.continue_run(
                 session_id=session_id,
                 agent_run_id=parent_run_id,

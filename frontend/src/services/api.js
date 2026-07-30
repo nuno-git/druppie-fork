@@ -352,6 +352,29 @@ export const getProjectFileFromWorkspace = (projectId, sessionId, path) =>
 export const getProjectFileChanges = (projectId, path, branch = 'main') =>
   request(`/api/projects/${projectId}/file/changes?path=${encodeURIComponent(path)}&branch=${branch}`)
 
+export const downloadDesignPdf = async (projectId, path) => {
+  await ensureValidToken(30)
+  const token = getToken()
+  const url = `${API_URL}/api/projects/${projectId}/design-pdf?path=${encodeURIComponent(path)}`
+  const response = await fetch(url, {
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+  })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'PDF generation failed' }))
+    throw new Error(error.message || error.detail || `PDF request failed: ${response.status}`)
+  }
+  const blob = await response.blob()
+  const stem = path.split('/').pop()?.replace('.md', '') || 'document'
+  const downloadUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = downloadUrl
+  a.download = `${stem}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000)
+}
+
 // ============ Deployments ============
 export const getDeployments = (projectId = null, allContainers = false) => {
   const params = new URLSearchParams()

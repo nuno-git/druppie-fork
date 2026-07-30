@@ -136,10 +136,10 @@ class TestValidatePreconditions:
         tool = DoneTool()
         defn = self._defn(completion_preconditions=[{
             "summary_contains": "DESIGN_APPROVED",
-            "required_tools": [{"tool_name": "make_design", "min_calls": 1}],
-            "error_message": "Must call make_design",
+            "required_tools": [{"tool_name": "submit_design_for_review", "min_calls": 1}],
+            "error_message": "Must call submit_design_for_review",
         }])
-        history = {"make_design": 1}
+        history = {"submit_design_for_review": 1}
         valid, err = tool.validate({"summary": "DESIGN_APPROVED done"}, defn, history)
         assert valid is True
 
@@ -147,8 +147,8 @@ class TestValidatePreconditions:
         tool = DoneTool()
         defn = self._defn(completion_preconditions=[{
             "summary_contains": "DESIGN_APPROVED",
-            "required_tools": [{"tool_name": "make_design", "min_calls": 1}],
-            "error_message": "Must call make_design",
+            "required_tools": [{"tool_name": "submit_design_for_review", "min_calls": 1}],
+            "error_message": "Must call submit_design_for_review",
         }])
         valid, err = tool.validate({"summary": "Something else"}, defn, {})
         assert valid is True
@@ -158,8 +158,8 @@ class TestValidatePreconditions:
         defn = self._defn(completion_preconditions=[{
             "summary_contains": "DESIGN_APPROVED",
             "unless_summary_contains": "HARD",
-            "required_tools": [{"tool_name": "make_design", "min_calls": 1}],
-            "error_message": "Must call make_design",
+            "required_tools": [{"tool_name": "submit_design_for_review", "min_calls": 1}],
+            "error_message": "Must call submit_design_for_review",
         }])
         valid, err = tool.validate({"summary": "DESIGN_APPROVED but HARD exception"}, defn, {})
         assert valid is True

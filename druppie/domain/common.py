@@ -108,6 +108,9 @@ class Attachment(BaseModel):
     content_type: str
     file_size: int
     created_at: datetime
+    # Derived from extracted_text at serialization time (no DB column): False
+    # while a scanned PDF is still being read, True once its text is written.
+    text_ready: bool = False
 
 
 class TokenUsage(BaseModel):

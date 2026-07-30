@@ -351,7 +351,7 @@ class ToolDefinition(BaseModel):
         # Strip null values - LLMs send null instead of omitting optional params
         return {k: v for k, v in normalized.items() if v is not None}
 
-    def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, dict | None, dict | None]:
+    def validate_arguments(self, arguments: dict | None, schema_override: dict | None = None) -> tuple[bool, str | None, dict | None, dict | None]:
         """Validate arguments against JSON schema.
 
         First attempts validation with original arguments. If that fails,
@@ -360,6 +360,8 @@ class ToolDefinition(BaseModel):
 
         Args:
             arguments: Raw arguments dict from LLM
+            schema_override: Optional schema to validate against instead of
+                self.json_schema (used to strip hidden injected params)
 
         Returns:
             Tuple of (is_valid, error_message, validated_args, normalized_args)
@@ -372,8 +374,8 @@ class ToolDefinition(BaseModel):
         if arguments is None:
             arguments = {}
 
-        if not self.json_schema:
-            # No schema to validate against - accept everything
+        schema = schema_override or self.json_schema
+        if not schema:
             return True, None, arguments, None
 
         # Strip None values — strict mode schema tells LLM all fields are required
@@ -383,7 +385,7 @@ class ToolDefinition(BaseModel):
 
         # First try with original arguments
         try:
-            jsonschema.validate(instance=arguments, schema=self.json_schema)
+            jsonschema.validate(instance=arguments, schema=schema)
             return True, None, arguments, None
         except jsonschema.ValidationError:
             pass  # Try normalization fallback
@@ -391,7 +393,7 @@ class ToolDefinition(BaseModel):
         # Retry with normalized arguments (handles "null" strings, etc.)
         normalized = self._normalize_llm_arguments(arguments)
         try:
-            jsonschema.validate(instance=normalized, schema=self.json_schema)
+            jsonschema.validate(instance=normalized, schema=schema)
             return True, None, normalized, normalized
         except jsonschema.ValidationError as e:
             return False, str(e.message), None, None

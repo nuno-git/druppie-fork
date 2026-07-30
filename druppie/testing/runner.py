@@ -608,6 +608,7 @@ class TestRunner:
                     real_agents=test.agents, hitl_profile=hitl_profile,
                     test_context=test.message,
                     session_id=continue_session_id,
+                    timeout=test.timeout,
                 )
             except Exception as e:
                 from druppie.core.translation import TranslationNotAvailableError
@@ -797,7 +798,7 @@ class TestRunner:
 
     def _execute_agents(self, message: str, user_id: UUID, real_agents: list[str],
                         hitl_profile: HITLProfile | None, test_context: str = "",
-                        session_id: UUID | None = None) -> UUID:
+                        session_id: UUID | None = None, timeout: int = 600) -> UUID:
         hitl_sim = HITLSimulator(hitl_profile, test_context=test_context) if hitl_profile else None
 
         loop = None
@@ -819,6 +820,7 @@ class TestRunner:
                     bounded = BoundedOrchestrator(
                         db=thread_db, user_id=user_id,
                         real_agents=real_agents, hitl_simulator=hitl_sim,
+                        timeout=timeout,
                     )
                     result = asyncio.run(bounded.run(message, session_id=session_id))
                     thread_db.commit()
@@ -839,6 +841,7 @@ class TestRunner:
             bounded = BoundedOrchestrator(
                 db=self._db, user_id=user_id,
                 real_agents=real_agents, hitl_simulator=hitl_sim,
+                timeout=timeout,
             )
             return asyncio.run(bounded.run(message, session_id=session_id))
 

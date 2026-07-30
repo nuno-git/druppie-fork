@@ -404,8 +404,8 @@ async def upload_attachment(
 
     storage_path = f"uploads/{attachment.id}/{safe_name}"
     attachment.storage_path = storage_path
-    attachment.extracted_text = await attachment_service.extract_text(file_path, content_type)
     attachment_repo.db.commit()
+    attachment_service.schedule_extraction(attachment.id, file_path, content_type)
 
     return {
         "id": str(attachment.id),

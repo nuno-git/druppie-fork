@@ -65,9 +65,7 @@
   let heading-font = ("Neusa Next Pro", "Lato", "Libertinus Serif")
   let show-watermark = include_watermark and status != "FINAL"
   let logo-path = "assets/Logo-hoogheemraadschap-rijnland.png"
-  let breakable-tables = document_type in (
-    "technical_design", "technical_research", "core_documentation"
-  )
+  let breakable-tables = true
 
   // ---- Font & text ---------------------------------------------------------
   set text(

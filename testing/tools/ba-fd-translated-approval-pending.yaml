@@ -2,7 +2,7 @@
 ## approval gate PENDING.
 ##
 ## Tests the single-file approval card for translated sessions (PR #272).
-## The make_design call includes both the English original (path/content)
+## The submit_design_for_review call includes both the English original (path/content)
 ## and the Dutch translation (translated_path/translated_content), exactly
 ## as production does for non-English sessions.
 ##
@@ -17,7 +17,7 @@
 ##      not the English original alongside it.
 ##   6. Approve or reject to verify the flow still works end-to-end.
 ##
-## Chain: router → planner → BA calls coding:make_design → PENDING.
+## Chain: router → planner → BA calls coding:submit_design_for_review → PENDING.
 ## Deterministic (no LLM).
 
 tool-test:
@@ -62,7 +62,7 @@ tool-test:
 
     # --- BA writes the FD with translated fields — approval gate PENDING ---
     - agent: business_analyst
-      tool: coding:make_design
+      tool: coding:submit_design_for_review
       approval:
         status: pending
       arguments:

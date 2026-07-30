@@ -309,12 +309,13 @@ async def run_tests(
                     finally:
                         test_db.close()
 
+                per_test_timeout = getattr(test_def, 'timeout', None) or test_timeout
                 with ThreadPoolExecutor(max_workers=1) as inner_pool:
                     inner_future = inner_pool.submit(_execute)
                     try:
-                        return inner_future.result(timeout=test_timeout)
+                        return inner_future.result(timeout=per_test_timeout)
                     except FuturesTimeoutError:
-                        logger.error("test_timed_out", test=name, timeout=test_timeout)
+                        logger.error("test_timed_out", test=name, timeout=per_test_timeout)
                         from druppie.testing.runner import TestRunResult
                         return [TestRunResult(
                             test_name=name, test_user="timeout", test_type="tool",

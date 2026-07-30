@@ -1393,6 +1393,17 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
   const isStopping = data?.status === 'paused' && hasRunningAgentRun && hasActuallyRunningToolCall
 
+  // Notice shows only while processing: a PDF whose text_ready (derived from
+  // backend extracted_text) is still false. The status guard prevents the
+  // note from lingering on completed/failed sessions.
+  const hasPendingScannedPdf = data?.status !== 'completed' && data?.status !== 'failed'
+    && data?.timeline?.some(
+      (entry) => entry.type === 'message'
+        && (entry.message?.attachments || []).some(
+          (att) => att.content_type === 'application/pdf' && att.text_ready === false
+        )
+    )
+
   // When session has pending approvals, keep the tasks/badge cache fresh
   useEffect(() => {
     const status = data?.status
@@ -1986,6 +1997,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin" />
               </div>
             </>
+          )}
+          {/* Scanned PDF notice — shown while processing and a PDF still
+              has no extracted text; auto-hides once text_ready flips. */}
+          {hasPendingScannedPdf && (
+            <div className="pl-8 flex items-center gap-1.5 py-1 text-xs text-gray-500">
+              <Loader2 className="w-3 h-3 animate-spin text-gray-400" />
+              <span>This is a scanned PDF — reading it may take a few minutes.</span>
+            </div>
           )}
           {/* Trailing thinking / sandbox-waiting indicator */}
           {(() => {

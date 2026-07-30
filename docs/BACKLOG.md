@@ -62,7 +62,8 @@ Last updated: 2026-07-15
 - Sandbox — Investigate Rootless Docker (dockerd-rootless) for E2E Testing
 - ~~Document Formatter — Agent Pipeline Integration (Phase 2)~~ ✅ DONE
 - ~~Document Formatter — Mermaid/ArchiMate Rendering Inside PDFs~~ ✅ DONE (Mermaid via @preview/mmdr:0.2.2; ArchiMate via Python SVG export)
-- Document Formatter — Database Persistence & Download API (render cache exists; full document domain model + REST endpoints still needed)
+- Document Formatter — Markdown-to-Typst Conversion & Frontend Download ✅ DONE (`markdown_to_typst()`, `make_design_pdf` tool, design-pdf API endpoint, frontend download routing)
+- Document Formatter — Full Document Domain Model & REST API (design-pdf endpoint exists; full `DocumentSummary`/`DocumentDetail` domain models still needed)
 - ~~Document Formatter — Replace Lato with Neusa Next Std (if licensed)~~ ✅ DONE (Neusa Next Pro fonts added alongside Lato)
 - FD Escalation via Expert HITL
 
@@ -309,7 +310,7 @@ Last updated: 2026-07-15
 
 - **Location:** `druppie/execution/tool_executor.py` (lines 332-367, 468-487)
 - **GitHub Issue:** [#79](https://github.com/nuno-git/druppie-fork/issues/79)
-- **Current state:** The tool executor has a hardcoded `if tool_call.tool_name == "make_design"` check that runs Mermaid validation before the approval gate. The mermaid validator is imported via a fragile `importlib.util.spec_from_file_location` hack because it lives in `mcp-servers/coding/` (hyphenated directory, not a proper Python package).
+- **Current state:** The tool executor has a hardcoded `if tool_call.tool_name == "submit_design_for_review"` check that runs Mermaid validation before the approval gate. The mermaid validator is imported via a fragile `importlib.util.spec_from_file_location` hack because it lives in `mcp-servers/coding/` (hyphenated directory, not a proper Python package).
 - **Problem:** Adding content validation for any other tool requires adding more `if` statements to the tool executor and more fragile imports.
 - **Desired improvement:** Add an optional `pre_validate(self) -> str | None` method to Pydantic params models. The tool executor calls it generically after schema validation succeeds. This way adding a new validator = adding a method to a params model, with zero changes to `tool_executor.py`. The mermaid validator moves to `druppie/tools/validators/mermaid.py` (properly importable). See issue #79 for the full plan.
 
@@ -487,7 +488,7 @@ Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incr
 ### Approval-Gate Relaxation — DONE in v1
 
 - ~~All ArchiMate write tools approval-gated~~ → archimate_* writes are
-  ungated; the single review point is `coding:make_design` on
+  ungated; the single review point is `coding:submit_design_for_review` on
   `docs/technical-design.md` (architect-gated via the architect agent's
   approval_overrides). The reviewer sees the markdown + the embedded
   plate as one artifact and approves the TD as a whole.
@@ -611,28 +612,35 @@ Security review findings from the Entra ID broker implementation. These are know
 
 ### Document Formatter (PDF Generation)
 
-**Status:** Phase 2 is live. Agents write native Typst (`.typ`) directly; the old Markdown→cmarker pipeline is gone.
+**Status:** Phase 3 is live. Two authoring paths: native Typst (`.typ`) and markdown (`.md` via `markdown_to_typst()` converter).
 
 **Location:**
-- `druppie/services/document_formatter_service.py` — Typst CLI wrapper (`compile_typ`, `verify_typ`)
-- `druppie/services/pdf_render_service.py` — Render cache (`PdfRenderService.get_or_create_pdf()`)
-- `druppie/agents/builtin_tools.py` — `make_pdf_document`, `verify_typst` builtin tools
+- `druppie/services/document_formatter_service.py` — Typst CLI wrapper (`compile_typ`, `verify_typ`) + `markdown_to_typst()` converter + `wrap_with_rijnland_template()`
+- `druppie/services/pdf_render_service.py` — Render cache (`PdfRenderService.get_or_create_pdf()`, `PdfRenderService.render_markdown_pdf()`)
+- `druppie/agents/builtin_tools.py` — `make_pdf_document`, `make_design_pdf`, `verify_typst` builtin tools
 - `druppie/agents/definitions/documenter.yaml` — Agent instructions for Typst authoring + PDF export
 - `druppie/templates/documents/rijnland.typ` — Corporate identity template
+- `druppie/api/routes/projects.py` — `GET /api/projects/{id}/design-pdf` endpoint
+- `frontend/src/utils/downloadDesign.js` — Frontend design doc PDF routing
+- `frontend/src/services/api.js` — `downloadDesignPdf()` API client function
 - Tests: `test_document_formatter.py` (16 tests), `test_pdf_render_service.py` (4 tests), `test_builtin_tools.py` (2 tests)
 
 **Current state:**
-- Agents write native `.typ` files using the Rijnland template (`#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`).
-- `make_pdf_document` uses `PdfRenderService`, which reads source from Gitea (not local workspace), compiles via Typst, and caches renders keyed by Git blob SHA in `pdf_renders` table + `/app/workspace/uploads/pdf-cache/`.
+- Agents write native `.typ` files OR standard markdown. Markdown is converted to Typst automatically.
+- `make_pdf_document` handles native Typst; `make_design_pdf` handles markdown via `render_markdown_pdf()`.
+- `markdown_to_typst()` converts headings, bold/italic, tables (equal-width columns, escaped special chars, breakable), mermaid (via `@preview/mmdr:0.2.2`), archimate SVG references, code blocks, links, images, blockquotes, horizontal rules.
+- Frontend routes design doc downloads through `GET /api/projects/{id}/design-pdf`, bypassing browser-side rendering.
+- Tables are breakable across pages (all document types).
 - Mermaid diagrams render via `@preview/mmdr:0.2.2` Typst package (no Chromium/Node.js).
 - ArchiMate diagrams export to SVG via pure-Python `svg_export.py` in `module-archimate/v1/` on `save_model`; embedded in Typst via `#image("docs/diagrams/...")`.
 - Font stack: Lato (Google Fonts, fallback) + Neusa Next Pro (brand fonts, installed in `assets/fonts/`).
 
-**Remaining work:**
-- Full document domain model (`DocumentSummary`/`DocumentDetail`) and REST endpoints (`GET /api/projects/{id}/documents`, etc.) for direct user-initiated PDF generation without an agent.
-- Frontend "Download PDF" button in chat timeline or project page.
+**Known limitation:** Mermaid ER diagrams rendered by mmdr have tight element spacing (e.g. overlapping labels). The mmdr WASM plugin's layout engine does not expose configuration for ER diagram spacing; `%%{init: ...}%%` directives and layout parameters have no effect.
 
-**Priority:** Medium — agent-driven PDF generation works; REST API purely adds convenience.
+**Remaining work:**
+- Full document domain model (`DocumentSummary`/`DocumentDetail`) and REST endpoints (`GET /api/projects/{id}/documents`, etc.) for listing all project documents.
+
+**Priority:** Medium — both authoring paths and frontend download work. REST API and document listing still needed.
 
 #### HHSK house style — follow-ups
 
@@ -646,6 +654,7 @@ The HHSK corporate identity (`druppie/templates/documents/hhsk.typ`) is live alo
 - **Ruda has no italic** — emphasis maps to a heavier weight (SemiBold/Bold) rather than a synthesised oblique, which would be off-brand.
 
 **Unrelated baseline note:** roughly ~50 test-suite failures exist at baseline, independent of the HHSK work. Recorded here so the HHSK feature is not blamed for pre-existing red.
+
 ---
 
 ## Coding Agent Quality (salvaged from sprint docs)
