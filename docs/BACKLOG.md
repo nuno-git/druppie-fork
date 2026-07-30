@@ -65,6 +65,7 @@ Last updated: 2026-07-15
 - Document Formatter — Markdown-to-Typst Conversion & Frontend Download ✅ DONE (`markdown_to_typst()`, `make_design_pdf` tool, design-pdf API endpoint, frontend download routing)
 - Document Formatter — Full Document Domain Model & REST API (design-pdf endpoint exists; full `DocumentSummary`/`DocumentDetail` domain models still needed)
 - ~~Document Formatter — Replace Lato with Neusa Next Std (if licensed)~~ ✅ DONE (Neusa Next Pro fonts added alongside Lato)
+- FD Escalation via Expert HITL
 
 ---
 
@@ -447,6 +448,14 @@ Last updated: 2026-07-15
 - **Current state:** After merging the dataset-selection strategy and the charting guidance, the `data_analyst` system prompt is long, and the agent runs on `llm_profile: cheap` (small context). Long charting sessions can still approach context limits.
 - **Desired improvement:** trim/split the prompt or raise the agent's `llm_profile`; add conversation-history trimming for long sessions (overlaps with the existing "No Context Window Management" item).
 - **Priority:** Medium — reliability for extended sessions.
+
+### FD Escalation via Expert HITL
+
+**Location:** `druppie/agents/definitions/general/planner.yaml`, `druppie/execution/orchestrator.py`
+**Current state:** Planner routes DESIGN_FEEDBACK back to BA indefinitely with no escalation path.
+**Desired improvement:** After 3 failed design review cycles, escalate to human expert (BA or architect) via `ask_expert_multiple_choice_question`. Experts can iterate, override, escalate further, or terminate the session.
+**Priority:** High — prevents infinite loops in design review.
+**Branch:** `feature/fd-escalation-lite`
 
 ---
 

@@ -481,6 +481,23 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
+    "terminate_session": {
+        "type": "function",
+        "function": {
+            "name": "terminate_session",
+            "description": "Terminate the current session permanently. Use this when the session cannot make further progress — for example, after repeated failed design reviews where the expert has chosen to end the process. This is irreversible.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the session is being terminated. This will be recorded as the final status message.",
+                    },
+                },
+                "required": ["reason"],
+            },
+        },
+    },
 }
 
 
@@ -1290,6 +1307,33 @@ async def done(
     if next_agent:
         result["next_agent"] = next_agent
     return result
+
+
+# =============================================================================
+# SESSION TERMINATION TOOL IMPLEMENTATION
+# =============================================================================
+
+async def terminate_session(
+    reason: str,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Terminate the session permanently — no further agent runs will execute."""
+    from druppie.domain.common import SessionStatus
+    from druppie.repositories import SessionRepository
+
+    db = execution_repo.db
+    session_repo = SessionRepository(db)
+
+    session_repo.update_status(session_id, SessionStatus.TERMINATED, error_message=reason)
+
+    execution_repo.cancel_pending_runs(session_id)
+
+    db.flush()
+
+    logger.info("session_terminated", session_id=str(session_id), reason=reason[:200])
+    return {"status": "terminated", "reason": reason}
 
 
 # =============================================================================
@@ -2159,6 +2203,13 @@ async def execute_builtin(
             session_id=session_id,
             execution_repo=execution_repo,
         )
+    elif tool_name == "terminate_session":
+        return await terminate_session(
+            reason=args.get("reason", "No reason provided"),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
     else:
         return {
             "success": False,
@@ -2184,6 +2235,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "execute_coding_task",
         "test_report",
         "read_attachment",
+        "terminate_session",
     )
 
 

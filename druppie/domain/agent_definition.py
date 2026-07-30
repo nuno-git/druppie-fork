@@ -134,6 +134,8 @@ class AgentDefinition(BaseModel):
     #     clear error — there is no implicit "allow all roles" fallback.
     experts: list[str] = Field(default_factory=list)
 
+    escalation_threshold: int | None = None
+
     # Completion preconditions: rules that must be satisfied before done() succeeds
     # If done()'s summary matches a rule's summary_contains, the required tools
     # must have been called (with status=completed) during this agent run.

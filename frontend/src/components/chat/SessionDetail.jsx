@@ -315,10 +315,17 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
 // --- Timeline HITL Question ---
 
-const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles, attachments = [], onAttachmentsConsumed, onAnswerSubmitted }) => {
+const formatRole = (role) =>
+  (role || 'unknown')
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+
+const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles, attachments = [], onAttachmentsConsumed, onAnswerSubmitted, escalationContextFiles = [] }) => {
   const queryClient = useQueryClient()
   const toast = useToast()
   const [localAnswer, setLocalAnswer] = useState(null)
+  const [showFilePreview, setShowFilePreview] = useState(false)
 
   const answerMut = useMutation({
     mutationFn: ({ questionId, answer, selectedChoices = null, attachmentIds = [] }) =>
@@ -369,7 +376,6 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
   }
 
   const allowOther = tc.tool_name === 'hitl_ask_multiple_choice_question'
-    || tc.tool_name === 'ask_expert_multiple_choice_question'
 
   // If the LLM put the question text in context instead of question, promote it
   const hasQuestion = !!tc.arguments?.question
@@ -387,23 +393,71 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
   // question is in fact still pending — we just want the UI to not
   // expose answer controls.
   const showAsReadOnly = !canAnswer && !isAnswered
+  const isProcessing = !!localAnswer && !isAnswered
 
   return (
     <>
-      {isExpertTool && !isAnswered && (
-        <div className="ml-8 mb-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-[11px] font-medium text-purple-700">
-          Expert question · {expertRole || 'unknown role'}
+      {isExpertTool ? (
+        <div className={`ml-8 mt-2 rounded-lg border-2 overflow-hidden ${isAnswered ? 'border-gray-200 bg-gray-50/50' : isProcessing ? 'border-blue-200 bg-blue-50/50' : 'border-amber-300 bg-amber-50/50'}`}>
+          <div className={`px-4 py-2.5 border-b flex items-center gap-2 ${isAnswered ? 'bg-gray-100 border-gray-200' : isProcessing ? 'bg-blue-100 border-blue-200' : 'bg-amber-100 border-amber-200'}`}>
+            <span className={`text-lg ${isAnswered ? 'text-gray-500' : isProcessing ? 'text-blue-600' : 'text-amber-700'}`}>{isAnswered ? '✅' : isProcessing ? '⏳' : '⚠️'}</span>
+            <div>
+              <div className={`text-sm font-semibold ${isAnswered ? 'text-gray-700' : isProcessing ? 'text-blue-800' : 'text-amber-900'}`}>Design Review Escalation</div>
+              <div className={`text-xs ${isAnswered ? 'text-gray-500' : isProcessing ? 'text-blue-600' : 'text-amber-700'}`}>
+                {isAnswered
+                  ? `Answered by ${tc.answered_by_username || 'expert'}`
+                  : isProcessing
+                    ? 'Processing your decision...'
+                    : `Awaiting decision from ${formatRole(expertRole)}`}
+              </div>
+            </div>
+          </div>
+          <div className="p-3">
+            {escalationContextFiles.length > 0 && (
+              <div className="mb-3">
+                <div className="text-xs font-medium text-gray-500 mb-1.5">Documents under review</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {escalationContextFiles.map((f, fi) => (
+                    <button
+                      key={fi}
+                      onClick={() => setShowFilePreview(true)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300 transition-colors text-gray-700"
+                    >
+                      <FileCode className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                      <span className="truncate max-w-[200px]">{f.path.split('/').pop()}</span>
+                    </button>
+                  ))}
+                </div>
+                {showFilePreview && (
+                  <FilePreviewModal files={escalationContextFiles} onClose={() => setShowFilePreview(false)} />
+                )}
+              </div>
+            )}
+            <HITLQuestionMessage
+              hideAgentHeader
+              allowComment
+              singleSelect
+              question={questionData}
+              onSubmitAnswer={({ indices, answerText }) => {
+                setLocalAnswer(answerText)
+                answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices, attachmentIds: attachments.map((a) => a.id) })
+              }}
+              isAnswering={answerMut.isPending}
+              answered={isAnswered || !!localAnswer || showAsReadOnly}
+            />
+          </div>
         </div>
+      ) : (
+        <HITLQuestionMessage
+          question={questionData}
+          onSubmitAnswer={({ indices, answerText }) => {
+            setLocalAnswer(answerText)
+            answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices, attachmentIds: attachments.map((a) => a.id) })
+          }}
+          isAnswering={answerMut.isPending}
+          answered={isAnswered || !!localAnswer || showAsReadOnly}
+        />
       )}
-      <HITLQuestionMessage
-        question={questionData}
-        onSubmitAnswer={({ indices, answerText }) => {
-          setLocalAnswer(answerText)
-          answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices, attachmentIds: attachments.map((a) => a.id) })
-        }}
-        isAnswering={answerMut.isPending}
-        answered={isAnswered || showAsReadOnly}
-      />
       {/* Show download chips for any attachments linked to this HITL question */}
       {tc.attachments?.length > 0 && (
         <div className="ml-8 mt-2 flex flex-wrap gap-1.5">
@@ -494,6 +548,7 @@ const STATUS_COLORS = {
   paused_tool: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   paused_sandbox: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   paused_crashed: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
+  terminated: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
 }
 
 const StatusBadge = ({ status }) => {
@@ -780,10 +835,15 @@ const SubagentRunCard = ({ subagentRun, depth = 0, sessionId, sessionUserId, isO
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, isOwner, isAdmin, userRoles, surfacedFiles, attachments, onAttachmentsConsumed, onAnswerSubmitted, language }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, isOwner, isAdmin, userRoles, surfacedFiles, attachments, onAttachmentsConsumed, onAnswerSubmitted, language, escalationContextFiles = [] }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
-  const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
+  const hasEscalationQuestion = run.llm_calls?.some(llm =>
+    llm.tool_calls?.some(tc =>
+      tc.tool_name === 'ask_expert_multiple_choice_question' && tc.question_id
+    )
+  )
+  const showAgentTrace = (!hasFollowingMessage && run.status !== 'running') || hasEscalationQuestion
 
   const fallbackCall = !run._hideFallback && run.llm_calls?.find(llm => llm.fallback_used)
   const hasFailed = run.status === 'failed' && run.error_message
@@ -839,7 +899,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
         if (item.type === 'question') {
           return (
             <div key={i} className="mt-3">
-              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} attachments={attachments} onAttachmentsConsumed={onAttachmentsConsumed} onAnswerSubmitted={onAnswerSubmitted} />
+              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} attachments={attachments} onAttachmentsConsumed={onAttachmentsConsumed} onAnswerSubmitted={onAnswerSubmitted} escalationContextFiles={escalationContextFiles} />
 
             </div>
           )
@@ -1005,7 +1065,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
 // AgentRunStatus values that indicate the agent has started processing (not pending)
-const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_user', 'paused_entra_auth', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'terminated', 'paused_hitl', 'paused_tool', 'paused_user', 'paused_entra_auth', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
 
 const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)
@@ -1589,6 +1649,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
+        terminated: 'bg-red-500',
       }[data.status] || 'bg-gray-400'
 
   const projectRepo = data?.project
@@ -1822,12 +1883,20 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               )
             }
 
+            const hasAnyEscalation = displayTimeline.some(entry =>
+              entry.type === 'agent_run' && entry.agent_run?.llm_calls?.some(llm =>
+                llm.tool_calls?.some(tc =>
+                  tc.tool_name === 'ask_expert_multiple_choice_question' && tc.question_id
+                )
+              )
+            )
+
             const fallbackSeen = new Set()
             return displayTimeline.map((entry, i) => {
               // Messages always render
               if (entry.type === 'message' && entry.message) {
                 return (
-                  <div key={i}>
+                  <div key={entry.message.id || `msg-${i}`}>
                     <MessageItem
                       message={entry.message}
                       agentRun={messageRunMap.get(i)}
@@ -1845,7 +1914,35 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
                 const hasFollowingMessage = runsWithMessages.has(i)
                 const orderedItems = extractOrderedItems(entry.agent_run, hasFollowingMessage)
-                const surfacedFiles = extractSurfacedFileWrites(entry.agent_run)
+
+                // Check if THIS agent run has an escalation question
+                const hasEscalation = entry.agent_run.llm_calls?.some(llm =>
+                  llm.tool_calls?.some(tc =>
+                    tc.tool_name === 'ask_expert_multiple_choice_question' && tc.question_id
+                  )
+                )
+
+                // Suppress standalone file cards for non-escalation runs when an escalation exists,
+                // because those files are already shown inside the escalation card's "Documents under review"
+                const surfacedFiles = (hasAnyEscalation && !hasEscalation)
+                  ? []
+                  : extractSurfacedFileWrites(entry.agent_run)
+
+                // Collect surfaced files from preceding agent runs for escalation context
+                let escalationContextFiles = []
+                if (hasEscalation) {
+                  const seen = new Map()
+                  for (let j = 0; j < displayTimeline.length; j++) {
+                    if (j === i) continue
+                    const prev = displayTimeline[j]
+                    if (prev?.type === 'agent_run' && prev.agent_run) {
+                      const files = extractSurfacedFileWrites(prev.agent_run)
+                      files.forEach(f => seen.set(f.path, f))
+                    }
+                  }
+                  escalationContextFiles = Array.from(seen.values())
+                }
+
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
 
@@ -1858,7 +1955,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                   return null
                 }
                 return (
-                  <div key={i}>
+                  <div key={entry.agent_run.id || `run-${i}`}>
                     <AgentRunItem
                       run={showFallback ? entry.agent_run : { ...entry.agent_run, _hideFallback: true }}
                       timelineIndex={i}
@@ -1876,6 +1973,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                         pendingSetAtLength.current = displayTimeline?.length || 0
                       }}
                       language={data?.language}
+                      escalationContextFiles={escalationContextFiles}
                     />
                     {renderAnnotation(i)}
                   </div>

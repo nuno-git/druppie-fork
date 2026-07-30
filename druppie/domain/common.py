@@ -22,6 +22,7 @@ class SessionStatus(str, Enum):
     PAUSED_CRASHED = "paused_crashed"    # System crashed during execution
     COMPLETED = "completed"
     FAILED = "failed"
+    TERMINATED = "terminated"
 
 
 class AgentRunStatus(str, Enum):

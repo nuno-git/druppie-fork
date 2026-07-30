@@ -1086,6 +1086,8 @@ extra_builtin_tools:
 experts:
   - architect
 
+escalation_threshold: 3
+
 # Restrict sandbox usage to exploration only — the architect must use
 # coding_submit_design_for_review (which has an approval gate) to write docs/technical-design.md.
 # Without this, the LLM can bypass approval by using execute_coding_task

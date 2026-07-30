@@ -1,0 +1,309 @@
+## Setup: 3 architect DESIGN_FEEDBACK rejection cycles on FD
+##
+## Chain: router → planner → BA (writes FD) → planner → architect (DESIGN_FEEDBACK #1)
+##        → planner → BA (revision #1) → planner → architect (DESIGN_FEEDBACK #2)
+##        → planner → BA (revision #2) → planner → architect (DESIGN_FEEDBACK #3)
+##
+## Ends with session paused after the 3rd DESIGN_FEEDBACK. The planner
+## is left pending (created by the last make_plan before the 3rd architect
+## run). When the user retries from the planner in the UI, the planner
+## should detect 3 consecutive rejections and trigger the escalation path.
+
+tool-test:
+  name: setup-fd-escalation
+  description: "3 architect DESIGN_FEEDBACK rejections on FD, paused with pending planner for escalation"
+  tags: [setup, escalation]
+  session_status: paused_hitl
+
+  chain:
+    # =========================================================================
+    # Router
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: water-management-portal
+        description: "A water management portal for monitoring water levels, managing permits, and generating compliance reports"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for water-management-portal"
+
+    # =========================================================================
+    # Planner (initial) → plan BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for water management portal"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
+
+    # =========================================================================
+    # Business Analyst (creates initial FD)
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      mock: true
+      mock_result: "Created docs/functional-design.md (water management portal FD with FR-01..FR-05, NFR-01..NFR-03)"
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Water Management Portal
+
+          ## 1. Functionele Vereisten
+          - FR-01: Dashboard met real-time waterstanden
+          - FR-02: Vergunningbeheer met status tracking
+          - FR-03: Notificaties bij overschrijding peilgrenzen
+          - FR-04: Compliance rapportage generatie
+          - FR-05: Integratie met externe meetstations
+
+          ## 2. Niet-Functionele Vereisten
+          - NFR-01: Beschikbaarheid 99.5% tijdens kantooruren
+          - NFR-02: Response tijd < 2 seconden voor dashboard
+          - NFR-03: Ondersteuning voor 50 gelijktijdige gebruikers
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Functional design created for water management portal."
+
+    # =========================================================================
+    # Planner (after BA) → plan architect review
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design for water management portal and provide feedback"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved design, planned architect to review FD"
+
+    # =========================================================================
+    # Architect — DESIGN_FEEDBACK #1
+    # =========================================================================
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: |
+          Agent architect: DESIGN_FEEDBACK
+          Items: [1] Section: NFR-02 Performance, Issue: Unclear, Description: Response time requirements not specified for batch operations. Suggestion: Add latency targets for PDF generation and report endpoints.
+          [2] Section: FR-03 Notifications, Issue: Missing, Description: No specification for notification delivery mechanism (email, in-app, push).
+
+    # =========================================================================
+    # Planner (sees DESIGN_FEEDBACK #1) → plan BA revision
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Address architect feedback on NFR-02 (batch operation latency targets) and FR-03 (notification delivery mechanism). Revise the functional design accordingly."
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes revision"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Architect gave DESIGN_FEEDBACK on NFR-02 and FR-03 — planned business_analyst to revise the FD"
+
+    # =========================================================================
+    # Business Analyst (revision #1)
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      mock: true
+      mock_result: "Updated docs/functional-design.md — added batch operation latency targets to NFR-02 and notification delivery specification to FR-03"
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Water Management Portal (rev 1)
+
+          ## 1. Functionele Vereisten
+          - FR-01: Dashboard met real-time waterstanden
+          - FR-02: Vergunningbeheer met status tracking
+          - FR-03: Notificaties bij overschrijding peilgrenzen via email en in-app push
+          - FR-04: Compliance rapportage generatie (PDF)
+          - FR-05: Integratie met externe meetstations
+
+          ## 2. Niet-Functionele Vereisten
+          - NFR-01: Beschikbaarheid 99.5% tijdens kantooruren
+          - NFR-02: Response tijd < 2s dashboard, < 10s PDF generatie, < 5s rapportage
+          - NFR-03: Ondersteuning voor 50 gelijktijdige gebruikers
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Revised functional design addressing architect feedback on NFR-02 and FR-03."
+
+    # =========================================================================
+    # Planner (after revision #1) → plan architect re-review
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Re-review the revised functional design — verify NFR-02 batch latency targets and FR-03 notification specification are adequate"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA revised FD addressing NFR-02 and FR-03, planned architect to re-review"
+
+    # =========================================================================
+    # Architect — DESIGN_FEEDBACK #2
+    # =========================================================================
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: |
+          Agent architect: DESIGN_FEEDBACK
+          Items: [1] Section: NFR-02 Performance, Issue: Unclear, Description: Latency targets added but no load testing strategy defined. Suggestion: Specify expected concurrent users and acceptable degradation thresholds.
+          [2] Section: FR-05 Integration, Issue: Missing, Description: External API failure handling not specified.
+
+    # =========================================================================
+    # Planner (sees DESIGN_FEEDBACK #2) → plan BA revision
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Address architect feedback on NFR-02 (load testing strategy and degradation thresholds) and FR-05 (external API failure handling). Revise the functional design."
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes revision"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Architect gave DESIGN_FEEDBACK #2 on NFR-02 (load testing) and FR-05 (API failure handling) — planned business_analyst to revise"
+
+    # =========================================================================
+    # Business Analyst (revision #2)
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      mock: true
+      mock_result: "Updated docs/functional-design.md — added load testing strategy, degradation thresholds, and external API failure handling"
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Water Management Portal (rev 2)
+
+          ## 1. Functionele Vereisten
+          - FR-01: Dashboard met real-time waterstanden
+          - FR-02: Vergunningbeheer met status tracking
+          - FR-03: Notificaties bij overschrijding peilgrenzen via email en in-app push
+          - FR-04: Compliance rapportage generatie (PDF)
+          - FR-05: Integratie met externe meetstations met fallback bij API-storingen
+
+          ## 2. Niet-Functionele Vereisten
+          - NFR-01: Beschikbaarheid 99.5% tijdens kantooruren
+          - NFR-02: Response tijd < 2s dashboard, < 10s PDF, < 5s rapportage; max 50 concurrent users met < 20% degradatie
+          - NFR-03: Ondersteuning voor 50 gelijktijdige gebruikers
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Second revision addressing performance testing and integration failure handling."
+
+    # =========================================================================
+    # Planner (after revision #2) → plan architect re-review
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Re-review the second revision of the functional design — verify load testing strategy, degradation thresholds, and API failure handling are adequate"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA revised FD a second time, planned architect to re-review"
+
+    # =========================================================================
+    # Architect — DESIGN_FEEDBACK #3 (triggers escalation)
+    # =========================================================================
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: |
+          Agent architect: DESIGN_FEEDBACK
+          Items: [1] Section: NFR-02 Performance, Issue: Conflict, Description: Load testing strategy contradicts the stated performance budget. 95th percentile target of 200ms is unrealistic given the batch PDF generation requirement.
+          [2] Section: Architecture Approach, Issue: Unclear, Description: Microservices vs monolith decision not addressed despite prior feedback.
+
+    # =========================================================================
+    # Planner — escalation threshold reached, calls expert HITL
+    # =========================================================================
+    - agent: planner
+      tool: builtin:ask_expert_multiple_choice_question
+      arguments:
+        expert_role: business_analyst
+        question: |
+          The architect has rejected the functional design 3 times for the water-management-portal project.
+
+          Round 1: Missing response time requirements for batch operations; missing notification delivery mechanism.
+          Round 2: Missing load testing strategy; missing external API failure handling.
+          Round 3 (current): Load testing strategy contradicts the performance budget (200ms target unrealistic for batch PDF generation); microservices vs monolith decision still unaddressed.
+
+          How should we proceed?
+        choices:
+          - "Iterate: send feedback to BA for another revision"
+          - "Ready: override and mark the FD as ready for architecture"
+          - "Escalate: ask the architect (human) to review directly"
+          - "Terminate: stop this session — the design cannot converge"
+        context: "This is design review cycle #3. The BA has revised the functional design twice but the architect continues to find issues."
+
+    # Session pauses here in paused_hitl — the expert question
+    # is pending and visible in the UI with choice buttons.

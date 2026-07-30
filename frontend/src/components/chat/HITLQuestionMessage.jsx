@@ -17,7 +17,7 @@ import remarkGfm from 'remark-gfm'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
 import { chatMarkdownComponents } from './ChatHelpers'
 
-const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered = false }) => {
+const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered = false, hideAgentHeader = false, allowComment = false, singleSelect = false }) => {
   const agentId = question.agent_id || 'unknown'
   const agentConfig = getAgentConfig(agentId)
   const AgentIcon = agentConfig.icon
@@ -27,6 +27,7 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
 
   const [selectedIndices, setSelectedIndices] = useState(new Set())
   const [freeText, setFreeText] = useState('')
+  const [comment, setComment] = useState('')
   const [showFreeText, setShowFreeText] = useState(false)
   const freeTextRef = useRef(null)
   const plainTextRef = useRef(null)
@@ -50,6 +51,9 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
 
   const handleToggleChoice = (index) => {
     setSelectedIndices((prev) => {
+      if (singleSelect) {
+        return prev.has(index) ? new Set() : new Set([index])
+      }
       const next = new Set(prev)
       if (next.has(index)) {
         next.delete(index)
@@ -70,7 +74,12 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
 
     const parts = [...choiceTexts]
     if (custom) parts.push(custom)
-    const answerText = parts.join(', ')
+    let answerText = parts.join(', ')
+
+    const commentText = comment.trim()
+    if (commentText) {
+      answerText += `\n\nComment: ${commentText}`
+    }
 
     onSubmitAnswer?.({
       indices: indices.length > 0 ? indices : null,
@@ -87,12 +96,14 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
 
   return (
     <div className="group">
-      <div className="flex items-center gap-2 mb-1.5">
-        <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${colors.bg} border ${colors.border}`}>
-          <AgentIcon className={`w-3.5 h-3.5 ${colors.accent}`} />
+      {!hideAgentHeader && (
+        <div className="flex items-center gap-2 mb-1.5">
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${colors.bg} border ${colors.border}`}>
+            <AgentIcon className={`w-3.5 h-3.5 ${colors.accent}`} />
+          </div>
+          <span className={`text-sm font-medium ${colors.accent}`}>{agentConfig.name}</span>
         </div>
-        <span className={`text-sm font-medium ${colors.accent}`}>{agentConfig.name}</span>
-      </div>
+      )}
       <div className="pl-8">
         <div className="text-sm text-gray-800 leading-relaxed markdown-content">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{question.question}</ReactMarkdown>
@@ -162,6 +173,19 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
                     className="flex-1 resize-y bg-transparent outline-none text-sm leading-6 min-w-0 max-h-[200px]"
                   />
                 </div>
+              </div>
+            )}
+
+            {allowComment && !answered && (
+              <div className="mt-3 space-y-1.5">
+                <label className="text-xs font-medium text-gray-500">Add a comment (optional)</label>
+                <textarea
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="Explain your reasoning..."
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 resize-none bg-white"
+                  rows={2}
+                />
               </div>
             )}
 
